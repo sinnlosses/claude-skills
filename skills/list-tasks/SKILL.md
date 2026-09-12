@@ -25,8 +25,9 @@ description: "develop/tasks.json に登録されているタスクの一覧を�
 python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py develop/tasks.json develop/workflow.json
 ```
 
-出力は TSV。列は `id / status / difficulty / dependencies / 着手可否 / passes / summary`。
-末尾に `counts`・`done_size`・`archive`（`YES`/`NO`）の3行が付く。
+出力は TSV。列は `id / status / difficulty / loopable / dependencies / 着手可否 / passes / summary`。
+`loopable` 列の `?` は、フィールドが無い旧タスク（`Y` 扱い。正典「loopable」）。
+末尾に `counts`・`todo_loopable`・`done_size`・`archive`（`YES`/`NO`）の4行が付く。
 
 ## 表示のしかた
 
@@ -35,18 +36,20 @@ python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py develop/tasks.jso
    伝えて終わる。
 2. 次の形のテーブル**1つだけ**を出す。行の並びは `todo`（着手可能なものが先）→ `doing` → `done`。
 
-   | ID | 状態 | 難易度 | 依存 | 内容 |
-   | --- | --- | --- | --- | --- |
+   | ID | 状態 | 難易度 | loop | 依存 | 内容 |
+   | --- | --- | --- | --- | --- | --- |
 
    - **`内容` 列は `summary` をそのまま使う。** 要約し直さない（書き方の正典は「summary」節）。
      `(summaryなし)` が出たタスクはそのまま `(summaryなし)` と表示し、テーブルの下の1行で
      「`summary` フィールドが無いタスク」と添える
    - `状態` は着手可否を織り込む。`todo` かつ `READY` は `todo（着手可）`、
      `BLOCKED:T-xxx` は `todo（T-xxx待ち）` と書く
+   - `loop` 列は `loopable` の値をそのまま（`Y` / `N` / `?`）。`?` は旧タスクで `Y` 扱い
    - `passes` が `no` のまま `done` のタスクは、状態を `done（未達で終了）` と書く。
      「着手しない判断」をこの形で閉じる運用があるため、成功した `done` と混ぜない
-3. テーブルの下に**1行だけ**添える。件数（`todo`/`doing`/`done`）と、`archive` 行が `YES` なら
-   アーカイブのトリガーに該当することを書く（**判定を書くだけで、移す作業はしない**）。
+3. テーブルの下に**1行だけ**添える。件数（`todo`/`doing`/`done`）、`todo_loopable` の `N` が
+   1件以上ならそのうち `/loop` では進まない件数、`archive` 行が `YES` ならアーカイブの
+   トリガーに該当することを書く（**判定を書くだけで、移す作業はしない**）。
 
 ## 出さないもの
 

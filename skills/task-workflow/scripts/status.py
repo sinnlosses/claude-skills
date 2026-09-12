@@ -52,6 +52,7 @@ def main() -> None:
                     t["id"],
                     t["status"],
                     t["difficulty"],
+                    t.get("loopable", "?"),
                     ",".join(t["dependencies"]) or "-",
                     ready,
                     "yes" if t["passes"] else "no",
@@ -69,6 +70,10 @@ def main() -> None:
             f"{s}={sum(1 for t in tasks if t['status'] == s)}" for s in ("todo", "doing", "done")
         )
     )
+    todo_no_loop = sum(
+        1 for t in tasks if t["status"] == "todo" and t.get("loopable", "Y") == "N"
+    )
+    print(f"todo_loopable\tN={todo_no_loop}")
     print(f"done_size\t{done_bytes}\tfile_size\t{os.path.getsize(tasks_path)}")
     hit = len(done) >= done_count_limit or done_bytes > done_bytes_limit
     print(

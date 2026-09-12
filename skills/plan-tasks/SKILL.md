@@ -50,12 +50,16 @@ description: "develop/direction.md に書かれたユーザーからの指示を
      やらずに理由を `evidence` に書いて閉じる」逃げ道を明記する**
    - `## 完了条件`: **検証可能な言葉で書く**。「適切に」「きれいに」のような読み手によって
      結論が変わる語を使わない。`checkCommand` があるプロジェクトでは、それを通すことを毎回書く
-   - `## 注意`: 触ってはいけないもの、ユーザー承認が要るもの、`/loop` に載せてよいかなど
+   - `## 注意`: 触ってはいけないもの、ユーザー承認が要るものなど。**`/loop` に載せてよいか
+     どうかは本文に書かず `loopable` フィールドで表す**（正典「loopable」）。`"N"` にした
+     理由がコードを読まないと分からない場合だけ、この節に1行添える
 
 5. **登録する**: `develop/tasks.json` に追記する。`id` は `taskIdPrefix` + 3桁の通し番号の続き
    （アーカイブ済みの番号も再利用しない。正典「何を移すか」）、`status: "todo"`、
    `passes: false`、`evidence: ""`。
-   **`summary`・`difficulty`・`dependencies` は登録時に必ず埋める**（後から付けない）。
+   **`summary`・`difficulty`・`loopable`・`dependencies` は登録時に必ず埋める**
+   （後から付けない）。`loopable` は `"Y"` / `"N"` で、判断基準は正典「loopable」
+   （**迷ったら `"N"`**）。`difficulty` とは独立に決める。
    フィールドの並びは正典「tasks.json のフィールド」。
 
    追記したら**その場で正典「いつ移すか（トリガー）」の判定を行う**:
@@ -90,6 +94,8 @@ description: "develop/direction.md に書かれたユーザーからの指示を
 
 - **`develop/direction.md` の各項目 → 生成したタスクID の対応表**（1対1でなくてよい）。
   タスクにしなかった項目は、その理由を書く。**取りこぼしの検知点はここだけなので必ず出す**
-- 登録したタスクの件数と、それぞれの `summary`・`difficulty`・`dependencies`
+- 登録したタスクの件数と、それぞれの `summary`・`difficulty`・`loopable`・`dependencies`。
+  **`loopable` が `"N"` のタスクは、その理由も1行で書く**（`/loop` が拾わないタスクなので、
+  ユーザーが自分で呼ぶ必要があることをここで伝える）
 - `develop/direction.md` を空にしたこと、移した先（`<historyDir>/direction.md` の日付見出し）
 - アーカイブしたなら、移したタスクIDと `develop/tasks.json` のサイズ（前後）
