@@ -8,8 +8,8 @@ claude.ai 同期用に予約していて、git 管理下に混ざるのを避け
 ## 由来
 
 - [mattpocock/skills](https://github.com/mattpocock/skills) を日本語化したもの:
-  `code-review` `codebase-design` `diagnosing-bugs` `domain-modeling` `grilling` `implement`
-  `research` `resolving-merge-conflicts` `tdd`
+  `code-review` `codebase-design` `diagnosing-bugs` `domain-modeling` `grilling`
+  `grill-with-docs` `implement` `research` `resolving-merge-conflicts` `tdd`
 - [anthropics/skills](https://github.com/anthropics/skills) を日本語化したもの（Apache-2.0。
   各スキルの `LICENSE.txt` を同梱）: `frontend-design` `webapp-testing` `mcp-builder`
   `skill-creator`
