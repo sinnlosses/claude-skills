@@ -86,6 +86,7 @@ description: "develop/direction.md に書かれたユーザーからの指示を
    ```
 
    末尾2行が `archive`（`tasks.json` の判定）と `progress`（`progress.md` の判定）。
+   列の並びと他の末尾行の意味は `/list-tasks` に書いてある。
 
    **`todo` は数えない**ので、タスクを足しただけではこの判定に引っかからない。
    該当したらここでアーカイブする。**次のセッションへ持ち越さない**（`/next-task` の手順1でも

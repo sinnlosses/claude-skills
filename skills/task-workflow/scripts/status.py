@@ -38,6 +38,7 @@ def main() -> None:
 
     ids = {t["id"] for t in tasks}
     done_ids = {t["id"] for t in tasks if t["status"] == "done"}
+    long_summaries = []
     for t in tasks:
         blocked = [d for d in t["dependencies"] if d in ids and d not in done_ids]
         if t["status"] != "todo":
@@ -46,6 +47,12 @@ def main() -> None:
             ready = "BLOCKED:" + ",".join(blocked)
         else:
             ready = "READY"
+        summary = t.get("summary", "(summaryなし)").replace("\t", " ")
+        short = taskfiles.ellipsize(summary)
+        # 警告は**まだ直せるタスクだけ**。`done` の summary は履歴なので遡って書き換えない
+        # （正典「difficulty」の「完了済みには遡って付けない」と同じ立場）。
+        if t["status"] != "done" and taskfiles.display_width(summary) > taskfiles.LONG_SUMMARY_WIDTH:
+            long_summaries.append(t["id"])
         print(
             "\t".join(
                 [
@@ -56,7 +63,8 @@ def main() -> None:
                     ",".join(t["dependencies"]) or "-",
                     ready,
                     "yes" if t["passes"] else "no",
-                    t.get("summary", "(summaryなし)").replace("\t", " "),
+                    summary,
+                    short,
                 ]
             )
         )
@@ -73,6 +81,13 @@ def main() -> None:
         1 for t in tasks if t["status"] == "todo" and t.get("loopable", "Y") == "N"
     )
     print(f"todo_loopable\tN={todo_no_loop}")
+    print(
+        f"long_summary\t{len(long_summaries)}\t"
+        + (",".join(long_summaries) if long_summaries else "-")
+        + f"\t(未完了で表示幅 {taskfiles.LONG_SUMMARY_WIDTH}桁超。正典「summary」は一行に収める)"
+    )
+    done_failed = [t["id"] for t in tasks if t["status"] == "done" and not t["passes"]]
+    print(f"done_failed\t{len(done_failed)}\t" + (",".join(done_failed) if done_failed else "-"))
     print(f"done_size\t{done_bytes}\tfile_size\t{os.path.getsize(tasks_path)}")
     print(
         f"archive\t{'YES' if hit else 'NO'}"

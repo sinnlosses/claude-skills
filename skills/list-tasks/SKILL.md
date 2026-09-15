@@ -4,7 +4,7 @@ description: "develop/tasks.json に登録されているタスクの一覧を�
 ---
 
 `develop/tasks.json` の中身を**テーブル1つに要約して表示し、`todo` があれば次の1件を
-推薦する**スキル。
+推薦する**スキル。表は**端末幅に収まること**を最優先する（下の「表示のしかた」）。
 
 **何も書き換えない。タスクを実行しない。** 実行は `/next-task`、登録は `/plan-tasks`。
 運用のルールは `task-workflow` スキルの `WORKFLOW.md`（以下「正典」）。
@@ -26,11 +26,22 @@ description: "develop/tasks.json に登録されているタスクの一覧を�
 python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py develop/tasks.json develop/workflow.json
 ```
 
-出力は TSV。列は `id / status / difficulty / loopable / dependencies / 着手可否 / passes / summary`。
-`loopable` 列の `?` は、フィールドが無い旧タスク（`Y` 扱い。正典「loopable」）。
-末尾に `counts`・`todo_loopable`・`done_size`・`archive`・`progress` の5行が付く。
-`archive` は `tasks.json` の、`progress` は `develop/progress.md` のアーカイブ判定
-（どちらも `YES`/`NO`。`progress` は小節が新しい順に並んでいなければ `ERROR`）。
+出力は TSV。列は `id / status / difficulty / loopable / dependencies / 着手可否 / passes /
+summary / summary_short`。`loopable` 列の `?` は、フィールドが無い旧タスク（`Y` 扱い。
+正典「loopable」）。**`summary_short` は表示幅44桁で切り詰め済み**（全角は2桁）で、
+テーブルにはこちらを使う（手順2）。
+
+末尾に付く行:
+
+| 行              | 中身                                                                     |
+| --------------- | ------------------------------------------------------------------------ |
+| `counts`        | `todo`/`doing`/`done` の件数                                             |
+| `todo_loopable` | `todo` のうち `loopable: "N"` の件数                                     |
+| `long_summary`  | 未完了で `summary` が80桁を超えたタスクのID（正典「summary」違反の候補） |
+| `done_failed`   | `passes: false` のまま `done` になったタスクのID（着手しない判断）       |
+| `done_size`     | `done` の占めるサイズとファイルサイズ                                    |
+| `archive`       | `tasks.json` のアーカイブ判定（`YES`/`NO`）                              |
+| `progress`      | `develop/progress.md` のアーカイブ判定（`YES`/`NO`、並び順が逆なら `ERROR`） |
 
 ## 表示のしかた
 
@@ -39,23 +50,30 @@ python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py develop/tasks.jso
    伝えて終わる。**`EMPTY`・`MISSING`・TSV のどれでもない出力で終わったら**（`python3` が
    無い、エラーで落ちたなど）、**tasks.json を全文読んで代用せず**、`python3` が使えない旨と
    エラー出力を伝えて終わる。代用すると、節約の仕組みが死んでいることに誰も気づけない。
-2. 次の形のテーブル**1つだけ**を出す。行の並びは `todo`（着手可能なものが先）→ `doing` → `done`。
+2. 次の**3列**のテーブル1つだけを出す。行は `todo`（着手可能なものが先）→ `doing` の順。
 
-   | ID | 状態 | 難易度 | loop | 依存 | 内容 |
-   | --- | --- | --- | --- | --- | --- |
+   | ID | 状態 | 内容 |
+   | --- | --- | --- |
+   | T-046 | 可 opus/Y | 箱の方針（当面 Orca、載せ替えられる形を…|
+   | T-125 | 待:T-124 sonnet/N | 新しいキャラクターパックを画面から作れる…|
 
-   - **`内容` 列は `summary` をそのまま使う。** 要約し直さない（書き方の正典は「summary」節）。
-     `(summaryなし)` が出たタスクはそのまま `(summaryなし)` と表示し、テーブルの下の1行で
-     「`summary` フィールドが無いタスク」と添える
-   - `状態` は着手可否を織り込む。`todo` かつ `READY` は `todo（着手可）`、
-     `BLOCKED:T-xxx` は `todo（T-xxx待ち）` と書く
-   - `loop` 列は `loopable` の値をそのまま（`Y` / `N` / `?`）。`?` は旧タスクで `Y` 扱い
-   - `passes` が `no` のまま `done` のタスクは、状態を `done（未達で終了）` と書く。
-     「着手しない判断」をこの形で閉じる運用があるため、成功した `done` と混ぜない
+   - **`内容` 列は TSV の `summary_short`（9列目）をそのまま貼る。** 自分で切り詰めない
+     （全角混じりの表示幅は取り違えやすく、外すとテーブルが端末幅を超えて崩れる）。
+     要約し直すのも禁止（書き方の正典は「summary」節）。`(summaryなし)` はそのまま表示し、
+     テーブルの下の1行で「`summary` フィールドが無いタスク」と添える
+   - `状態` は「着手可否 + `difficulty`/`loopable`」を1つに畳む。`READY` は `可`、
+     `BLOCKED:T-xxx` は `待:T-xxx`。**`依存` の列は作らない**（`状態` が待ち先を持つので二重になる）
+   - **`done` の行は出さない。** 「次に何をやるか」を決めるための一覧で、`done` は
+     `<historyDir>/tasks-archive.md` にある。件数だけ下の行で伝える
 3. テーブルの下に**1行だけ**添える。件数（`todo`/`doing`/`done`）、`todo_loopable` の `N` が
    1件以上ならそのうち `/loop` では進まない件数、`archive` 行か `progress` 行が `YES` なら
    アーカイブのトリガーに該当すること（どちらの側かを添える）を書く
    （**判定を書くだけで、移す作業はしない**）。
+
+   `long_summary` が1件以上なら、続けて**もう1行**だけ添える:
+   「`summary` が長すぎる（正典「summary」の一行に収まっていない）: T-xxx, T-yyy」。
+   長い `summary` は**タスクが大きすぎる合図**なので、そのまま報告する（直す作業はしない）。
+   `done_failed` が1件以上なら、同じ行に「着手しない判断で閉じた: T-zzz」と添える。
 4. `todo` が1件以上あれば、続けて「オススメ」を出す（次節）。0件なら出さない。
 
 ## オススメの提示

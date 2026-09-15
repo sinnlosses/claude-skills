@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import unicodedata
 
 DEFAULTS = {
     "doneCount": 10,
@@ -23,6 +24,38 @@ DEFAULT_HISTORY_DIR = "docs/history"
 # 「## 完了したこと（このセッション）」のように後ろに補足が付いた表記が実在するので前方一致で拾う。
 DONE_SECTION = "## 完了したこと"
 DATE_HEADING = re.compile(r"^### (\d{4}-\d{2}-\d{2})\b")
+
+
+# 一覧テーブルの `内容` 列に許す表示幅。全角を2桁として数える。
+# 他の列（ID・状態）と罫線を足して80桁の端末に収まる値。
+SUMMARY_WIDTH = 44
+
+# 正典「summary」の「1行に収める」に反していると見なす幅。**切り詰めの幅とは別物**。
+# 切り詰めは表示の都合で常に起きるので、同じ閾値で警告を出すと実データの9割に火が点いて
+# signal にならない（実測: 44桁超が52件中49件、80桁超は14件）。
+# 80桁は「その一行だけで端末が折り返す」長さで、正典の言う「折り返しが必要な長さ」に当たる。
+LONG_SUMMARY_WIDTH = 80
+
+
+def display_width(s: str) -> int:
+    """端末に出したときの桁数。日本語（East Asian Wide/Fullwidth）は2桁。"""
+    return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in s)
+
+
+def ellipsize(s: str, limit: int = SUMMARY_WIDTH) -> str:
+    """表示幅で切り詰めて `…` を付ける。収まっていればそのまま返す。
+
+    モデルに桁数を数えさせない（全角混じりの幅は取り違えやすく、取り違えると
+    テーブルが端末幅を超えて折り返し、表として読めなくなる）ためにここで行う。
+    """
+    if display_width(s) <= limit:
+        return s
+    out = ""
+    for c in s:
+        if display_width(out) + display_width(c) > limit - 1:
+            break
+        out += c
+    return out + "…"
 
 
 def load_config(path: str | None) -> dict:

@@ -50,7 +50,7 @@ tasks.json を全文読んで代用しない。** 節約の仕組みが死んで
 
    `MISSING` ならタスク運用を始めていない旨を報告して終了する。`EMPTY` なら登録されている
    タスクは0件。TSVの読み方は `/list-tasks` と同じ（列は `id / status / difficulty /
-   loopable / dependencies / 着手可否 / passes / summary`）。
+   loopable / dependencies / 着手可否 / passes / summary / summary_short`）。
 
    末尾の `archive` 行（`tasks.json` の判定）か `progress` 行（`progress.md` の判定）が
    `YES` なら、**着手前にアーカイブする**（正典「いつ移すか（トリガー）」）。転記は判断を
@@ -110,8 +110,9 @@ tasks.json を全文読んで代用しない。** 節約の仕組みが死んで
    `develop/progress.md` の「完了したこと」に、**そのタスクの小節を1つ、節の先頭に足す**
    （`### YYYY-MM-DD 何をしたか（T-xxx）` の形で、中身は1〜2文）。**既にある小節に
    混ぜず、上に積む**——並びが「新しい順」であることにアーカイブが依存していて、
-   下に足すとスクリプトが `ERROR` を返して止まる（正典「progress.md の構成」）。1タスク＝1コミットとし、件名の先頭に
-   タスクIDを置く（正典「コミットメッセージ」）。コミットメッセージの末尾は現在のセッションの
+   下に足すとスクリプトが `ERROR` を返して止まる（正典「progress.md の構成」）。
+
+   1タスク＝1コミットとし、件名の先頭にタスクIDを置く（正典「コミットメッセージ」）。コミットメッセージの末尾は現在のセッションの
    attribution 指示（Co-Authored-By 等）に従う。
 
 7. **push はしない**: 外部への反映は明示的に頼まれたときだけ行う。このスキルはコミットまでで止める。
