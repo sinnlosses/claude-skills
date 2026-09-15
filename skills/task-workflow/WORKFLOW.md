@@ -296,9 +296,25 @@ grep '^### ' develop/progress.md
 - `develop/progress.md` の「完了したこと」は、**最新の日付の小節だけを残し**、それ以外を
   `<historyDir>/progress-archive.md` へ移す。「次にやること」「未解決」「注意」は移さない
   （未完了タスクの完了条件がこれらを参照していることがある）
-- アーカイブのエントリは `## <id>` → `**タスク**: <summary の値>` → `task` 本文の順で書く
+- アーカイブのエントリは `## <id>` → `**タスク**: <summary の値>` → メタ行
+  （`difficulty` / `loopable` / `dependencies` / `passes`）→ `**evidence**:` → `task` 本文の順
   （`**タスク**:` の行に `task` 本文の先頭を流し込まない。上の「summary」節）
 - タスクIDの通し番号は再利用せず、常に続きから採番する
+
+**転記は `scripts/archive.py` が行う。モデルが手で書き写さない。**
+
+```bash
+python3 <task-workflowスキルのディレクトリ>/scripts/archive.py develop/tasks.json develop/workflow.json
+```
+
+上の形式は `tasks.json` の値から機械的に決まり、判断が1つも要らない。手で書くと
+(1) 移したぶんがそのまま出力トークンになり、(2) 書くたびに形式がぶれる（同じ運用の
+プロジェクト間で `## <id>` の行に `summary` を載せる／載せないが分かれた実績がある）。
+`tasks.json` と `progress.md` を独立に判定して、該当した側だけを移す。`--dry-run` を付けると
+何も書かずに対象だけを報告する。
+
+`python3` が動かない環境では**手で代用しない**。代用すると、節約の仕組みが死んでいることに
+誰も気づけないまま、毎サイクル数万文字を読む状態が続く。エラーを報告してアーカイブを見送る。
 
 ### `dependencies` の扱い
 

@@ -34,7 +34,9 @@ python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py develop/tasks.jso
 
 1. 上のコマンドを実行する。`EMPTY` なら「登録されているタスクは0件」、`MISSING` なら
    「`develop/tasks.json` が無い（このプロジェクトはまだタスク運用を始めていない）」と
-   伝えて終わる。
+   伝えて終わる。**`EMPTY`・`MISSING`・TSV のどれでもない出力で終わったら**（`python3` が
+   無い、エラーで落ちたなど）、**tasks.json を全文読んで代用せず**、`python3` が使えない旨と
+   エラー出力を伝えて終わる。代用すると、節約の仕組みが死んでいることに誰も気づけない。
 2. 次の形のテーブル**1つだけ**を出す。行の並びは `todo`（着手可能なものが先）→ `doing` → `done`。
 
    | ID | 状態 | 難易度 | loop | 依存 | 内容 |

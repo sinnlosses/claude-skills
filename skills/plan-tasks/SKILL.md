@@ -72,6 +72,14 @@ description: "develop/direction.md に書かれたユーザーからの指示を
    **`todo` は数えない**ので、タスクを足しただけではこの判定に引っかからない。
    該当したらここでアーカイブする。**次のセッションへ持ち越さない**（`/next-task` の手順1でも
    拾われるが、それは「気づかれるのが1セッション遅れる」だけで、直す場所としては遅い）。
+   転記は判断を含まないので**手で書き写さず**、スクリプトに任せる:
+
+   ```bash
+   python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/archive.py develop/tasks.json develop/workflow.json
+   ```
+
+   `python3` が落ちる環境では、tasks.json を手で書き換えて代用しない。その旨とエラー出力を
+   報告して、アーカイブだけ見送る（登録は済んでいるので作業は無駄にならない）。
 
 6. **指示メモを移す**: `develop/direction.md` の内容を **`<historyDir>/direction.md` の
    先頭に日付見出し（`## YYYY-MM-DD`）付きで追記**し、`develop/direction.md` は見出し行だけの

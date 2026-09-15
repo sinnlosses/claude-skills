@@ -18,18 +18,49 @@ evidence の書き方・アーカイブのトリガーは `task-workflow` スキ
 `develop/tasks.json` が無いプロジェクトなら、タスク運用を始めていない旨を報告して終了する
 （勝手にファイルを作らない）。
 
+## タスク本文を読み込まない
+
+1タスクの `task` 本文は数KBある。**1件を選ぶために全件の本文を読まない**。選ぶのに要る値
+（`status`・`dependencies`・`difficulty`・`loopable`・`summary`）は全部 `status.py` の TSV に
+出るので、**本文を読むのは選んだ1件だけ**にする。`develop/progress.md` も同じで、このスキルが
+するのは「完了したこと」への追記だけなので、手順1の `grep '^### '` 以上には読まない。
+
+`/list-tasks` と同じ方針。tasks.json が数万文字まで育つ運用なので、ここを守るかどうかで
+1サイクルのコンテキスト消費が一桁変わる。
+
+## スクリプトが動かないとき
+
+`status.py` / `archive.py` は `python3` を使う。**`python3` が無い・エラーで落ちる環境では、
+tasks.json を全文読んで代用しない。** 節約の仕組みが死んでいることに気づけないまま、
+毎サイクル数万文字を読む状態になるため。
+
+スクリプトが `MISSING`・`EMPTY`・TSV のいずれでもない出力で終わったら、**その場で止めて
+`python3` が使えない旨とエラー出力をユーザーに報告する**（`/loop` 側はこれを「続行不要」の
+合図として扱う）。
+
 ## 手順
 
-1. **読む**: `develop/progress.md` と `develop/tasks.json` を読む。正典「いつ移すか（トリガー）」
-   に該当していたら、着手前にアーカイブする。**2ファイルをここでまとめて判定する**:
+1. **見渡す**: 一覧と判定はスクリプトが出す。**`develop/tasks.json` を Read ツールで開いたり
+   `cat` したりしない**（理由は下の「タスク本文を読み込まない」）。
 
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py develop/tasks.json develop/workflow.json | tail -1
+   python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py develop/tasks.json develop/workflow.json
    grep '^### ' develop/progress.md
    ```
 
-   1行目の `archive` が `YES` なら `tasks.json` が該当。2行目で最新の日付以外の小節が
-   あれば `progress.md` が該当。移し方は正典「何を移すか」。
+   `MISSING` ならタスク運用を始めていない旨を報告して終了する。`EMPTY` なら登録されている
+   タスクは0件。TSVの読み方は `/list-tasks` と同じ（列は `id / status / difficulty /
+   loopable / dependencies / 着手可否 / passes / summary`）。
+
+   末尾の `archive` 行が `YES`、または2つめのコマンドで最新の日付以外の小節が見えたら、
+   **着手前にアーカイブする**（正典「いつ移すか（トリガー）」）。転記は判断を含まないので
+   手で書き写さず、スクリプトに任せる:
+
+   ```bash
+   python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/archive.py develop/tasks.json develop/workflow.json
+   ```
+
+   出力の `MOVED` 行に、移したタスクIDとファイルサイズの前後が出る。完了報告にそのまま載せる。
 
    あわせて `develop/direction.md` を見る。見出し行以外に中身があれば
    （`grep -v '^#' develop/direction.md | grep -v '^\s*$'` が空でなければ）、**未タスク化の
@@ -37,10 +68,16 @@ evidence の書き方・アーカイブのトリガーは `task-workflow` スキ
    （`/loop` 側はこれを「続行不要」の合図として扱う）。分解は方針決めを含むので、このスキルが
    その場で代行しない。
 
-2. **選ぶ**: `status: "todo"` かつ `dependencies` が全て `status: "done"`（または
-   `tasks.json` に存在しない＝アーカイブ済み扱い）のタスクを1件選ぶ。該当が無ければ
-   （全件 done、または残りが全て未解決の依存で止まっている）その旨を報告して終了する
-   （`/loop` 側はこれを「続行不要」の合図として扱う）。
+2. **選ぶ**: 手順1のTSVで `着手可否` が `READY` の行から1件選ぶ（`status: "todo"` かつ
+   依存が全て解決済み。`tasks.json` に存在しない依存＝アーカイブ済み＝完了扱いは
+   スクリプトが織り込み済み）。`READY` が無ければ（全件 done、または残りが全て `BLOCKED:`）
+   その旨を報告して終了する（`/loop` 側はこれを「続行不要」の合図として扱う）。
+
+   選んだら、**その1件の本文だけ**を読む:
+
+   ```bash
+   python3 -c "import json,sys; print([t for t in json.load(open('develop/tasks.json')) if t['id']==sys.argv[1]][0]['task'])" T-XXX
+   ```
 
    **`/loop` から回されているときは `loopable` が `"N"` のタスクを選ばない**
    （正典「loopable」。フィールドが無いタスクは `"Y"` 扱い）。残りが `"N"` だけになったら
