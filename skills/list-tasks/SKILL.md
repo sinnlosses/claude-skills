@@ -28,7 +28,9 @@ python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py develop/tasks.jso
 
 出力は TSV。列は `id / status / difficulty / loopable / dependencies / 着手可否 / passes / summary`。
 `loopable` 列の `?` は、フィールドが無い旧タスク（`Y` 扱い。正典「loopable」）。
-末尾に `counts`・`todo_loopable`・`done_size`・`archive`（`YES`/`NO`）の4行が付く。
+末尾に `counts`・`todo_loopable`・`done_size`・`archive`・`progress` の5行が付く。
+`archive` は `tasks.json` の、`progress` は `develop/progress.md` のアーカイブ判定
+（どちらも `YES`/`NO`。`progress` は小節が新しい順に並んでいなければ `ERROR`）。
 
 ## 表示のしかた
 
@@ -51,8 +53,9 @@ python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py develop/tasks.jso
    - `passes` が `no` のまま `done` のタスクは、状態を `done（未達で終了）` と書く。
      「着手しない判断」をこの形で閉じる運用があるため、成功した `done` と混ぜない
 3. テーブルの下に**1行だけ**添える。件数（`todo`/`doing`/`done`）、`todo_loopable` の `N` が
-   1件以上ならそのうち `/loop` では進まない件数、`archive` 行が `YES` ならアーカイブの
-   トリガーに該当することを書く（**判定を書くだけで、移す作業はしない**）。
+   1件以上ならそのうち `/loop` では進まない件数、`archive` 行か `progress` 行が `YES` なら
+   アーカイブのトリガーに該当すること（どちらの側かを添える）を書く
+   （**判定を書くだけで、移す作業はしない**）。
 4. `todo` が1件以上あれば、続けて「オススメ」を出す（次節）。0件なら出さない。
 
 ## オススメの提示

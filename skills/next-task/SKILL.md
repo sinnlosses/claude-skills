@@ -23,7 +23,8 @@ evidence の書き方・アーカイブのトリガーは `task-workflow` スキ
 1タスクの `task` 本文は数KBある。**1件を選ぶために全件の本文を読まない**。選ぶのに要る値
 （`status`・`dependencies`・`difficulty`・`loopable`・`summary`）は全部 `status.py` の TSV に
 出るので、**本文を読むのは選んだ1件だけ**にする。`develop/progress.md` も同じで、このスキルが
-するのは「完了したこと」への追記だけなので、手順1の `grep '^### '` 以上には読まない。
+するのは「完了したこと」の先頭への追記だけなので、全文を読まない（判定は `status.py` の
+`progress` 行が出す）。
 
 `/list-tasks` と同じ方針。tasks.json が数万文字まで育つ運用なので、ここを守るかどうかで
 1サイクルのコンテキスト消費が一桁変わる。
@@ -45,16 +46,15 @@ tasks.json を全文読んで代用しない。** 節約の仕組みが死んで
 
    ```bash
    python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py develop/tasks.json develop/workflow.json
-   grep '^### ' develop/progress.md
    ```
 
    `MISSING` ならタスク運用を始めていない旨を報告して終了する。`EMPTY` なら登録されている
    タスクは0件。TSVの読み方は `/list-tasks` と同じ（列は `id / status / difficulty /
    loopable / dependencies / 着手可否 / passes / summary`）。
 
-   末尾の `archive` 行が `YES`、または2つめのコマンドで最新の日付以外の小節が見えたら、
-   **着手前にアーカイブする**（正典「いつ移すか（トリガー）」）。転記は判断を含まないので
-   手で書き写さず、スクリプトに任せる:
+   末尾の `archive` 行（`tasks.json` の判定）か `progress` 行（`progress.md` の判定）が
+   `YES` なら、**着手前にアーカイブする**（正典「いつ移すか（トリガー）」）。転記は判断を
+   含まないので手で書き写さず、スクリプトに任せる:
 
    ```bash
    python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/archive.py develop/tasks.json develop/workflow.json
@@ -107,9 +107,10 @@ tasks.json を全文読んで代用しない。** 節約の仕組みが死んで
 
 6. **記録してコミット**: `develop/tasks.json` の対象タスクの `status`/`passes`/`evidence` を
    更新する（evidence は3行以内、後から検証できる形で。正典「良いevidenceの書き方」）。
-   `develop/progress.md` の「完了したこと」にも1〜2文で追記する。**追記先の小節が無ければ
-   `### YYYY-MM-DD 〜` の形で今日の日付の小節を作る**（日付が無いとアーカイブの境界を
-   決められない。正典「progress.md の構成」）。1タスク＝1コミットとし、件名の先頭に
+   `develop/progress.md` の「完了したこと」に、**そのタスクの小節を1つ、節の先頭に足す**
+   （`### YYYY-MM-DD 何をしたか（T-xxx）` の形で、中身は1〜2文）。**既にある小節に
+   混ぜず、上に積む**——並びが「新しい順」であることにアーカイブが依存していて、
+   下に足すとスクリプトが `ERROR` を返して止まる（正典「progress.md の構成」）。1タスク＝1コミットとし、件名の先頭に
    タスクIDを置く（正典「コミットメッセージ」）。コミットメッセージの末尾は現在のセッションの
    attribution 指示（Co-Authored-By 等）に従う。
 
