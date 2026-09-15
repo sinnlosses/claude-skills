@@ -24,8 +24,25 @@ description: "develop/direction.md に書かれたユーザーからの指示を
 
 1. **読む**: `develop/direction.md` を読む。見出し行以外に中身が無ければ
    （`grep -v '^#' develop/direction.md | grep -v '^\s*$'` が空なら）、未対応の指示は無い旨を
-   報告して終了する。あわせて `develop/tasks.json` と `develop/progress.md` も読み、
-   既存タスクとの重複・依存関係を判断できるようにする。
+   報告して終了する。
+
+   あわせて既存タスクを**一覧で**見る。重複と依存を判断するのに要るのは `summary` と
+   `status` と `dependencies` で、それは全部この出力に入っている。
+   **`develop/tasks.json` を Read ツールで開いたり `cat` したりしない**
+   （`todo` が数十件あるプロジェクトでは本文だけで数万文字になる）:
+
+   ```bash
+   python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py develop/tasks.json develop/workflow.json
+   ```
+
+   一覧を見て**同じことを言っていそうなタスクが見つかったときだけ**、その1件の本文を読む:
+
+   ```bash
+   python3 -c "import json,sys; print([t for t in json.load(open('develop/tasks.json')) if t['id']==sys.argv[1]][0]['task'])" T-XXX
+   ```
+
+   `python3` が落ちる環境では全文読みで代用しない（`/next-task` の「スクリプトが動かない
+   とき」と同じ）。`develop/progress.md` は「未解決」「注意」だけ見れば足りる。
 
 2. **確かめる**: 指示の各項目について、**現物のコードとドキュメントを読んで裏を取る**。
    指示は前提が古かったり、既に対応済みだったりする。ここで
@@ -91,9 +108,13 @@ description: "develop/direction.md に書かれたユーザーからの指示を
    タスク化した時点で正典は `develop/tasks.json` に移る。**「タスクが全部 `done` になるまで
    `develop/direction.md` に残す」ことはしない**（正典が二重になるため）。
 
-7. **記録してコミット**: `develop/progress.md` の「次にやること」に登録したタスクを反映する。
-   1回の実行＝1コミットとし、件名は正典「コミットメッセージ」に従う
+7. **コミット**: 1回の実行＝1コミットとし、件名は正典「コミットメッセージ」に従う
    （このスキル自体は特定のタスクIDを持たないので、件名にIDは付けない）。
+
+   **`develop/progress.md` に登録したタスクの一覧を書かない。** 正典は
+   `develop/tasks.json` で、一覧は `/list-tasks` が出す（正典「progress.md の構成」）。
+   タスク化の過程で出てきた**判断待ちの事項は「未解決」に、踏み外しやすい前提は「注意」に**
+   書く。それ以外の経緯はタスク本文の `## 背景` と `<historyDir>/direction.md` が持つ。
 
 8. **push はしない**: 外部への反映は明示的に頼まれたときだけ行う。
 

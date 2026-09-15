@@ -10,6 +10,7 @@
 - `develop/progress.md` の「完了したこと」から、新しい順に残す予算を超えたぶんを
   `<historyDir>/progress-archive.md` へ移す
 - 2つは独立に判定する（片方だけ該当したら、その片方だけを移す）
+- 廃止した「次にやること」節が残っていれば、同じアーカイブへ1度だけ退避する
 
 判定そのものは `taskfiles.py` にあり、`status.py` と共有している。
 `--dry-run` を付けると何も書かず、移す対象だけを報告する。
@@ -17,6 +18,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import sys
@@ -39,8 +41,10 @@ def main() -> None:
     lim = taskfiles.limits(config)
     history = taskfiles.history_dir(config)
 
+    progress_path = taskfiles.progress_path_for(tasks_path)
     moved = archive_tasks(tasks_path, history, lim, dry_run)
-    moved |= archive_progress(taskfiles.progress_path_for(tasks_path), history, lim, dry_run)
+    moved |= retire_next_section(progress_path, history, dry_run)
+    moved |= archive_progress(progress_path, history, lim, dry_run)
     if not moved:
         print("NOOP\t移すものは無い")
 
@@ -124,6 +128,49 @@ def render_task(t: dict) -> str:
 
 
 # --- progress.md --------------------------------------------------------
+
+
+NEXT_SECTION = "## 次にやること"
+
+
+def retire_next_section(progress_path: str, history: str, dry_run: bool) -> bool:
+    """廃止した「次にやること」節が残っていたら、丸ごとアーカイブへ退避する。
+
+    この節は `tasks.json` の手書きの写しで、正典から外した（WORKFLOW.md
+    「progress.md の構成」）。既にある分を手で消させると、削ろうとしている出力トークンを
+    そのまま使うことになるので、機械で移す。移し終えれば以後は何もしない。
+    """
+    if not os.path.exists(progress_path):
+        return False
+    with open(progress_path, encoding="utf-8") as f:
+        text = f.read()
+    head, section, tail = taskfiles.split_named_section(text, NEXT_SECTION)
+    if not section:
+        return False
+
+    if dry_run:
+        print(f"next\tDRY-RUN\t廃止済みの「次にやること」節 {len(section)}文字")
+        return True
+
+    before = os.path.getsize(progress_path)
+    # 節の見出し行だけを、退避したと分かる見出しに差し替える（中身はそのまま）。
+    inner = "".join(section.splitlines(keepends=True)[1:]).strip("\n")
+    today = datetime.date.today().isoformat()
+    body = f"## 廃止した「次にやること」節（{today} に退避、当時の記述のまま）\n\n{inner}\n"
+    archive_path = os.path.join(history, "progress-archive.md")
+    append_section(archive_path, PROGRESS_ARCHIVE_HEADER, body)
+
+    rest = tail.lstrip("\n")
+    remaining = head.rstrip() + "\n\n" + rest if rest else head.rstrip() + "\n"
+    with open(progress_path, "w", encoding="utf-8") as f:
+        f.write(remaining)
+
+    after = os.path.getsize(progress_path)
+    print(
+        f"next\tRETIRED\t「次にやること」節を退避\t{len(section)}文字\t"
+        f"{before}B -> {after}B\t{archive_path}"
+    )
+    return True
 
 
 def archive_progress(progress_path: str, history: str, lim: dict, dry_run: bool) -> bool:

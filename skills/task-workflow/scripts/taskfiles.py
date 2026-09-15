@@ -97,6 +97,16 @@ def split_done_section(text: str) -> tuple[str, list[Section] | None, str]:
     return "".join(lines[:head_end]), sections, "".join(lines[end:])
 
 
+def split_named_section(text: str, heading: str) -> tuple[str, str, str]:
+    """`## <heading>` の節を (前, その節, 後) に割る。無ければ真ん中が空文字。"""
+    lines = text.splitlines(keepends=True)
+    start = next((i for i, ln in enumerate(lines) if ln.startswith(heading)), None)
+    if start is None:
+        return text, "", ""
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    return "".join(lines[:start]), "".join(lines[start:end]), "".join(lines[end:])
+
+
 def is_newest_first(sections: list[Section]) -> bool:
     """日付つきの小節が、新しい順（非増加）に並んでいるか。
 
