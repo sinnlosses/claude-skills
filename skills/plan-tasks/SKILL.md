@@ -11,12 +11,15 @@ description: "develop/direction.md に書かれたユーザーからの指示を
 分解そのものが方針決めを含み、正典「委譲しないケース」に当たるため、
 **サブエージェントに委譲せず、ユーザーがいるセッションで行う**。`/loop` の自動進行にも載せない。
 
-## このプロジェクトの設定（`develop/workflow.json`）
+## このプロジェクトの設定（CLAUDE.md の「## タスク運用」節）
 
-!`cat develop/workflow.json 2>/dev/null || echo '{}'`
+!`sed -n '/^## タスク運用/,/^## /p' CLAUDE.md 2>/dev/null | grep . || echo '（「## タスク運用」節が無い。CLAUDE.md の他の節に書かれた検証コマンドを探す。無ければ /setup-tasks で節を用意する）'`
 
-`{}` なら既定値で動く（正典「ファイル配置と `develop/workflow.json`」）。以下で
-`checkCommand`・`taskIdPrefix`・`historyDir` と書いたところは、この設定の値に読み替える。
+以下で**検証コマンド**と書いたところは、この節の値に読み替える（タスクの「## 完了条件」に
+書くのはこのコマンド）。値が `なし` なら、完了条件は検証可能な言葉だけで書く。**節が無い
+場合は「なし」と決めつけず**、CLAUDE.md の別の節に書かれた検証コマンドを探す。
+タスクIDの接頭辞（`T-`）とアーカイブの置き場（`docs/history/`）は規約で固定
+（正典「ファイル配置と CLAUDE.md」）。
 `develop/tasks.json` が無ければ、**このプロジェクトでタスク運用を始めてよいかユーザーに
 確認してから** `/setup-tasks` で用意する（`progress.md`・`direction.md` も一緒に要る）。
 
@@ -32,7 +35,7 @@ description: "develop/direction.md に書かれたユーザーからの指示を
    （`todo` が数十件あるプロジェクトでは本文だけで数万文字になる）:
 
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py develop/tasks.json develop/workflow.json
+   python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py develop/tasks.json
    ```
 
    一覧を見て**同じことを言っていそうなタスクが見つかったときだけ**、その1件の本文を読む:
@@ -66,12 +69,12 @@ description: "develop/direction.md に書かれたユーザーからの指示を
    - `## やること`: 手順。調べた結果によって結論が変わるものは、**「調べて成り立たなければ、
      やらずに理由を `evidence` に書いて閉じる」逃げ道を明記する**
    - `## 完了条件`: **検証可能な言葉で書く**。「適切に」「きれいに」のような読み手によって
-     結論が変わる語を使わない。`checkCommand` があるプロジェクトでは、それを通すことを毎回書く
+     結論が変わる語を使わない。検証コマンドがあるプロジェクトでは、それを通すことを毎回書く
    - `## 注意`: 触ってはいけないもの、ユーザー承認が要るものなど。**`/loop` に載せてよいか
      どうかは本文に書かず `loopable` フィールドで表す**（正典「loopable」）。`"N"` にした
      理由がコードを読まないと分からない場合だけ、この節に1行添える
 
-5. **登録する**: `develop/tasks.json` に追記する。`id` は `taskIdPrefix` + 3桁の通し番号の続き
+5. **登録する**: `develop/tasks.json` に追記する。`id` は `T-` + 3桁の通し番号の続き
    （アーカイブ済みの番号も再利用しない。正典「何を移すか」）、`status: "todo"`、
    `passes: false`、`evidence: ""`。
    **`summary`・`difficulty`・`loopable`・`dependencies` は登録時に必ず埋める**
@@ -82,7 +85,7 @@ description: "develop/direction.md に書かれたユーザーからの指示を
    追記したら**その場で正典「いつ移すか（トリガー）」の判定を行う**:
 
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py develop/tasks.json develop/workflow.json | tail -2
+   python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py develop/tasks.json | tail -2
    ```
 
    末尾2行が `archive`（`tasks.json` の判定）と `progress`（`progress.md` の判定）。
@@ -94,13 +97,13 @@ description: "develop/direction.md に書かれたユーザーからの指示を
    転記は判断を含まないので**手で書き写さず**、スクリプトに任せる:
 
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/archive.py develop/tasks.json develop/workflow.json
+   python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/archive.py develop/tasks.json
    ```
 
    `python3` が落ちる環境では、tasks.json を手で書き換えて代用しない。その旨とエラー出力を
    報告して、アーカイブだけ見送る（登録は済んでいるので作業は無駄にならない）。
 
-6. **指示メモを移す**: `develop/direction.md` の内容を **`<historyDir>/direction.md` の
+6. **指示メモを移す**: `develop/direction.md` の内容を **`docs/history/direction.md` の
    先頭に日付見出し（`## YYYY-MM-DD`）付きで追記**し、`develop/direction.md` は見出し行だけの
    状態に戻す（ファイルが無ければ見出し `# 未対応の指示メモ` 1行で作る）。**当時の記述を
    そのまま移し、書き換えない**。見出しの直下に、その指示から生成したタスクIDと、タスクに
@@ -115,7 +118,7 @@ description: "develop/direction.md に書かれたユーザーからの指示を
    **`develop/progress.md` に登録したタスクの一覧を書かない。** 正典は
    `develop/tasks.json` で、一覧は `/list-tasks` が出す（正典「progress.md の構成」）。
    タスク化の過程で出てきた**判断待ちの事項は「未解決」に、踏み外しやすい前提は「注意」に**
-   書く。それ以外の経緯はタスク本文の `## 背景` と `<historyDir>/direction.md` が持つ。
+   書く。それ以外の経緯はタスク本文の `## 背景` と `docs/history/direction.md` が持つ。
 
 8. **push はしない**: 外部への反映は明示的に頼まれたときだけ行う。
 
@@ -128,5 +131,5 @@ description: "develop/direction.md に書かれたユーザーからの指示を
 - 登録したタスクの件数と、それぞれの `summary`・`difficulty`・`loopable`・`dependencies`。
   **`loopable` が `"N"` のタスクは、その理由も1行で書く**（`/loop` が拾わないタスクなので、
   ユーザーが自分で呼ぶ必要があることをここで伝える）
-- `develop/direction.md` を空にしたこと、移した先（`<historyDir>/direction.md` の日付見出し）
+- `develop/direction.md` を空にしたこと、移した先（`docs/history/direction.md` の日付見出し）
 - アーカイブしたなら、移したタスクIDと `develop/tasks.json` のサイズ（前後）

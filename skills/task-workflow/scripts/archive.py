@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """done タスクと過去の進捗をアーカイブへ機械的に移す。
 
-使い方: archive.py <tasks.json> [workflow.json] [--dry-run]
+使い方: archive.py <tasks.json> [--dry-run]
 
 正典（task-workflow の WORKFLOW.md「肥大化したときのアーカイブ」）が定める転記を
 そのまま行う。転記は判断を含まないので、モデルが手で書き写さずこれを使う。
 
-- `develop/tasks.json` の `status: "done"` を全件 `<historyDir>/tasks-archive.md` へ移す
+- `develop/tasks.json` の `status: "done"` を全件 `docs/history/tasks-archive.md` へ移す
 - `develop/progress.md` の「完了したこと」から、新しい順に残す予算を超えたぶんを
-  `<historyDir>/progress-archive.md` へ移す
+  `docs/history/progress-archive.md` へ移す
 - 2つは独立に判定する（片方だけ該当したら、その片方だけを移す）
 - 廃止した「次にやること」節が残っていれば、同じアーカイブへ1度だけ退避する
 
@@ -32,14 +32,13 @@ PROGRESS_ARCHIVE_HEADER = "# 過去セッションの「完了したこと」"
 def main() -> None:
     args = [a for a in sys.argv[1:] if a != "--dry-run"]
     dry_run = "--dry-run" in sys.argv[1:]
-    if not args:
-        print("usage: archive.py <tasks.json> [workflow.json] [--dry-run]", file=sys.stderr)
+    if len(args) != 1:
+        print("usage: archive.py <tasks.json> [--dry-run]", file=sys.stderr)
         raise SystemExit(2)
 
     tasks_path = args[0]
-    config = taskfiles.load_config(args[1] if len(args) > 1 else None)
-    lim = taskfiles.limits(config)
-    history = taskfiles.history_dir(config)
+    lim = taskfiles.LIMITS
+    history = taskfiles.HISTORY_DIR
 
     progress_path = taskfiles.progress_path_for(tasks_path)
     moved = archive_tasks(tasks_path, history, lim, dry_run)

@@ -1,11 +1,11 @@
 ---
 name: setup-tasks
-description: "タスク運用に要る develop/tasks.json・develop/progress.md・develop/direction.md をプロジェクトに用意し、検証コマンドなどプロジェクト固有の値を develop/workflow.json に書く。ユーザーが「タスク運用を始めたい」「develop/ を用意して」「このプロジェクトでもタスク管理を使いたい」と言ったとき、/next-task・/plan-tasks・/list-tasks が MISSING を返したときに使う。既にあるファイルは上書きしない。"
+description: "タスク運用に要る develop/tasks.json・develop/progress.md・develop/direction.md をプロジェクトに用意し、検証コマンドと整形コマンドを CLAUDE.md の「## タスク運用」節に書く。ユーザーが「タスク運用を始めたい」「develop/ を用意して」「このプロジェクトでもタスク管理を使いたい」と言ったとき、/next-task・/plan-tasks・/list-tasks が MISSING を返したときに使う。既にあるファイルは上書きしない。"
 ---
 
 `/next-task` `/plan-tasks` `/list-tasks` が読む**プロジェクト側のファイルを用意する**スキル。
 置き場と役割は `task-workflow` スキルの `WORKFLOW.md`（以下「正典」）「ファイル配置と
-`develop/workflow.json`」。
+CLAUDE.md」。
 
 **タスクは登録しない**（登録は `/plan-tasks`、実行は `/next-task`）。
 **既にあるファイルは上書きしない**（中身の点検結果だけ出して、直すかどうかは下の手順で決める）。
@@ -27,37 +27,62 @@ description: "タスク運用に要る develop/tasks.json・develop/progress.md�
    | `CREATED`                               | 無かったので骨組みで作った                                       |
    | `KEPT` + `OK:`                          | 既にあり、中身も筋が通っている。触っていない                     |
    | `KEPT` + `INVALID:`/`MISSING_SECTION:`/`PENDING:` | 既にあるが手当てが要る（下の「`KEPT` が `OK:` でないとき」） |
-   | `ABSENT`                                | `workflow.json` が無い。既定値で動くので、手順2で要るときだけ作る |
+   | `MISSING`/`NO_SECTION`/`MISSING_LINE`/`OK` | CLAUDE.md の点検結果（最終行）。手順2で使う                   |
 
-2. **`develop/workflow.json` を書く**。**既定値と違う値だけ**書く（キーと既定値は正典）。
-   実質ここで決めるのは検証まわりの2つで、残りは既定のままにする（変える理由ができてから）:
+2. **CLAUDE.md の「## タスク運用」節を用意する**。プロジェクトごとに変わる値は
+   **検証コマンドと整形コマンドの2つだけ**で、置き場はここ（正典「ファイル配置と CLAUDE.md」）。
+   設定ファイルは持たない。
 
-   | キー            | 探す先                                                                 |
-   | --------------- | ---------------------------------------------------------------------- |
-   | `checkCommand`  | `package.json` の `scripts`、`Makefile`、`justfile`、`pyproject.toml`、`CLAUDE.md` |
-   | `formatCommand` | 同上                                                                   |
+   まず値を決める。**推測で書かない**:
 
-   - **推測で書かない。** 候補を見つけたら**実際に走らせて通ることを確かめてから**書く。
-     `checkCommand` は `/next-task` が受け入れ判定に毎回使うので、通らないコマンドを
-     書くと全タスクが落ちる
-   - 候補が複数あって決め手が無いとき、1つも見つからないときは**ユーザーに聞く**。
-     聞いても決まらなければ**書かない**（`checkCommand` が無い場合は、タスク本文の完了条件
-     だけで判定する運用になる。正典の既定どおり）
-   - 1つも書くものが無ければ `develop/workflow.json` は**作らない**。空の `{}` を置くと、
-     「このプロジェクトは設定を検討済み」と「まだ何も無い」が見分けられなくなる
+   - 探す先は `package.json` の `scripts`、`Makefile`、`justfile`、`pyproject.toml`、
+     そして**既にある CLAUDE.md の記述**（実測した3プロジェクトとも、検証コマンドは
+     「変更後は必ず `pnpm check` を通す」のような形で別の節に書いてあった）
+   - 候補を見つけたら**実際に走らせて通ることを確かめてから**書く。検証コマンドは
+     `/next-task` が受け入れ判定に毎回使うので、通らないコマンドを書くと全タスクが落ちる
+   - 候補が複数あって決め手が無いとき、1つも見つからないときは**ユーザーに聞く**
+   - 走らせるコマンドが無いと決まったら `なし` と書く。**行ごと消さない**（「検討して不要と
+     決めた」と「まだ検討していない」が区別できなくなる）
+
+   書く形は正典のとおり。**行の頭は変えない**（スキルがこの節を `sed` で読む）:
+
+   ```markdown
+   ## タスク運用
+
+   - 検証コマンド: `pnpm check`（変更後は必ずこれを通す。受け入れ判定に使う）
+   - 整形コマンド: `pnpm format`
+   - ブランチ: 作業ブランチを切る
+
+   `develop/tasks.json`・`develop/progress.md`・`develop/direction.md` で管理する。
+   指示は `develop/direction.md` に溜め、`/plan-tasks` でタスク化して `/next-task` で進める。
+   ```
+
+   **CLAUDE.md は人が書いた文書なので、状態によって扱いを変える**（手順1の最終行がどれか）:
+
+   | 点検結果       | すること                                                                 |
+   | -------------- | ------------------------------------------------------------------------ |
+   | `MISSING`      | CLAUDE.md ごと新規に作る。**タスク運用の節だけ**を書き、プロジェクトの説明を勝手に書き足さない |
+   | `NO_SECTION`   | **既存の記述を先に読む。** 検証コマンドが別の節に書いてあることが多く、その場合は値をそこから取る。節は**ファイルの末尾に足す**（既存の節の順序を組み替えない）。追記する内容をユーザーに見せて**確認を取ってから**書く |
+   | `MISSING_LINE` | 足りない行だけを既存の節に足す。**既にある行は書き換えない**（値が古く見えても、直すかはユーザーの判断） |
+   | `OK`           | 触らない。節の値をそのまま採用する                                       |
+
+   `NO_SECTION` で既存の別の節にコマンドが書いてある場合、**その節は消さない**。人向けの
+   説明として残し、タスク運用の節からは同じコマンドを指す（重複が気になるとユーザーが
+   言ったら、どちらを残すかを聞く）。
 
 3. **通しで確かめる**。ここまでで `/list-tasks` が動く状態になっているはず:
 
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py develop/tasks.json develop/workflow.json
+   python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py develop/tasks.json
    ```
 
    まっさらなら `EMPTY` と `progress` 行の2行が出る。`MISSING` が出たら手順1が効いていない。
 
 4. **コミットする**。件名は正典「コミットメッセージ」。push はしない。
 
-5. **報告する**。作ったファイル、`develop/workflow.json` に書いた値（と、その根拠にした
-   コマンドが通ったこと）、点検で見つかった問題。最後に**次の一歩**を1行:
+5. **報告する**。作ったファイル、CLAUDE.md に書いた値（と、その根拠にしたコマンドが
+   実際に通ったこと）、CLAUDE.md をどう扱ったか（新規作成／末尾に追記／触らず）、
+   点検で見つかった問題。最後に**次の一歩**を1行:
    やりたいことを `develop/direction.md` に書いて `/plan-tasks` を呼ぶとタスクになる。
 
 ## `KEPT` が `OK:` でないとき
@@ -71,8 +96,9 @@ description: "タスク運用に要る develop/tasks.json・develop/progress.md�
 ## やらないこと
 
 - **タスクの登録・実行。** 登録は `/plan-tasks`、実行は `/next-task`
-- **`<historyDir>/` を掘る。** アーカイブが要るときに `archive.py` が作る。空ディレクトリは
+- **`docs/history/` を掘る。** アーカイブが要るときに `archive.py` が作る。空ディレクトリは
   git が追跡しないので、先に作っても残らない
 - **`develop/` を `.gitignore` に足す。** タスクの正典はコミットして共有するファイル
-- **`CLAUDE.md` の書き換え。** ブランチ運用など、プロジェクトの決めごとはユーザーのもの
+- **CLAUDE.md の書き換え（タスク運用の節より外）。** 既存の節の並べ替え・要約・他の
+  プロジェクト説明の加筆はしない。足すのは「## タスク運用」節だけ
 - **`~/.claude/skills/` へのリンク。** スキル自体の導入は、このリポジトリの `install.sh`

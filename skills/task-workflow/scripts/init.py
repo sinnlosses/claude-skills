@@ -3,14 +3,15 @@
 
 使い方: init.py [develop-dir]   （既定: develop）
 
-正典（task-workflow の WORKFLOW.md「ファイル配置と `develop/workflow.json`」）が定める
+正典（task-workflow の WORKFLOW.md「ファイル配置と CLAUDE.md」）が定める
 3ファイルを、決まった骨組みで作る。骨組みは決まりきっているのでモデルに書かせない
 （`progress.md` の節名がズレると archive.py が節を見つけられず、`direction.md` に
 見出し以外の行が混ざると `/plan-tasks` が「未対応の指示がある」と誤判定する）。
 
 **既存ファイルは上書きしない。** 中身の点検結果だけを出し、直すかどうかは呼び出し側が決める。
-`workflow.json` は作らない（無ければ全部既定値で動くため、空の設定ファイルは置かない）。
-`<historyDir>/` も掘らない（archive.py が移すときに作る）。
+CLAUDE.md は**点検するだけで書かない**（節に入る値は検証コマンドの選定そのもので、
+判断が要る。書くのは `/setup-tasks` の手順2）。
+`docs/history/` も掘らない（archive.py が移すときに作る）。
 """
 
 from __future__ import annotations
@@ -35,6 +36,11 @@ DIRECTION = "# 未対応の指示メモ\n"
 # progress.md に在るべき節。DONE_SECTION と同じく前方一致で探す（補足付きの表記が実在する）。
 PROGRESS_SECTIONS = (taskfiles.DONE_SECTION, "## 未解決", "## 注意")
 
+# CLAUDE.md 側の正典（正典「ファイル配置と CLAUDE.md」）。スキルはこの節を読む。
+CLAUDE_MD = "CLAUDE.md"
+CLAUDE_SECTION = "## タスク運用"
+CLAUDE_KEYS = ("- 検証コマンド:", "- 整形コマンド:")
+
 
 def main() -> None:
     args = sys.argv[1:]
@@ -50,11 +56,7 @@ def main() -> None:
     create(os.path.join(root, "progress.md"), PROGRESS, check_progress)
     create(os.path.join(root, "direction.md"), DIRECTION, check_direction)
 
-    workflow = os.path.join(root, "workflow.json")
-    if os.path.exists(workflow):
-        print(f"KEPT\t{workflow}\t（プロジェクト固有の値あり）")
-    else:
-        print(f"ABSENT\t{workflow}\t（無くてよい。既定値と違う値があるときだけ作る）")
+    print(check_claude_md(CLAUDE_MD))
 
 
 def create(path: str, body: str, check) -> None:
@@ -83,6 +85,22 @@ def check_progress(path: str) -> str:
         lines = f.read().splitlines()
     missing = [s for s in PROGRESS_SECTIONS if not any(l.startswith(s) for l in lines)]
     return "OK: 3節そろっている" if not missing else "MISSING_SECTION: " + ", ".join(missing)
+
+
+def check_claude_md(path: str) -> str:
+    """検証コマンドの置き場（正典の「## タスク運用」節）が在るかを見る。書き換えはしない。"""
+    if not os.path.exists(path):
+        return f"MISSING\t{path}\t（「{CLAUDE_SECTION}」節ごと作る）"
+    with open(path, encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    if not any(l.startswith(CLAUDE_SECTION) for l in lines):
+        # 実測した3プロジェクトとも、検証コマンド自体は CLAUDE.md の別の節に書いてあった。
+        # 拾い直せるので、足す前に既存の記述を読むこと。
+        return f"NO_SECTION\t{path}\t（「{CLAUDE_SECTION}」節が無い。既存の記述を読んでから足す）"
+    missing = [k for k in CLAUDE_KEYS if not any(l.startswith(k) for l in lines)]
+    if missing:
+        return f"MISSING_LINE\t{path}\t" + ", ".join(missing)
+    return f"OK\t{path}\t（{CLAUDE_SECTION} 節あり）"
 
 
 def check_direction(path: str) -> str:

@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """tasks.json の一覧を TSV で出し、末尾にアーカイブ判定を付ける。
 
-使い方: status.py <tasks.json> [workflow.json]
+使い方: status.py <tasks.json>
 
-workflow.json は無くてもよい（既定値は taskfiles.DEFAULTS）。
 `task` 本文は出力しない。一覧を見るためにコンテキストへ本文を読み込まないための道具。
 progress.md（tasks.json と同じディレクトリ）の判定も併せて出す。
 """
@@ -18,12 +17,11 @@ import taskfiles
 
 
 def main() -> None:
-    if len(sys.argv) < 2:
-        print("usage: status.py <tasks.json> [workflow.json]", file=sys.stderr)
+    if len(sys.argv) != 2:
+        print("usage: status.py <tasks.json>", file=sys.stderr)
         raise SystemExit(2)
     tasks_path = sys.argv[1]
-    config = taskfiles.load_config(sys.argv[2] if len(sys.argv) > 2 else None)
-    lim = taskfiles.limits(config)
+    lim = taskfiles.LIMITS
 
     if not os.path.exists(tasks_path):
         print("MISSING")

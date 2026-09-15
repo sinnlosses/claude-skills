@@ -2,14 +2,14 @@
 
 `/next-task`・`/plan-tasks`・`/list-tasks` の3スキルが従うルール。3スキルは手順だけを持ち、
 フィールドの定義・判断基準・アーカイブの運用はすべてここに置く（各スキルには繰り返さない）。
-プロジェクト側の `CLAUDE.md` は、この運用を採用していることと、プロジェクト固有の値
-（`develop/workflow.json`）だけを書けばよい。
+プロジェクト固有の値（検証コマンド・整形コマンド）は、プロジェクト側の `CLAUDE.md` の
+「## タスク運用」節に書く（下記）。
 
 ## 目次
 
 | 節                                       | 中身                                                                                  |
 | ---------------------------------------- | ------------------------------------------------------------------------------------- |
-| ## ファイル配置と `develop/workflow.json` | どのファイルを固定の場所に置くか、プロジェクトごとに変えられる値と既定値             |
+| ## ファイル配置と CLAUDE.md               | どのファイルを固定の場所に置くか、プロジェクト固有の値をどこに書くか                  |
 | ## tasks.json のフィールド               | `id`/`summary`/`task`/`status`/`difficulty`/`loopable`/`passes`/`evidence`/`dependencies` の定義 |
 | ## summary（一行要約）                   | 一行に収める理由と、アーカイブの `**タスク**:` 行との関係                             |
 | ## difficulty（タスクの難易度）          | `haiku`/`sonnet`/`opus`の基準表と運用ルール                                           |
@@ -25,7 +25,7 @@
 | ### 何を移すか                           | `done`タスク全件・`progress.md`の過去セッション分の移し方                             |
 | ### `dependencies` の扱い                | アーカイブ済みタスクIDの扱いと、依存解決のルール                                      |
 
-## ファイル配置と `develop/workflow.json`
+## ファイル配置と CLAUDE.md
 
 状態を持つファイルの置き場は**規約で固定**する（設定で変えられない）。スキルはプロジェクトの
 ルートで動く前提で、すべて相対パスで参照する。
@@ -35,35 +35,46 @@
 | `develop/tasks.json`           | タスクの配列（正典）                                       |
 | `develop/progress.md`          | 直近の進捗（3セクション。下記）                            |
 | `develop/direction.md`         | まだタスクになっていないユーザーの指示                     |
-| `develop/workflow.json`        | プロジェクト固有の値（下表）。無ければ全部既定値           |
-| `<historyDir>/tasks-archive.md`    | `done` タスクのアーカイブ                                  |
-| `<historyDir>/progress-archive.md` | 過去セッションの「完了したこと」                           |
-| `<historyDir>/direction.md`        | タスク化が済んだ指示メモ（当時の記述のまま）               |
+| `docs/history/tasks-archive.md`    | `done` タスクのアーカイブ                                  |
+| `docs/history/progress-archive.md` | 過去セッションの「完了したこと」                           |
+| `docs/history/direction.md`        | タスク化が済んだ指示メモ（当時の記述のまま）               |
 
 `develop/` の3ファイルを新しいプロジェクトに用意するのは `/setup-tasks`。骨組みは決まって
 いるので手で書かない（節名がズレるとアーカイブが節を見つけられない）。
 
-`develop/workflow.json` のキー。**書くのは既定値と違うものだけ**でよい:
+**プロジェクトごとに変わる値は2つだけで、置き場は `CLAUDE.md` の「## タスク運用」節**:
 
-| キー                | 既定値         | 意味                                                                                       |
-| ------------------- | -------------- | ------------------------------------------------------------------------------------------ |
-| `checkCommand`      | （なし）       | 受け入れ判定に使う検証コマンド（例: `pnpm check`）。無ければタスク本文の完了条件だけで判定し、その旨を報告に書く |
-| `formatCommand`     | （なし）       | 受け入れ前に走らせる整形コマンド（例: `pnpm format`）                                      |
-| `taskIdPrefix`      | `"T-"`         | タスクIDの接頭辞。IDは接頭辞 + 3桁の連番                                                   |
-| `historyDir`        | `"docs/history"` | アーカイブ3ファイルを置くディレクトリ                                                    |
-| `archive.doneCount` | `10`           | `done` がこの件数以上でアーカイブのトリガー                                                |
-| `archive.doneBytes` | `30720`        | `done` の占めるサイズ（`json.dumps` の文字数）がこの値超でアーカイブのトリガー                                |
-| `archive.progressCount` | `5`        | `progress.md`「完了したこと」に残す小節の上限。超えたぶんを古いほうから移す                |
-| `archive.progressBytes` | `8192`     | 同じく、残す「完了したこと」節のサイズの上限                                               |
+```markdown
+## タスク運用
 
-例（このファイルを採用したプロジェクトの1つ）:
+- 検証コマンド: `pnpm check`（変更後は必ずこれを通す。受け入れ判定に使う）
+- 整形コマンド: `pnpm format`
+- ブランチ: 作業ブランチを切る
 
-```json
-{
-  "checkCommand": "pnpm check",
-  "formatCommand": "pnpm format"
-}
+`develop/tasks.json`・`develop/progress.md`・`develop/direction.md` で管理する。
+指示は `develop/direction.md` に溜め、`/plan-tasks` でタスク化して `/next-task` で進める。
 ```
+
+- **行の頭（`- 検証コマンド:` / `- 整形コマンド:`）は変えない。** スキルがこの節を
+  `sed -n '/^## タスク運用/,/^## /p'` で読む
+- 走らせるコマンドが無いプロジェクトは `なし` と書く。**行を消さない**（「検討して不要と
+  決めた」と「まだ検討していない」を、次のセッションが区別できなくなる）
+- 検証コマンドが無い場合、受け入れ判定はタスク本文の「## 完了条件」だけで行い、その旨を
+  報告に書く
+
+**設定ファイル（`develop/workflow.json`）は持たない。** 以前は置き場も予算も設定できたが、
+実測した3プロジェクトとも書かれていたのは検証コマンドと整形コマンドの2つだけで、しかも
+**同じ内容がそのプロジェクトの `CLAUDE.md` にも書かれていた**（片方は「各スキルが言う
+チェックコマンドは `bun run check` のこと」という橋渡しの一文まで持っていた）。正典が二重に
+あると片方だけ直したときに気づけない——`progress.md` に「次にやること」を置かない理由と同じ
+形なので、人が読む側（`CLAUDE.md`）に一本化した。残りの値は**固定**:
+
+| 値                        | 固定値           |
+| ------------------------- | ---------------- |
+| タスクIDの接頭辞          | `T-` + 3桁の連番 |
+| アーカイブの置き場        | `docs/history/`  |
+| `done` のアーカイブ基準   | 10件以上、または 30720B 超 |
+| `progress.md` に残す上限  | 5小節、または 8192B |
 
 ブランチ運用（作業ブランチを切るか、デフォルトブランチに直接コミットするか）は
 プロジェクトの `CLAUDE.md` に従う。ここでは決めない。push はどのプロジェクトでも
@@ -76,7 +87,7 @@
 
 | フィールド     | 内容                                                           |
 | -------------- | -------------------------------------------------------------- |
-| `id`           | `taskIdPrefix` に3桁の連番を付けた通し番号（例: `T-042`）      |
+| `id`           | `T-` に3桁の連番を付けた通し番号（例: `T-042`）      |
 | `summary`      | 何をするかの一行要約（下記）                                   |
 | `task`         | タスクの内容（背景・理由が分かるように具体的に書く）           |
 | `status`       | `todo` / `doing` / `done`                                      |
@@ -99,7 +110,7 @@
   `summary` に理由を足すと一覧が読めなくなる
 - 対象を識別子で書く（`ConfigDirPath` を `ConfigRootPath` に改名、など）。
   「命名を直す」のような、どのタスクにも当てはまる書き方にしない
-- **`<historyDir>/tasks-archive.md` の `**タスク**:` 行に入る値がこれ。** アーカイブの
+- **`docs/history/tasks-archive.md` の `**タスク**:` 行に入る値がこれ。** アーカイブの
   エントリは `## <id>` → `**タスク**: <summary>` → `task` 本文の順で書く
 
 ## difficulty（タスクの難易度）
@@ -147,7 +158,7 @@
   下の「loopable」節）。**このときだけメインセッションが実行し、実行モデルは
   `difficulty` と一致しない**
 - サブエージェントは**まっさらな文脈で起動する**ため、`tasks.json` の `task` 本文だけで
-  作業が完結するように書く（対象ファイル・完了条件・`checkCommand` を通すことを明記する）
+  作業が完結するように書く（対象ファイル・完了条件・**検証コマンド**を通すことを明記する）
 - **`task` 本文を prompt に貼り付けない。** タスクIDと、本文を読むコマンドを渡す:
 
   ```
@@ -158,7 +169,7 @@
   貼り付けると本文がまるごと**メインの出力トークン**になる。サブエージェントが自分で読めば
   向こうの入力トークンで済み、しかも同じ内容が二重に存在しない。実測では269件中244件が
   貼り付けていて、読ませている24件より prompt が中央値で1,006文字長かった
-- 委譲したタスクも、完了報告をそのまま信用せず `checkCommand` の結果で受け入れを判定し、
+- 委譲したタスクも、完了報告をそのまま信用せず **検証コマンド**の結果で受け入れを判定し、
   `evidence` はメイン側で書く
 
 ### なぜ一致していても委譲するのか
@@ -202,7 +213,7 @@
   複数案のどれを採るかをユーザーが決めるもの
 - **会話中の文脈に依存する**: `task` 本文だけでは何を作るか決まらず、直前のやりとりを
   前提にしているもの
-- **対話的な検証が必要**: 実機での目視確認や、`checkCommand` で判定できない受け入れ
+- **対話的な検証が必要**: 実機での目視確認や、検証コマンドで判定できない受け入れ
 
 上のどれにも当たらなければ `"Y"`。**迷ったら `"N"` を選ぶ**（自動進行で事故るコストは、
 ユーザーを待たせるコストより大きい）。
@@ -244,7 +255,7 @@
 `tasks.json` とズレていた。どちらも毎セッション読まれていた。
 
 タスクを登録した経緯・グルーピングの理由・ユーザーが決めた方針は、**タスク本文の
-`## 背景`** と `<historyDir>/direction.md` が持つ。判断待ちの事項は「未解決」、
+`## 背景`** と `docs/history/direction.md` が持つ。判断待ちの事項は「未解決」、
 踏み外しやすい前提は「注意」。`progress.md` に置き場が無いものは無い。
 
 ## 良いevidenceの書き方
@@ -252,7 +263,7 @@
 「完了しました」という宣言だけでは合格にしない。次のような、後から検証可能な形で残す:
 
 - コミットハッシュ（`commit e59c410` のように）
-- `checkCommand` の通過件数（テスト件数が変わっていれば増減が分かる）
+- 検証コマンドの通過件数（テスト件数が変わっていれば増減が分かる）
 - 生成物や検証ログへの具体的な参照
 
 **書かないこと**: 設計変更の物語、検討して撤回した案、実機検証の手順の詳細、
@@ -274,7 +285,7 @@
 - **過去のコミットは遡って書き換えない**。履歴の書き換えは破壊的操作で、得られるものより
   失うもののほうが大きい
 
-IDはアーカイブ後も `<historyDir>/tasks-archive.md` に `## <id>` の節として残るため、
+IDはアーカイブ後も `docs/history/tasks-archive.md` に `## <id>` の節として残るため、
 参照先が消えた識別子にはならない。
 
 ## 指示メモ（`develop/direction.md`）
@@ -287,7 +298,7 @@ IDはアーカイブ後も `<historyDir>/tasks-archive.md` に `## <id>` の節�
   が空なら未対応の指示は無い
 - 1項目＝1タスクとは限らない。分割も統合もしてよい。ただし**「各項目 → 生成したタスクID」の
   対応表を必ず報告する**（取りこぼしの検知点がここしかないため）
-- **タスク化した時点で `develop/direction.md` を空にし、内容は `<historyDir>/direction.md` へ
+- **タスク化した時点で `develop/direction.md` を空にし、内容は `docs/history/direction.md` へ
   日付見出し付きで移す。** タスクが全部 `done` になるまで残す運用にはしない。残すと正典が
   `develop/tasks.json` と二重になり、片方だけ直したときに気づけないため。進捗の追跡は
   `develop/tasks.json` の `status` が担う
@@ -299,9 +310,9 @@ IDはアーカイブ後も `<historyDir>/tasks-archive.md` に `## <id>` の節�
 
 `develop/tasks.json` と `develop/progress.md` は毎セッション冒頭に読むファイルなので、増え続けさせない:
 
-- `develop/tasks.json` の完了タスクの詳細な記録 → `<historyDir>/tasks-archive.md`
+- `develop/tasks.json` の完了タスクの詳細な記録 → `docs/history/tasks-archive.md`
   （evidenceは「コミットハッシュ・テスト件数・アーカイブへの参照」に置き換える）
-- `develop/progress.md` の過去セッションの「完了したこと」 → `<historyDir>/progress-archive.md`
+- `develop/progress.md` の過去セッションの「完了したこと」 → `docs/history/progress-archive.md`
 
 アーカイブは当時の記述をそのまま移すだけにし、後から書き換えない（当時のファイル名・型名が
 現在と違っていても履歴としてそのまま残す）。
@@ -317,7 +328,7 @@ IDはアーカイブ後も `<historyDir>/tasks-archive.md` に `## <id>` の節�
 
 **2つのファイルを同じ検査点でまとめて判定する。** 片方だけ該当したら、その片方だけを移す。
 
-`develop/tasks.json` の基準（値は `develop/workflow.json` の `archive` で変えられる）:
+`develop/tasks.json` の基準（規約で固定。上の「ファイル配置と CLAUDE.md」）:
 
 - `status: done` が **`archive.doneCount` 件以上**（既定 10）
 - または `done` のタスクが占めるサイズが **`archive.doneBytes` 超**（既定 30KB。`json.dumps` した文字数で測る）
@@ -340,7 +351,7 @@ IDはアーカイブ後も `<historyDir>/tasks-archive.md` に `## <id>` の節�
 どちらも `YES` なら該当:
 
 ```bash
-python3 <task-workflowスキルのディレクトリ>/scripts/status.py develop/tasks.json develop/workflow.json
+python3 <task-workflowスキルのディレクトリ>/scripts/status.py develop/tasks.json
 ```
 
 ```
@@ -362,7 +373,7 @@ progress  YES   (8小節/5件, 3969/8192B, 移す3小節)
   別途残す必要はない
 - `develop/progress.md` の「完了したこと」は、**新しい順に `archive.progressCount` 件、かつ
   `archive.progressBytes` 以内に収まるぶんだけを残し**、溢れたぶんを
-  `<historyDir>/progress-archive.md` へ移す（移す先でも新しいものが上に来るよう、
+  `docs/history/progress-archive.md` へ移す（移す先でも新しいものが上に来るよう、
   見出しの直後に差し込む）。1小節だけで予算を超える場合も、**最低1小節は残す**。
   「未解決」「注意」は移さない（未完了タスクの完了条件がこれらを参照していることがある）
 - アーカイブのエントリは `## <id>` → `**タスク**: <summary の値>` → メタ行
@@ -373,7 +384,7 @@ progress  YES   (8小節/5件, 3969/8192B, 移す3小節)
 **転記は `scripts/archive.py` が行う。モデルが手で書き写さない。**
 
 ```bash
-python3 <task-workflowスキルのディレクトリ>/scripts/archive.py develop/tasks.json develop/workflow.json
+python3 <task-workflowスキルのディレクトリ>/scripts/archive.py develop/tasks.json
 ```
 
 上の形式は `tasks.json` の値から機械的に決まり、判断が1つも要らない。手で書くと

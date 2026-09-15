@@ -32,14 +32,14 @@ claude.ai 同期用に予約していて、git 管理下に混ざるのを避け
 ## プロジェクト側に要るもの
 
 タスク系スキルを使うプロジェクトは、`develop/tasks.json` `develop/progress.md`
-`develop/direction.md` を置き、検証コマンドなどプロジェクト固有の値を `develop/workflow.json`
-に書く。**用意するのは `/setup-tasks`**（既にあるファイルは上書きしない）。キーと既定値は
-`skills/task-workflow/WORKFLOW.md`「ファイル配置と `develop/workflow.json`」。
+`develop/direction.md` を置き、検証コマンドと整形コマンドを CLAUDE.md の「## タスク運用」節に
+書く。**用意するのは `/setup-tasks`**（既にあるファイルは上書きしない）。置き場と節の形は
+`skills/task-workflow/WORKFLOW.md`「ファイル配置と CLAUDE.md」。
 
 ## 制約
 
 - ユーザー単位スキルはプロジェクト単位の同名スキルより優先される。プロジェクト側で同名の
-  スキルを置いても効かないので、プロジェクト差分は `develop/workflow.json` で表す
+  スキルを置いても効かないので、プロジェクト差分は CLAUDE.md の「## タスク運用」節で表す
 - ユーザー単位スキルはクラウド/Web セッションには同期されない
 - SKILL.md 内の `` !`コマンド` `` はスキル読み込み時に実行され、非0で終わるとスキル全体が
   失敗する。設定ファイルの読み込みは `|| echo '{}'` でガードしてある

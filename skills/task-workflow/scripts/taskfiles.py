@@ -13,13 +13,18 @@ import os
 import re
 import unicodedata
 
-DEFAULTS = {
+# アーカイブの予算と置き場は**規約で固定**する（プロジェクトごとの設定にしない）。
+# 設定できるようにしてあった `develop/workflow.json` を実測したところ、3プロジェクトとも
+# ここは1つも書いておらず、書かれていたのは検証コマンドと整形コマンドだけだった。
+# その2つは CLAUDE.md にも同じ内容が書かれていて正典が二重になっていたので、
+# CLAUDE.md の「## タスク運用」節に一本化した（正典「ファイル配置と CLAUDE.md」）。
+LIMITS = {
     "doneCount": 10,
     "doneBytes": 30720,
     "progressCount": 5,
     "progressBytes": 8192,
 }
-DEFAULT_HISTORY_DIR = "docs/history"
+HISTORY_DIR = "docs/history"
 
 # 「## 完了したこと（このセッション）」のように後ろに補足が付いた表記が実在するので前方一致で拾う。
 DONE_SECTION = "## 完了したこと"
@@ -35,24 +40,6 @@ LONG_SUMMARY_WIDTH = 80
 def display_width(s: str) -> int:
     """端末に出したときの桁数。日本語（East Asian Wide/Fullwidth）は2桁。"""
     return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in s)
-
-
-def load_config(path: str | None) -> dict:
-    if not path or not os.path.exists(path):
-        return {}
-    with open(path, encoding="utf-8") as f:
-        loaded = json.load(f)
-    return loaded if isinstance(loaded, dict) else {}
-
-
-def limits(config: dict) -> dict:
-    archive = config.get("archive")
-    archive = archive if isinstance(archive, dict) else {}
-    return {k: int(archive.get(k, v)) for k, v in DEFAULTS.items()}
-
-
-def history_dir(config: dict) -> str:
-    return config.get("historyDir", DEFAULT_HISTORY_DIR)
 
 
 def progress_path_for(tasks_path: str) -> str:

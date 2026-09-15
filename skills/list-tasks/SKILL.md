@@ -9,12 +9,9 @@ description: "develop/tasks.json に登録されているタスクの一覧を�
 **何も書き換えない。タスクを実行しない。** 実行は `/next-task`、登録は `/plan-tasks`。
 運用のルールは `task-workflow` スキルの `WORKFLOW.md`（以下「正典」）。
 
-## このプロジェクトの設定（`develop/workflow.json`）
-
-!`cat develop/workflow.json 2>/dev/null || echo '{}'`
-
-`{}` なら既定値（アーカイブ判定は `done` 10件以上または 30KB超。正典「ファイル配置と
-`develop/workflow.json`」）。
+アーカイブ判定の予算（`done` 10件以上または 30KB超）は規約で固定されていて、プロジェクト
+ごとの設定は無い（正典「ファイル配置と CLAUDE.md」）。このスキルは検証コマンドを使わないので、
+CLAUDE.md も読まない。
 
 ## タスク本文を読み込まない
 
@@ -23,7 +20,7 @@ description: "develop/tasks.json に登録されているタスクの一覧を�
 `develop/tasks.json` を Read ツールで開いたり `cat` したりしない。
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py develop/tasks.json develop/workflow.json
+python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py develop/tasks.json
 ```
 
 出力は TSV。列は `id / status / difficulty / loopable / dependencies / 着手可否 / passes /
@@ -68,7 +65,7 @@ summary`。`loopable` 列の `?` は、フィールドが無い旧タスク（`Y
    - **テーブルにしない。** `summary` を全文出すと1セルが端末幅を超えて表が崩れる
    - **依存先を別に書き足さない**（`T-124 待ち` が待ち先のIDを持つので二重になる）
    - **`done` の行は出さない。** 「次に何をやるか」を決めるための一覧で、`done` は
-     `<historyDir>/tasks-archive.md` にある。件数だけ下の行で伝える
+     `docs/history/tasks-archive.md` にある。件数だけ下の行で伝える
 
    | TSV                   | 書き方       |
    | --------------------- | ------------ |
@@ -121,7 +118,7 @@ summary`。`loopable` 列の `?` は、フィールドが無い旧タスク（`Y
 ## 出さないもの
 
 - タスク本文（`## 背景`・`## やること` などの中身）。**要約だけ**が仕事
-- `evidence` の内容。`done` の詳細を見たいときは `<historyDir>/tasks-archive.md`（既定 `docs/history/`）
+- `evidence` の内容。`done` の詳細を見たいときは `docs/history/tasks-archive.md`
 - `develop/progress.md` の内容。あれは別のファイルで、このスキルは触らない
 - 2件目以降の実行計画。オススメは**1件だけ**で、順番を組み立てるのは仕事ではない
 - 推薦したタスクの実装方針・進め方。本文を読まずに推薦しているので、中身の話はできない
