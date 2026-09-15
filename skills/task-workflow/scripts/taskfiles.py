@@ -18,11 +18,14 @@ import unicodedata
 # ここは1つも書いておらず、書かれていたのは検証コマンドと整形コマンドだけだった。
 # その2つは CLAUDE.md にも同じ内容が書かれていて正典が二重になっていたので、
 # CLAUDE.md の「## タスク運用」節に一本化した（正典「ファイル配置と CLAUDE.md」）。
+# サイズは**文字数**で測る（`len`）。バイト数ではないのは、減らしたいのがディスク使用量では
+# なくコンテキスト消費だから。日本語主体のタスク本文では実バイト数は約3倍になるので、
+# 出力のラベルも「文字」で統一してある（`B` と書くと3倍ズレて読まれる）。
 LIMITS = {
     "doneCount": 10,
-    "doneBytes": 30720,
+    "doneChars": 30720,
     "progressCount": 5,
-    "progressBytes": 8192,
+    "progressChars": 8192,
 }
 HISTORY_DIR = "docs/history"
 
@@ -50,14 +53,36 @@ def progress_path_for(tasks_path: str) -> str:
 # --- tasks.json ---------------------------------------------------------
 
 
-def done_plan(tasks: list[dict], count_limit: int, bytes_limit: int) -> tuple[list[dict], int, bool]:
-    """アーカイブする `done` タスクと、そのサイズ、トリガーに該当するかを返す。
+def load_tasks(path: str) -> tuple[list[dict], str | None]:
+    """tasks.json を読む。読めなければ `(空リスト, 理由)` を返す（例外を投げない）。
+
+    呼び出し側のスキルは「想定外の出力＝`python3` が使えない」と読む規約なので、
+    データの不備で traceback を出すと環境の故障として報告されてしまう。理由を文字列で
+    返して、呼び出し側が `INVALID` として扱えるようにする。
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            tasks = json.load(f)
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        return [], f"JSONとして読めない（{e}）"
+    except OSError as e:
+        return [], f"読めない（{e}）"
+    if not isinstance(tasks, list):
+        return [], f"配列ではない（{type(tasks).__name__}）"
+    bad = [i for i, t in enumerate(tasks) if not isinstance(t, dict)]
+    if bad:
+        return [], f"配列の要素がオブジェクトではない（{len(bad)}件: index {bad[:5]}）"
+    return tasks, None
+
+
+def done_plan(tasks: list[dict], count_limit: int, chars_limit: int) -> tuple[list[dict], int, bool]:
+    """アーカイブする `done` タスクと、その文字数、トリガーに該当するかを返す。
 
     `todo` は数えない（移す先が無いものを数えると、鳴るだけで何も起きないトリガーになる）。
     """
     done = [t for t in tasks if t.get("status") == "done"]
     size = len(json.dumps(done, ensure_ascii=False))
-    return done, size, (len(done) >= count_limit or size > bytes_limit)
+    return done, size, (len(done) >= count_limit or size > chars_limit)
 
 
 # --- progress.md --------------------------------------------------------
@@ -117,9 +142,9 @@ def is_newest_first(sections: list[Section]) -> bool:
 
 
 def progress_plan(
-    sections: list[Section], count_limit: int, bytes_limit: int
+    sections: list[Section], count_limit: int, chars_limit: int
 ) -> tuple[list[Section], list[Section]]:
-    """新しい順に count_limit 件、かつ bytes_limit 以内を残し、残りを移す。
+    """新しい順に count_limit 件、かつ chars_limit 文字以内を残し、残りを移す。
 
     セッションの識別は諦めて予算で切る。「このセッション分だけ残す」はファイルから
     機械的に決められない（新しいセッションは、上の小節を誰が書いたか判別できないし、
@@ -130,7 +155,7 @@ def progress_plan(
     for s in sections:
         if len(keep) >= count_limit:
             break
-        if keep and size + len(s) > bytes_limit:
+        if keep and size + len(s) > chars_limit:
             break
         keep.append(s)
         size += len(s)

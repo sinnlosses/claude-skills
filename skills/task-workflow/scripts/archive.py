@@ -55,20 +55,24 @@ def archive_tasks(tasks_path: str, history: str, lim: dict, dry_run: bool) -> bo
     if not os.path.exists(tasks_path):
         print(f"tasks\tMISSING\t{tasks_path}")
         return False
-    with open(tasks_path, encoding="utf-8") as f:
-        tasks = json.load(f)
+    tasks, err = taskfiles.load_tasks(tasks_path)
+    if err:
+        # 読めないファイルには**書き戻さない**。運用中のデータなので、壊れた読み取りを
+        # もとに書くと進行中のタスクを失う（`/setup-tasks` の `INVALID:` と同じ立場）。
+        print(f"tasks\tINVALID\t{tasks_path}\t{err}\t書き換えずに中止した")
+        return False
 
-    done, size, hit = taskfiles.done_plan(tasks, lim["doneCount"], lim["doneBytes"])
+    done, size, hit = taskfiles.done_plan(tasks, lim["doneCount"], lim["doneChars"])
     if not hit:
         print(
             f"tasks\tSKIP\tトリガー未達 (done {len(done)}/{lim['doneCount']}件, "
-            f"{size}/{lim['doneBytes']}B)"
+            f"{size}/{lim['doneChars']}文字)"
         )
         return False
 
-    ids = ",".join(t["id"] for t in done)
+    ids = ",".join(t.get("id", "(id無し)") for t in done)
     if dry_run:
-        print(f"tasks\tDRY-RUN\t{len(done)}件 ({size}B): {ids}")
+        print(f"tasks\tDRY-RUN\t{len(done)}件 ({size}文字): {ids}")
         return True
 
     before = os.path.getsize(tasks_path)
@@ -109,7 +113,7 @@ def render_task(t: dict) -> str:
     """正典「何を移すか」のエントリ形式。tasks.json の値だけから組み立てる。"""
     deps = ", ".join(t.get("dependencies") or []) or "なし"
     lines = [
-        f"## {t['id']}",
+        f"## {t.get('id', '(id無し)')}",
         "",
         f"**タスク**: {t.get('summary') or '(summaryなし)'}",
         "",
@@ -190,12 +194,12 @@ def archive_progress(progress_path: str, history: str, lim: dict, dry_run: bool)
         )
         return False
 
-    keep, move = taskfiles.progress_plan(sections, lim["progressCount"], lim["progressBytes"])
+    keep, move = taskfiles.progress_plan(sections, lim["progressCount"], lim["progressChars"])
     total = sum(len(s) for s in sections)
     if not move:
         print(
             f"progress\tSKIP\t予算内 ({len(sections)}/{lim['progressCount']}件, "
-            f"{total}/{lim['progressBytes']}B)"
+            f"{total}/{lim['progressChars']}文字)"
         )
         return False
 

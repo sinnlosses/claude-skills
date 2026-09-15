@@ -20,6 +20,6 @@ user-invocable: false
 **どちらもモデルが手で代用しない**（`tasks.json` の全文読みと手書きの転記を避けるための道具）:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/status.py  develop/tasks.json  # 一覧＋判定（読み取り専用）
-python3 ${CLAUDE_SKILL_DIR}/scripts/archive.py develop/tasks.json  # 転記（--dry-run あり）
+python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py  develop/tasks.json  # 一覧＋判定（読み取り専用）
+python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/archive.py develop/tasks.json  # 転記（--dry-run あり）
 ```

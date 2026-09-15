@@ -73,8 +73,8 @@
 | ------------------------- | ---------------- |
 | タスクIDの接頭辞          | `T-` + 3桁の連番 |
 | アーカイブの置き場        | `docs/history/`  |
-| `done` のアーカイブ基準   | 10件以上、または 30720B 超 |
-| `progress.md` に残す上限  | 5小節、または 8192B |
+| `done` のアーカイブ基準   | 10件以上、または 30720文字 超 |
+| `progress.md` に残す上限  | 5小節、または 8192文字 |
 
 ブランチ運用（作業ブランチを切るか、デフォルトブランチに直接コミットするか）は
 プロジェクトの `CLAUDE.md` に従う。ここでは決めない。push はどのプロジェクトでも
@@ -330,8 +330,10 @@ IDはアーカイブ後も `docs/history/tasks-archive.md` に `## <id>` の節�
 
 `develop/tasks.json` の基準（規約で固定。上の「ファイル配置と CLAUDE.md」）:
 
-- `status: done` が **`archive.doneCount` 件以上**（既定 10）
-- または `done` のタスクが占めるサイズが **`archive.doneBytes` 超**（既定 30KB。`json.dumps` した文字数で測る）
+- `status: done` が **10件以上**
+- または `done` のタスクが占めるサイズが **30720文字 超**（`json.dumps(ensure_ascii=False)` の
+  文字数。**バイト数ではない**——減らしたいのがディスク使用量ではなくコンテキスト消費だから。
+  日本語主体の本文では実バイト数は約3倍になるので、`B` と書かない）
 
 **`todo` のタスクはこの判定の対象外**（サイズにも件数にも数えない）。`todo` はこれから
 やる作業の待ち行列で、アーカイブする先が無い。ファイル全体のサイズで判定すると、
@@ -340,8 +342,8 @@ IDはアーカイブ後も `docs/history/tasks-archive.md` に `## <id>` の節�
 
 `develop/progress.md` の基準（「完了したこと」配下の小節を、新しい順に数える）:
 
-- 小節が **`archive.progressCount` 件を超える**（既定 5）
-- または「完了したこと」節が **`archive.progressBytes` を超える**（既定 8KB）
+- 小節が **5件を超える**
+- または「完了したこと」節が **8192文字 を超える**（`tasks.json` と同じく文字数で測る）
 
 `todo` と同じ理屈で、「未解決」「注意」の2節はサイズ判定に含めない
 （アーカイブする先が無いため）。
@@ -351,12 +353,12 @@ IDはアーカイブ後も `docs/history/tasks-archive.md` に `## <id>` の節�
 どちらも `YES` なら該当:
 
 ```bash
-python3 <task-workflowスキルのディレクトリ>/scripts/status.py develop/tasks.json
+python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py develop/tasks.json
 ```
 
 ```
-archive   NO    (done 7/10件, 24030/30720B)
-progress  YES   (8小節/5件, 3969/8192B, 移す3小節)
+archive   NO    (done 7/10件, 24030/30720文字)
+progress  YES   (8小節/5件, 3969/8192文字, 移す3小節)
 ```
 
 `progress` 行が `ERROR` なら、小節が新しい順に並んでいない（上の「progress.md の構成」）。
@@ -371,8 +373,8 @@ progress  YES   (8小節/5件, 3969/8192B, 移す3小節)
 - `done` のタスクは**全件**アーカイブする（直近セッションで完了した分も含む）。直近セッションの
   記録は `develop/progress.md` の「完了したこと」が担うため、`develop/tasks.json` 側に
   別途残す必要はない
-- `develop/progress.md` の「完了したこと」は、**新しい順に `archive.progressCount` 件、かつ
-  `archive.progressBytes` 以内に収まるぶんだけを残し**、溢れたぶんを
+- `develop/progress.md` の「完了したこと」は、**新しい順に 5小節、かつ 8192文字 以内に
+  収まるぶんだけを残し**、溢れたぶんを
   `docs/history/progress-archive.md` へ移す（移す先でも新しいものが上に来るよう、
   見出しの直後に差し込む）。1小節だけで予算を超える場合も、**最低1小節は残す**。
   「未解決」「注意」は移さない（未完了タスクの完了条件がこれらを参照していることがある）
@@ -384,7 +386,7 @@ progress  YES   (8小節/5件, 3969/8192B, 移す3小節)
 **転記は `scripts/archive.py` が行う。モデルが手で書き写さない。**
 
 ```bash
-python3 <task-workflowスキルのディレクトリ>/scripts/archive.py develop/tasks.json
+python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/archive.py develop/tasks.json
 ```
 
 上の形式は `tasks.json` の値から機械的に決まり、判断が1つも要らない。手で書くと

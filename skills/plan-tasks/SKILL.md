@@ -44,8 +44,10 @@ description: "develop/direction.md に書かれたユーザーからの指示を
    python3 -c "import json,sys; print([t for t in json.load(open('develop/tasks.json')) if t['id']==sys.argv[1]][0]['task'])" T-XXX
    ```
 
-   `python3` が落ちる環境では全文読みで代用しない（`/next-task` の「スクリプトが動かない
-   とき」と同じ）。`develop/progress.md` は「未解決」「注意」だけ見れば足りる。
+   `INVALID` が出たら `tasks.json` が読めない（データの不備）。理由をそのまま報告して
+   終了し、**登録に進まない**（壊れたファイルへの追記は中身を失う）。`python3` が落ちる
+   環境では全文読みで代用しない（どちらも `/next-task` の「スクリプトが動かないとき」と同じ）。
+   `develop/progress.md` は「未解決」「注意」だけ見れば足りる。
 
 2. **確かめる**: 指示の各項目について、**現物のコードとドキュメントを読んで裏を取る**。
    指示は前提が古かったり、既に対応済みだったりする。ここで

@@ -48,9 +48,9 @@ description: アプリの性質（何を中心に回るか・外の世界との�
 正規表現を直して使う）:
 
 ```bash
-python3 <このスキルのパス>/scripts/import_edges.py src --markdown           # 第1階層で集計（行数つき）
-python3 <このスキルのパス>/scripts/import_edges.py src --depth 2 --markdown # 領域の中まで
-python3 <このスキルのパス>/scripts/import_edges.py src --reach protocol     # protocol の各ファイルを誰が引くか
+python3 ${CLAUDE_SKILL_DIR}/scripts/import_edges.py src --markdown           # 第1階層で集計（行数つき）
+python3 ${CLAUDE_SKILL_DIR}/scripts/import_edges.py src --depth 2 --markdown # 領域の中まで
+python3 ${CLAUDE_SKILL_DIR}/scripts/import_edges.py src --reach protocol     # protocol の各ファイルを誰が引くか
 ```
 
 `--reach` は「共有する契約」の層に効く。両側から到達されないファイルは、その層に居る理由が弱い。

@@ -16,7 +16,6 @@ CLAUDE.md は**点検するだけで書かない**（節に入る値は検証コ
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 
@@ -70,13 +69,11 @@ def create(path: str, body: str, check) -> None:
 
 
 def check_tasks(path: str) -> str:
-    try:
-        with open(path, encoding="utf-8") as f:
-            tasks = json.load(f)
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        return f"INVALID: JSONとして読めない（{e}）"
-    if not isinstance(tasks, list):
-        return "INVALID: 配列ではない"
+    # 読めるかどうかの判定は `taskfiles.load_tasks` に集約する（`status.py` の `INVALID`
+    # 行と同じ理由を返すので、どのスキルから見ても同じ言葉で説明される）。
+    tasks, err = taskfiles.load_tasks(path)
+    if err:
+        return f"INVALID: {err}"
     return f"OK: {len(tasks)}件"
 
 
