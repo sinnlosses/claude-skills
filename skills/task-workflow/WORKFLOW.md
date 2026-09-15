@@ -40,6 +40,9 @@
 | `<historyDir>/progress-archive.md` | 過去セッションの「完了したこと」                           |
 | `<historyDir>/direction.md`        | タスク化が済んだ指示メモ（当時の記述のまま）               |
 
+`develop/` の3ファイルを新しいプロジェクトに用意するのは `/setup-tasks`。骨組みは決まって
+いるので手で書かない（節名がズレるとアーカイブが節を見つけられない）。
+
 `develop/workflow.json` のキー。**書くのは既定値と違うものだけ**でよい:
 
 | キー                | 既定値         | 意味                                                                                       |

@@ -18,7 +18,7 @@ description: "develop/direction.md に書かれたユーザーからの指示を
 `{}` なら既定値で動く（正典「ファイル配置と `develop/workflow.json`」）。以下で
 `checkCommand`・`taskIdPrefix`・`historyDir` と書いたところは、この設定の値に読み替える。
 `develop/tasks.json` が無ければ、**このプロジェクトでタスク運用を始めてよいかユーザーに
-確認してから** `[]` で作る。
+確認してから** `/setup-tasks` で用意する（`progress.md`・`direction.md` も一緒に要る）。
 
 ## 手順
 

@@ -16,7 +16,7 @@ claude.ai 同期用に予約していて、git 管理下に混ざるのを避け
 - [obra/superpowers](https://github.com/obra/superpowers) を日本語化したもの（MIT。
   `LICENSE.txt` を同梱）: `writing-skills`
 - 自作（`develop/` 配下でタスクを管理する運用）: `task-workflow`（正典・参照専用）
-  `next-task` `plan-tasks` `list-tasks`
+  `setup-tasks` `next-task` `plan-tasks` `list-tasks`
 
 翻訳の方針: **散文とコメントは日本語にし、コード例・スキーマ・識別子・URL・引用文献は原文のまま**
 残す。`writing-skills` が参照していた superpowers 固有のスキル名（`superpowers:test-driven-development`
@@ -31,10 +31,10 @@ claude.ai 同期用に予約していて、git 管理下に混ざるのを避け
 
 ## プロジェクト側に要るもの
 
-タスク系4スキルを使うプロジェクトは、`develop/tasks.json` `develop/progress.md`
+タスク系スキルを使うプロジェクトは、`develop/tasks.json` `develop/progress.md`
 `develop/direction.md` を置き、検証コマンドなどプロジェクト固有の値を `develop/workflow.json`
-に書く。キーと既定値は `skills/task-workflow/WORKFLOW.md`「ファイル配置と
-`develop/workflow.json`」。
+に書く。**用意するのは `/setup-tasks`**（既にあるファイルは上書きしない）。キーと既定値は
+`skills/task-workflow/WORKFLOW.md`「ファイル配置と `develop/workflow.json`」。
 
 ## 制約
 
