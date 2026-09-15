@@ -48,7 +48,6 @@ def main() -> None:
         else:
             ready = "READY"
         summary = t.get("summary", "(summaryなし)").replace("\t", " ")
-        short = taskfiles.ellipsize(summary)
         # 警告は**まだ直せるタスクだけ**。`done` の summary は履歴なので遡って書き換えない
         # （正典「difficulty」の「完了済みには遡って付けない」と同じ立場）。
         if t["status"] != "done" and taskfiles.display_width(summary) > taskfiles.LONG_SUMMARY_WIDTH:
@@ -64,7 +63,6 @@ def main() -> None:
                     ready,
                     "yes" if t["passes"] else "no",
                     summary,
-                    short,
                 ]
             )
         )

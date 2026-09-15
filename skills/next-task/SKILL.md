@@ -50,7 +50,7 @@ tasks.json を全文読んで代用しない。** 節約の仕組みが死んで
 
    `MISSING` ならタスク運用を始めていない旨を報告して終了する。`EMPTY` なら登録されている
    タスクは0件。TSVの読み方は `/list-tasks` と同じ（列は `id / status / difficulty /
-   loopable / dependencies / 着手可否 / passes / summary / summary_short`）。
+   loopable / dependencies / 着手可否 / passes / summary`）。
 
    末尾の `archive` 行（`tasks.json` の判定）か `progress` 行（`progress.md` の判定）が
    `YES` なら、**着手前にアーカイブする**（正典「いつ移すか（トリガー）」）。転記は判断を
