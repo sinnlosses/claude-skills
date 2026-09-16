@@ -2,6 +2,10 @@
 
 ## 完了したこと
 
+### 2026-09-16 利用側3プロジェクトの移行を終えた（T-005）
+
+Git-Bulk-Maestro・helm-yadokari・tsukumo の3つとも、履歴ファイルの改名・CLAUDE.md の「## タスク運用」節・`develop/workflow.json` の削除を済ませた。各リポジトリの検証コマンドはこちらで再実行して通過を確認。**3つとも作業ブランチ上にあり、main へは未マージ**。
+
 ### 2026-09-16 ブランチ運用を正典の既定にした（T-008）
 
 `feature/T-<タスクID>` を切り、main へ fast-forward マージしてブランチを削除するまでをタスクのゴールにした。ff できないときは rebase して再試行し、rebase がコンフリクトしたら `--no-ff` に落とさずユーザーに預ける。`CLAUDE.md` の `- ブランチ:` 行で上書きできる。
@@ -28,6 +32,6 @@
 
 ## 注意
 
-- T-005 は3リポジトリ中 Git-Bulk-Maestro だけ完了（`a02cac4`、push なし）。helm-yadokari は2回着手して2回とも別セッションの再開で中断（残骸は無い）、tsukumo は未コミットが残っていて未着手。詳細と再開時の手掛かりは T-005 の本文「## 進捗」に書いた
-- `develop/workflow.json` の廃止が未反映なのは helm-yadokari と tsukumo の2つ（Git-Bulk-Maestro は `a02cac4` で移行済み）。2つとも `workflow.json` が残り、CLAUDE.md に `- 検証コマンド:` の行が無い。今は `/next-task` のフォールバックが別の節から拾って動いている。移行は T-005。
+- T-005 の成果は3リポジトリとも**作業ブランチに置いたままで main へマージしていない**（承認の範囲が「作業ブランチにコミットしてよい」だったため）。ブランチ名は3つとも `chore/docs-history-rename-workflow-cleanup`（Git-Bulk-Maestro のみ同名で `a02cac4`）。取り込みはユーザーの判断
+- 3リポジトリとも `docs/workflow.md` に `develop/workflow.json` の値の表が残っている。Git-Bulk-Maestro のみ承認を得て削除済みで、helm-yadokari と tsukumo は範囲外として触っていない
 - ブランチ運用は T-008 で `feature/T-<タスクID>` + main への ff マージ + ブランチ削除に変わる。T-008 が done になるまでは `CLAUDE.md` の `- ブランチ: 作業ブランチを切る` が有効
