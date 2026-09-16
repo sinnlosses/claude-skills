@@ -32,6 +32,7 @@ Git-Bulk-Maestro・helm-yadokari・tsukumo の3つとも、履歴ファイルの
 
 ## 注意
 
-- T-005 の成果は3リポジトリとも**作業ブランチに置いたままで main へマージしていない**（承認の範囲が「作業ブランチにコミットしてよい」だったため）。ブランチ名は3つとも `chore/docs-history-rename-workflow-cleanup`（Git-Bulk-Maestro のみ同名で `a02cac4`）。取り込みはユーザーの判断
+- T-005 の成果は3リポジトリとも main へ fast-forward マージ済み（Git-Bulk-Maestro `a02cac4`、helm-yadokari `4e230fc`、tsukumo `76400f3`）。作業ブランチは削除済みで、**push はしていない**
+- **タスクの成果は作業ブランチで止めず、ローカルの main へマージするまで自動でやってよい**（2026-09-16 にユーザーが指示）。他のリポジトリを触るタスクでも同じ。push は含まない
 - 3リポジトリとも `docs/workflow.md` に `develop/workflow.json` の値の表が残っている。Git-Bulk-Maestro のみ承認を得て削除済みで、helm-yadokari と tsukumo は範囲外として触っていない
 - ブランチ運用は T-008 で `feature/T-<タスクID>` + main への ff マージ + ブランチ削除に変わる。T-008 が done になるまでは `CLAUDE.md` の `- ブランチ: 作業ブランチを切る` が有効
