@@ -28,4 +28,5 @@
 
 ## 注意
 
+- T-005 は3リポジトリ中 Git-Bulk-Maestro だけ完了（`a02cac4`、push なし）。helm-yadokari と tsukumo は 2026-09-16 時点で別セッションが作業中（未コミット33件ずつ）のため着手していない。詳細と再開時の手掛かりは T-005 の本文「## 進捗」に書いた
 - 利用側3プロジェクト（Git-Bulk-Maestro・helm-yadokari・tsukumo）は、`develop/workflow.json` の廃止が反映されていない。3つとも `workflow.json` が残り、CLAUDE.md に `- 検証コマンド:` の行が無い。今は `/next-task` のフォールバックが別の節から拾って動いている。移行は T-005。
