@@ -22,10 +22,6 @@ Git-Bulk-Maestro・helm-yadokari・tsukumo の3つとも、履歴ファイルの
 
 `N` になる理由を「事前に聞けば解けるか」で4行の表に分け、残るのは「対話的な検証が必要」だけにした。`/plan-tasks` には `N` を付ける前に聞く手順と、聞いた結果を焼き込む `## 決まっていること（蒸し返さない）` 節を足した。
 
-### 2026-09-16 develop/ と docs/history/ の役割を正典化し、履歴を改名した（T-004）
-
-`develop/<名前>` が生きている状態・`docs/history/<名前>` がその履歴という規約を `WORKFLOW.md` に据え、指示の入口をファイルと会話の2つにした（会話は明示の指示のときだけ、`/loop` 下では使わない）。`tasks-archive.md` → `tasks.md`、`progress-archive.md` → `progress.md` の改名をスキル4ファイルに反映。
-
 ## 未解決
 
 - なし

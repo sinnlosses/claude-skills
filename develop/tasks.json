@@ -105,5 +105,27 @@
     "status": "done",
     "passes": true,
     "evidence": "WORKFLOW.md のブランチ運用と next-task/SKILL.md 手順8を、--ff-only + rebase からふつうの git merge に変更。検証コマンドの再実行は「マージコミットができた回だけ main で」に掛け替え、落ちたら reset --hard で main を戻す（未コミットの変更があれば reset せず報告）。コンフリクトは自動解消せずユーザーに預ける。grep -rn 'ff-only|rebase' skills/ が0件、./check.sh 通過。"
+  },
+  {
+    "id": "T-010",
+    "difficulty": "sonnet",
+    "loopable": "Y",
+    "dependencies": [],
+    "summary": "direction.md を著者で2節に分け、エージェントのドラフトに承認ゲートを置く",
+    "task": "## 背景\n\n`skills/task-workflow/WORKFLOW.md` は `develop/direction.md` を「ユーザーからの指示\n（まだタスクになっていない）」と定義している（「ファイル配置と CLAUDE.md」の表と\n「指示メモ（`develop/direction.md`）」節）。書き手はユーザーだけで、エージェントが作業中に\n見つけた「これも直したい」を置く場所が無い。いまエージェントがこのファイルに対してするのは\n`/setup-tasks` で雛形を作ることと、`/plan-tasks` でタスク化した後に見出しだけに空にすること\nの2つで、中身を足す役は持っていない。\n\n指示の入口は2つ（ファイル入口＝direction.md に書く／会話入口＝チャットで明示の指示）で、\n会話入口は `/loop` から呼ばれたときは塞いである（無人進行中に会話の断片がタスク化するのを\n防ぐため。正典「指示メモ」と `skills/plan-tasks/SKILL.md` 手順1）。ファイル入口にはこの封じが\n無いので、direction.md をエージェントも書ける置き場に広げると、`/loop` 中にエージェントが\n書いたドラフトをエージェント自身がタスク化して実装できてしまう。\n\nあわせて2つズレる。`docs/history/direction.md` に書くのは正典上「ユーザーの生の言い回し」\nだけなので、エージェントのドラフトをそのまま移すと台帳が出典を偽る。また\n`skills/next-task/SKILL.md` 手順1・2は「見出し行以外に中身があるか」で未タスク化の指示を\n判定し、`READY` が0件のとき「`/plan-tasks` が先」と報告するので、ドラフトが溜まっている\nだけで催促が出る。\n\n判定の実装は3箇所: `skills/next-task/SKILL.md` 手順1 と `skills/plan-tasks/SKILL.md` 手順1 の\n`grep -v '^#' develop/direction.md | grep -v '^\\s*$'`、および\n`skills/task-workflow/scripts/init.py` の `check_direction()`（見出し以外の行数を数える）。\n雛形は同ファイルの `DIRECTION` 定数で、いまは `# 未対応の指示メモ` の1行。\n\n## 決まっていること（蒸し返さない）\n\n- `develop/direction.md` は「まだタスクになっていないドラフト」の置き場とし、ユーザーと\n  エージェントの両方が書ける。決まったタスクの正典は従来どおり `develop/tasks.json`\n- 節を2つ置いて著者で分ける: `## ユーザーから` と `## エージェントのドラフト`\n- 節見出しは `#` で始まるため、既存の `grep -v '^#'` 判定がそのまま動く形にする\n  （行頭マーカー方式は採らない）\n- `## エージェントのドラフト` は、対話セッションでユーザーの承認を得たものだけタスク化する。\n  未承認のものは節に残してよい（まだ `tasks.json` に無いので正典は二重にならない）\n- `/plan-tasks` が `/loop` から呼ばれているときは `## エージェントのドラフト` を一切\n  触らない（会話入口を塞ぐのと同じ理由）\n- `docs/history/direction.md` には、ドラフト由来のものだけ出典を1行添える\n  （例: `（エージェントのドラフト / 承認: 「…」）`）。ユーザー由来の書き方は変えない\n- `/next-task` が「`/plan-tasks` が先」と報告するのは `## ユーザーから` に中身があるときだけ。\n  行数の報告は節ごとに分ける\n- 既存の「タスク化済みを `develop/direction.md` に残さない」原則は維持する\n- 呼び名はリポジトリ既存の語彙（ユーザー／エージェント）に合わせ、出力スタイル由来の\n  呼び名は使わない\n\n## 解くべき論点\n\n- 節が無い `develop/direction.md`（この変更より前に作られたもの、利用側プロジェクトの\n  既存ファイル）をどう扱うか。「節が無ければ全体を `## ユーザーから` とみなす」で足りるか、\n  判定側に明記が要るか\n\n## やること\n\n1. `skills/task-workflow/WORKFLOW.md` の「指示メモ（`develop/direction.md`）」節と\n   「ファイル配置と CLAUDE.md」の表を書き換える（定義・2節・承認ゲート・`/loop` の封じ・\n   履歴の出典注記）。冒頭の目次表の該当行も合わせる\n2. `skills/plan-tasks/SKILL.md` の手順1の分岐と手順6を節ごとの扱いに直し、\n   「完了報告のフォーマット」に承認の有無を出す\n3. `skills/next-task/SKILL.md` の手順1・2と「完了報告のフォーマット」を、節ごとの行数と\n   `## ユーザーから` 基準の判定に直す\n4. `skills/task-workflow/scripts/init.py` の `DIRECTION` 定数を2節入りの雛形にし、\n   `check_direction()` を節ごとに数える形にする。`skills/setup-tasks/SKILL.md` の\n   雛形の説明も合わせる\n5. `skills/task-workflow/scripts/selftest.py` の `direction.md` を扱うテストを、新しい雛形と\n   判定に合わせる\n6. 論点で決めた「節が無いファイル」の扱いを、判定する側（init.py と2つの SKILL.md）に\n   1行で書く\n\n## 完了条件\n\n- `./check.sh` が通る\n- `develop/direction.md` を扱う6箇所（WORKFLOW.md・plan-tasks・next-task・setup-tasks・\n  init.py・selftest.py）が同じ節名で揃っている\n- `/loop` から `/plan-tasks` を呼んだとき `## エージェントのドラフト` を触らないことが、\n  `skills/plan-tasks/SKILL.md` の手順1に書かれている\n- 節が無い `direction.md` を読ませても、判定が従来どおり（全体を未タスク化の指示として\n  数える）動くことを確認した結果が `evidence` にある\n\n## 注意\n\n- 利用側プロジェクトの `develop/direction.md` はこのリポジトリからは触らない。移行が要る\n  なら別タスクにする（前例: T-005）\n- このリポジトリ自身の `develop/direction.md` を2節の形に直すのはこのタスクに含めてよい\n",
+    "status": "todo",
+    "passes": false,
+    "evidence": ""
+  },
+  {
+    "id": "T-011",
+    "difficulty": "haiku",
+    "loopable": "Y",
+    "dependencies": [],
+    "summary": "出力スタイル由来の呼び名をスキルに書かない約束を README に足す",
+    "task": "## 背景\n\n`skills/` 配下は `install.sh` でユーザー単位スキルとして配る共有物で、他のプロジェクトでも\n読まれる。一方セッションの人格は出力スタイルで差し替わるため、スキルやワークフロー文書に\n出力スタイル由来の呼び名（一人称、ユーザーへの呼びかけ）を書くと、スタイルを変えただけで\n文書が意味を失う。実際 `skills/task-workflow/WORKFLOW.md` は既に「ユーザー」「エージェント」\nという中立な語で書かれており、この語彙が事実上の既定になっている。\n\nREADME.md の「## 制約」節が、ユーザー単位スキルの優先順位やクラウドセッションへの\n非同期など、この配り方に由来する制約を列挙している。\n\n## やること\n\n1. README.md に「スキルとワークフロー文書には出力スタイル由来の呼び名を書かず、\n   ユーザー／エージェントで書く」旨を1項目足す。置き場は「## 制約」節\n2. `skills/` 全体を検索して、出力スタイル由来の呼び名が混ざっていないか確認する。\n   あれば中立な語に直す\n\n## 完了条件\n\n- README.md に上記の項目がある\n- `skills/` 配下に出力スタイル由来の呼び名が無いことを検索で確認し、検索に使った\n  コマンドと結果を `evidence` に書く\n- `./check.sh` が通る\n\n## 注意\n\n- 約束の対象は `skills/` 配下と README.md。`docs/history/` に残るユーザーの生の言い回しは\n  対象外（台帳は当時の記述のまま残すという正典の規約が優先する）。検索も `skills/` に絞る\n- 検索に使う語そのものを `skills/` 配下や README.md に書き残さない（約束に反するため）。\n  語は実行時に会話から拾う\n",
+    "status": "todo",
+    "passes": false,
+    "evidence": ""
   }
 ]
