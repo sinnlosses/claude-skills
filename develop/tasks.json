@@ -94,5 +94,16 @@
     "status": "done",
     "passes": true,
     "evidence": "WORKFLOW.md「ファイル配置と CLAUDE.md」の「ここでは決めない」を削除し、feature/T-<タスクID>・ff マージ・ブランチ削除を既定として明記。ff できないときは rebase→再試行、rebase がコンフリクトしたら --no-ff に落とさずユーザーに預ける。検証コマンドは rebase を挟んだときだけ再実行。next-task/SKILL.md 手順3を feature ブランチに、手順8にマージを新設（旧8は9へ）。CLAUDE.md の - ブランチ: 行は「既定」。./check.sh 通過。"
+  },
+  {
+    "id": "T-009",
+    "difficulty": "sonnet",
+    "loopable": "Y",
+    "dependencies": [],
+    "summary": "マージの既定を ff-only + rebase からふつうの git merge に変える",
+    "task": "## 背景\n\nT-008 で入れたマージの既定が `git merge --ff-only` で、fast-forward できないときの回復手段を\n`git rebase main` にしている。該当箇所は2つ:\n\n- `skills/task-workflow/WORKFLOW.md:87-100`（既定の定義、rebase の手順、検証コマンドを通す位置）\n- `skills/next-task/SKILL.md:161-174`（手順8「マージ」）\n\nrebase を選んだことで**条件分岐が1つ増えている**。rebase はコミットを作り直す（差分の適用先が\n変わる）ため、「rebase を挟んだ場合は ff の前にもう一度検証コマンドを通す」という例外規定が\n要る。ユーザーは main が直線であることを求めておらず（「コミットが増えること自体に不都合は\nない」）、rebase の手間のほうを嫌っている。\n\nふつうの `git merge` なら、分岐していないときは ff で滑り（コミットは増えない）、分岐して\nいたらマージコミットを作るだけで、rebase の経路そのものが消える。\n\n代わりに1つ論点が入れ替わる。**マージコミットができた回は、main の木が「どちらのブランチでも\nテストされていない状態」になる**（両側の変更が初めて同居する）。ff にはこの問題が無い。\nよって検証コマンドの再実行は「rebase を挟んだとき」ではなく「マージコミットができたとき」に\n掛け替える。\n\n## 決まっていること（蒸し返さない）\n\n- **既定は `--ff-only` をやめてふつうの `git merge`。** 分岐していなければ ff、分岐して\n  いたらマージコミット\n- **`rebase` は使わない。** 正典からもスキルからも rebase の手順を消す\n- **マージコミットができた回だけ、main で検証コマンドを通す。** ff で済んだ回は通さない\n- マージ後に作業ブランチを削除する既定と、**push しない**既定は変えない\n\n## 解くべき論点\n\n- **マージがコンフリクトしたときの扱い。** 現在は「rebase がコンフリクトしたらユーザーに\n  預ける」。rebase を消すので、`git merge` がコンフリクトした場合の文面に書き換える。\n  `/loop` の無人進行中に起きるので、**自動で解消しようとせず預ける**方針は変えない\n  （`resolving-merge-conflicts` スキルへの言及も残す）\n- **マージ後の検証コマンドが落ちたときどうするか。** ff では起こらなかった事象なので、\n  今の正典に規定が無い。`git merge --abort` は使えない（コミット済みのため）ので、\n  `git reset --hard` で戻すのか、落ちたことを報告して main に残したまま預けるのかを決める。\n  **main を壊したまま黙って次のタスクへ進まない**こと\n- **`CLAUDE.md` の `- ブランチ:` 行の上書きの例**（`WORKFLOW.md:69`）が\n  「fast-forward できないときは常にユーザーに預ける」という今の既定を前提にしている。\n  新しい既定に合う例に差し替える\n\n## やること\n\n1. `skills/task-workflow/WORKFLOW.md:87-100` のブランチ運用の既定を書き換える。\n   `--ff-only` とマージが失敗したときの rebase 手順を消し、ふつうの `git merge` にする。\n   検証コマンドを通す位置を「マージコミットができたとき」に掛け替える\n2. 同 `WORKFLOW.md:69` の `- ブランチ:` 行の上書きの例を、新しい既定に合うものに差し替える\n3. `skills/next-task/SKILL.md` 手順8を1と同じ内容に書き換える\n4. 「## 解くべき論点」の2点（コンフリクト時、マージ後の検証が落ちたとき）の結論を、\n   `WORKFLOW.md` と `skills/next-task/SKILL.md` の両方に書く\n5. 検証コマンド `./check.sh` を通す\n\n## 完了条件\n\n- `grep -rn 'ff-only\\|rebase' skills/` が0件\n- `skills/task-workflow/WORKFLOW.md` に、ふつうの `git merge` を使う既定と、\n  「マージコミットができた回だけ main で検証コマンドを通す」が書かれている\n- `skills/task-workflow/WORKFLOW.md` と `skills/next-task/SKILL.md` の両方に、\n  マージがコンフリクトしたときユーザーに預ける旨と、マージ後の検証コマンドが落ちたときの\n  扱いが書かれている\n- `skills/next-task/SKILL.md` に「push はしない」が残っている\n- `./check.sh` が通る\n\n## 注意\n\n- **他のリポジトリを触らない。** 正典を変えれば各プロジェクトは次に `/next-task` を\n  呼んだ時点で従う\n- マージ後にブランチを削除する既定と、`feature/T-<タスクID>` というブランチ名は変えない\n- `scripts/check_repo.py` がスキル間の相互参照を検査している。参照はスキル名で書く\n",
+    "status": "todo",
+    "passes": false,
+    "evidence": ""
   }
 ]
