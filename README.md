@@ -48,7 +48,9 @@ claude.ai 同期用に予約していて、git 管理下に混ざるのを避け
 （`selftest.py`。判定と転記の経路を実ファイルで通す）、3. リポジトリの整合
 （`scripts/check_repo.py`。frontmatter の `name` とディレクトリ名の一致、この README の
 由来一覧と `skills/` の一致、`${CLAUDE_SKILL_DIR}` で書かれた参照先の実在、スキル名の
-相互参照の実在）。**由来の一覧が索引なので、スキルを足したり消したりしたらここも直す**
+相互参照の実在、`docs/` に書くスキル（`architecture-proposal` `domain-modeling` `research`。
+`check_repo.py` の `DOCS_WRITING_SKILLS`）が索引 `docs/README.md` に1行足す指示を
+持っていること）。**由来の一覧が索引なので、スキルを足したり消したりしたらここも直す**
 （直し忘れは `./check.sh` が落として教える）。標準ライブラリだけで動く。
 
 ## 制約

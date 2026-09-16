@@ -7,6 +7,7 @@
 - 各 SKILL.md の frontmatter が読めて、`name` がディレクトリ名と一致すること
 - README の「由来」一覧が `skills/` と過不足なく一致すること（README が索引なので）
 - スキル同士の相互参照が実在するスキルを指していること
+- `docs/` に書くスキルが、索引 `docs/README.md` に1行足す指示を持っていること
 - スクリプトのパスが `${CLAUDE_SKILL_DIR}` 形で書かれ、実在するファイルを指していること
 - 同梱スクリプトが構文として読めること
 """
@@ -20,6 +21,10 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILLS = os.path.join(ROOT, "skills")
+
+# 使う側のプロジェクトの `docs/` に成果物を書くスキル。ここに載っているスキルは
+# 「索引 `docs/README.md` に1行足す」指示を持っていなければならない。
+DOCS_WRITING_SKILLS = ("architecture-proposal", "domain-modeling", "research")
 
 problems: list[str] = []
 
@@ -131,6 +136,31 @@ def check_cross_references(names: list[str]) -> None:
                     fail(f"{os.path.relpath(md, ROOT)}: `{ref}` スキルは実在しない")
 
 
+def check_docs_index(names: list[str]) -> None:
+    """`docs/` に書くスキルが、索引 `docs/README.md` に1行足す指示を持っているか。
+
+    対象は `DOCS_WRITING_SKILLS` にハードコードする。「`docs/` に書く」と読める文面から
+    自動で拾う手もあるが、書き方の揺れで誤検知しやすく、検査を通すために文面を歪める圧が
+    かかる。対象は数件で、増えるのは新しいスキルを足すときだけなので、そのとき一緒に
+    ここへ書く運用にした（代わりに、載せた名前が実在するかはこの関数が見る）。
+    """
+    for n in DOCS_WRITING_SKILLS:
+        if n not in names:
+            fail(f"check_repo.py の DOCS_WRITING_SKILLS にある `{n}` は実在しない")
+            continue
+        path = os.path.join(SKILLS, n, "SKILL.md")
+        if not os.path.exists(path):
+            continue  # SKILL.md の不在は check_frontmatter が報告する
+        body = read(path)
+        # 「`docs/README.md` に…1行足す」が近くに書かれているか（改行を挟んでもよい）。
+        near = any(
+            "1行" in body[max(0, m.start() - 120) : m.end() + 120]
+            for m in re.finditer(r"docs/README\.md", body)
+        )
+        if not near:
+            fail(f"{n}: `docs/README.md` に1行足す指示が SKILL.md に無い")
+
+
 def check_python_syntax(names: list[str]) -> None:
     for n in names:
         for dirpath, _, files in os.walk(os.path.join(SKILLS, n)):
@@ -150,6 +180,7 @@ def main() -> None:
     check_readme_index(names)
     check_script_paths(names)
     check_cross_references(names)
+    check_docs_index(names)
     check_python_syntax(names)
 
     if problems:
