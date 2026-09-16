@@ -30,9 +30,9 @@
     ],
     "summary": "README.md に docs/ を育てる順番（遅延作成→提案→用語集→ADR）の案内を足す",
     "task": "## 背景\n\n「プロジェクトで `architecture.md` のような共通ドキュメントが欲しい」と思ったときに、\nどのスキルを呼べばいいのかが `README.md` から引けない。`README.md` の\n「## プロジェクト側に要るもの」節はタスク運用のファイルだけを扱っていて、`docs/` の育て方に\n触れていない。置き場そのものは T-002 で各スキルに固定されるので、ここで足すのは\n**人が読む案内**（どの順で何を作るか）。\n\n## やること\n\n1. `README.md` の「## プロジェクト側に要るもの」節の隣に、`docs/` の育て方を書く。中身は\n   「新規プロジェクトでは何も作らない（遅延作成）→ 構造で迷ったら `architecture-proposal` →\n   用語がブレ始めたら `CONTEXT.md`（`domain-modeling`）→ 覆すのが高くつく決定をしたら\n   ADR（`domain-modeling`）→ 調べ物は `research`」という梯子と、T-002 で固定した置き場の表\n2. 参照は**スキル名で書く**（`~/.claude/skills/...` の絶対パスを埋めない。\n   README「翻訳の方針」の慣習で、`check_repo.py` の相互参照チェックもこの形を前提にしている）\n3. 検証コマンド `./check.sh` を通す\n\n## 完了条件\n\n- `README.md` に `docs/` の育て方の節があり、梯子（順番）と置き場の表の両方が入っている\n- 表のパスが T-002 で各スキルに書いたものと一致している\n- `./check.sh` が通る\n\n## 注意\n\n- 「## 由来」の一覧は索引として `scripts/check_repo.py` が検査している。節を足すときに壊さない\n",
-    "status": "todo",
-    "passes": false,
-    "evidence": ""
+    "status": "done",
+    "passes": "yes",
+    "evidence": "README.md に「## docs/ の育て方」節を追加（梯子4段 + 置き場の表5行）。表のパスは skills/*/SKILL.md の記述と grep で突き合わせて一致を確認。./check.sh が通る（selftest 全項目 ok、check_repo.py は 19スキル 不整合なし）。"
   },
   {
     "id": "T-004",

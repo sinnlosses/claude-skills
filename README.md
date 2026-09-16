@@ -38,6 +38,32 @@ claude.ai 同期用に予約していて、git 管理下に混ざるのを避け
 書く。**用意するのは `/setup-tasks`**（既にあるファイルは上書きしない）。置き場と節の形は
 `skills/task-workflow/WORKFLOW.md`「ファイル配置と CLAUDE.md」。
 
+`docs/` 系は逆に、**新規プロジェクトでは何も作らない**（遅延作成。最初に書くべき内容ができた
+スキルが、そのとき作る）。育つ順序と置き場は次の「## docs/ の育て方」。
+
+## docs/ の育て方
+
+**最初は0件**（遅延作成）。書くべき内容ができた順に、次の梯子で呼ぶ。
+
+1. **構造で迷ったら** → `architecture-proposal`
+2. **用語がブレ始めたら** → `domain-modeling`（`CONTEXT.md`）
+3. **覆すのが高くつく決定をしたら** → `domain-modeling`（ADR）
+4. **調べ物をしたら** → `research`
+
+置き場は次の表のとおり（各スキルの SKILL.md に固定してある）。
+
+| 何を書くか | 置き場 | スキル |
+| --- | --- | --- |
+| 様式とディレクトリ構造の提案書 | `docs/architecture-proposal.md` | `architecture-proposal` |
+| 採用後の正典 | `docs/architecture.md`（提案書とは別ファイル。反映は人の作業で、このリポジトリのスキルは書かない） | — |
+| 用語集 | `CONTEXT.md`（複数コンテキストなら `CONTEXT-MAP.md` と各所の `CONTEXT.md`） | `domain-modeling` |
+| 決定事項（ADR） | `docs/adr/000N-*.md` | `domain-modeling` |
+| 調査メモ | `docs/research/<topic>.md` | `research` |
+
+`docs/` にファイルを足したスキル（`architecture-proposal` `domain-modeling` `research`）は、
+索引 `docs/README.md` にパスと一行説明を1行足す（索引も遅延的に作るもので、空のまま
+先回りして置かない）。この指示の有無は `scripts/check_repo.py` の `DOCS_WRITING_SKILLS` が検査する。
+
 ## 検証
 
 ```sh
