@@ -22,10 +22,6 @@ Git-Bulk-Maestro・helm-yadokari・tsukumo の3つとも、履歴ファイルの
 
 `develop/<名前>` が生きている状態・`docs/history/<名前>` がその履歴という規約を `WORKFLOW.md` に据え、指示の入口をファイルと会話の2つにした（会話は明示の指示のときだけ、`/loop` 下では使わない）。`tasks-archive.md` → `tasks.md`、`progress-archive.md` → `progress.md` の改名をスキル4ファイルに反映。
 
-### 2026-09-16 README に docs/ の育て方を書いた（T-003）
-
-新規プロジェクトでは何も作らない（遅延作成）ところから、`architecture-proposal` → `domain-modeling`（CONTEXT.md → ADR）→ `research` の順に呼ぶ梯子と、T-002 で固定した置き場の表を `README.md` に足した。参照はスキル名で書き、絶対パスは埋めていない。
-
 ## 未解決
 
 - なし
