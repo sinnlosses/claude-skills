@@ -243,7 +243,7 @@ def test_archive() -> None:
             check("トリガー到達で MOVED", "tasks\tMOVED\t10件" in r.stdout, r.stdout)
             left = json.load(open(p, encoding="utf-8"))
             check("todo は残る", [t["id"] for t in left] == ["T-011"])
-            arch = open("docs/history/tasks-archive.md", encoding="utf-8").read()
+            arch = open("docs/history/tasks.md", encoding="utf-8").read()
             check("全 done がアーカイブに載る", all(f"## T-{i:03d}" in arch for i in range(1, 11)))
             check("evidence も移る", "**evidence**:" in arch)
             check("本文も移る", "## 背景" in arch)
@@ -273,7 +273,7 @@ def test_archive_progress_order() -> None:
             check("新しい5小節が残る", "2026-01-09" in left and "2026-01-05" in left)
             check("古い小節は消える", "2026-01-04" not in left)
             check("「未解決」節は残る", "## 未解決" in left)
-            arch = open("docs/history/progress-archive.md", encoding="utf-8").read()
+            arch = open("docs/history/progress.md", encoding="utf-8").read()
             check("移した先に古い小節がある", "2026-01-04" in arch and "2026-01-01" in arch)
             check(
                 "移した先も新しいものが上",

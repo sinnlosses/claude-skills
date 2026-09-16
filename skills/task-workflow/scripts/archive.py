@@ -6,9 +6,9 @@
 正典（task-workflow の WORKFLOW.md「肥大化したときのアーカイブ」）が定める転記を
 そのまま行う。転記は判断を含まないので、モデルが手で書き写さずこれを使う。
 
-- `develop/tasks.json` の `status: "done"` を全件 `docs/history/tasks-archive.md` へ移す
+- `develop/tasks.json` の `status: "done"` を全件 `docs/history/tasks.md` へ移す
 - `develop/progress.md` の「完了したこと」から、新しい順に残す予算を超えたぶんを
-  `docs/history/progress-archive.md` へ移す
+  `docs/history/progress.md` へ移す
 - 2つは独立に判定する（片方だけ該当したら、その片方だけを移す）
 - 廃止した「次にやること」節が残っていれば、同じアーカイブへ1度だけ退避する
 
@@ -76,7 +76,7 @@ def archive_tasks(tasks_path: str, history: str, lim: dict, dry_run: bool) -> bo
         return True
 
     before = os.path.getsize(tasks_path)
-    archive_path = os.path.join(history, "tasks-archive.md")
+    archive_path = os.path.join(history, "tasks.md")
     append_section(archive_path, TASKS_ARCHIVE_HEADER, "\n".join(render_task(t) for t in done))
     with open(tasks_path, "w", encoding="utf-8") as f:
         f.write(dump_tasks([t for t in tasks if t.get("status") != "done"]))
@@ -160,7 +160,7 @@ def retire_next_section(progress_path: str, history: str, dry_run: bool) -> bool
     inner = "".join(section.splitlines(keepends=True)[1:]).strip("\n")
     today = datetime.date.today().isoformat()
     body = f"## 廃止した「次にやること」節（{today} に退避、当時の記述のまま）\n\n{inner}\n"
-    archive_path = os.path.join(history, "progress-archive.md")
+    archive_path = os.path.join(history, "progress.md")
     append_section(archive_path, PROGRESS_ARCHIVE_HEADER, body)
 
     rest = tail.lstrip("\n")
@@ -209,7 +209,7 @@ def archive_progress(progress_path: str, history: str, lim: dict, dry_run: bool)
         return True
 
     before = os.path.getsize(progress_path)
-    archive_path = os.path.join(history, "progress-archive.md")
+    archive_path = os.path.join(history, "progress.md")
     prepend_section(archive_path, PROGRESS_ARCHIVE_HEADER, moved_text)
     with open(progress_path, "w", encoding="utf-8") as f:
         f.write(head + "".join(s.text for s in keep) + tail)
