@@ -8,14 +8,15 @@ claude.ai 同期用に予約していて、git 管理下に混ざるのを避け
 
 ## 由来
 
-全19スキル。`skills/` にあるものが全てで、この一覧がその索引。
+全20スキル。`skills/` にあるものが全てで、この一覧がその索引。
 
 - [mattpocock/skills](https://github.com/mattpocock/skills) を日本語化したもの（10件）:
   `code-review` `codebase-design` `diagnosing-bugs` `domain-modeling` `grilling`
   `grill-with-docs` `implement` `research` `resolving-merge-conflicts` `tdd`
 - [anthropics/skills](https://github.com/anthropics/skills) を日本語化したもの（3件。Apache-2.0。
   各スキルの `LICENSE.txt` を同梱）: `frontend-design` `webapp-testing` `skill-creator`
-- 自作（6件）: `architecture-proposal`（様式とディレクトリ構造の提案書を書く）と、
+- 自作（7件）: `architecture-proposal`（様式とディレクトリ構造の提案書を書く）、
+  `maintenance-docs`（`docs/` と CLAUDE.md がスキルの記載とズレていないか点検して直す）と、
   `develop/` 配下でタスクを管理する運用の `task-workflow`（正典・参照専用）
   `setup-tasks` `next-task` `plan-tasks` `list-tasks`
 
@@ -28,7 +29,8 @@ claude.ai 同期用に予約していて、git 管理下に混ざるのを避け
 - `webapp-testing` は **Python + Playwright** を要求する（`scripts/` と `examples/` が
   Python スクリプト）。使う前に `pip install playwright && playwright install chromium`
 - `skill-creator` の `scripts/` `eval-viewer/`、`architecture-proposal` の
-  `scripts/import_edges.py`、`task-workflow` の `scripts/` も Python（標準ライブラリのみ）。
+  `scripts/import_edges.py`、`maintenance-docs` の `scripts/check_docs.py`、
+  `task-workflow` の `scripts/` も Python（標準ライブラリのみ）。
   SKILL.md を読むだけなら不要で、実際にスクリプトを走らせるときにだけ要る
 
 ## プロジェクト側に要るもの
@@ -49,6 +51,8 @@ claude.ai 同期用に予約していて、git 管理下に混ざるのを避け
 2. **用語がブレ始めたら** → `domain-modeling`（`CONTEXT.md`）
 3. **覆すのが高くつく決定をしたら** → `domain-modeling`（ADR）
 4. **調べ物をしたら** → `research`
+5. **置き場や索引がズレてきたら** → `maintenance-docs`（書き足さず、位置と索引と CLAUDE.md の
+   契約だけを点検して直す）
 
 置き場は次の表のとおり（各スキルの SKILL.md に固定してある）。
 

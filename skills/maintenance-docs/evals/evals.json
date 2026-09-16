@@ -1,0 +1,58 @@
+{
+  "skill_name": "maintenance-docs",
+  "evals": [
+    {
+      "id": 0,
+      "name": "finds-seeded-drift",
+      "prompt": "しばらく触ってなかったからドキュメント周りが怪しいんだよね。docs と CLAUDE.md、実態とズレてるとこ洗い出してくれる？",
+      "expected_output": "仕込んだ確定群5件・候補群4件を洗い出し、確定/候補を分けて提示する。確定群は直し方が一意に決まるので自分で直す。候補群は承認待ちで残す。",
+      "files": [
+        "fixtures/a-drifted"
+      ],
+      "assertions": [
+        "索引に無い docs/0002-retry-with-jitter.md を指摘している",
+        "索引に無い docs/rate-limit-investigation.md を指摘している",
+        "索引が指す docs/research/saas-rate-limit.md が実在しないことを指摘している",
+        "CLAUDE.md から ./docs/design-notes.md へのリンク切れを指摘している",
+        "「- 整形コマンド:」の行が無いことを指摘している",
+        "docs/0002-retry-with-jitter.md が決定記録で docs/adr/ に属することを指摘している",
+        "確定群と候補群（または同等の確度の区別）を分けて提示している",
+        "直し方が一意に決まる確定群を自分で直している（索引に2件追加・索引のリンク切れを実在パスへ向け直す・「- 整形コマンド:」行の補完）",
+        "直し方が割れるものは直さず承認を求めている（CLAUDE.md の design-notes.md リンクは選択肢を並べる、0002 を docs/adr/ へ移していない、「- ブランチ:」行を書き換えていない）"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "no-false-positives-on-clean-project",
+      "prompt": "ドキュメントの整合ってどうなってる？直すところある？",
+      "expected_output": "遅延作成の原則どおり、docs/ も develop/ も無いのは正常。ズレ0件と短く答える。",
+      "files": [
+        "fixtures/b-clean"
+      ],
+      "assertions": [
+        "ズレ・不整合は無いと結論している",
+        "docs/ ディレクトリが無いことを問題として挙げていない",
+        "docs/README.md や ADR が無いことを問題として挙げていない",
+        "プロジェクトのファイルを書き換えていない",
+        "報告が3000文字未満に収まっている"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "judges-candidates-and-fixes-minimally",
+      "prompt": "docs まわり点検して、直せるところは直しちゃって",
+      "expected_output": "確定群は直し、経緯の記録（昔の話）は残す。候補群の判断根拠を書く。",
+      "files": [
+        "fixtures/c-ambiguous"
+      ],
+      "assertions": [
+        "docs/parser-history.md の src/legacy/parser.ts を「昔の話＝正当」と判断し、その記述を書き換えていない",
+        "docs/atom-namespace-survey.md が調査メモで docs/research/ に属することを指摘している",
+        "tdd のユーザー単位スキルとプロジェクト単位スキルの衝突を指摘している",
+        "docs/README.md の索引に docs/ 配下のファイルを足している",
+        "「## タスク運用」節はあるが develop/ の3ファイルが無いことを指摘している",
+        "src/ 配下のコードを書き換えていない"
+      ]
+    }
+  ]
+}
