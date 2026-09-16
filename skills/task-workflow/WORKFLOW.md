@@ -292,7 +292,12 @@ IDはアーカイブ後も `docs/history/tasks-archive.md` に `## <id>` の節�
 
 ユーザーからの指示は、チャットではなく `develop/direction.md` に書く。書式は課さない
 （雑な箇条書きでよい）。**このファイルは「まだタスクになっていない指示」の置き場**で、
-セッション開始時に中身があれば、他の作業より先にタスク化する（`/plan-tasks`）。
+中身があるなら他の作業より先にタスク化する（`/plan-tasks`）のが望ましい。ただし
+`/plan-tasks` は分解に方針決めを含むため `/next-task` が代わりに行うことはなく、
+`direction.md` に中身が残っていても `READY` な `todo`（`tasks.json` 側で既にタスク化済みの
+もの）があれば `/next-task` はそれを止めずに進める。`/next-task` は中身の有無と
+（あれば）行数を完了報告に添えるだけにし、`READY` が0件のときに限り「`/plan-tasks` が先」と
+報告して終了する（`skills/next-task/SKILL.md` 手順1・2）。
 
 - 判定は「見出し行以外に中身があるか」。`grep -v '^#' develop/direction.md | grep -v '^\s*$'`
   が空なら未対応の指示は無い

@@ -6,9 +6,9 @@
     "dependencies": [],
     "summary": "/next-task が direction.md の中身で止まるのをやめ、READY が0件のときだけ止める",
     "task": "## 背景\n\n`skills/next-task/SKILL.md` の手順1の末尾に、`develop/direction.md` を\n`grep -v '^#' | grep -v '^\\s*$'` で見て、中身があればタスクを実行せず終了する記述がある。\n`/loop` 側はこれを「続行不要」の合図として扱う。根拠は `skills/task-workflow/WORKFLOW.md` の\n「指示メモ（`develop/direction.md`）」節にある「セッション開始時に中身があれば、他の作業より\n先にタスク化する」。\n\nこの挙動は非対称に損をしている。止めて得るのは「新しい指示で覆るかもしれないタスク1件を\n無駄に実行せずに済む」ことだけなのに、失うのは「READY な todo が全部止まる」こと。しかも\n`/next-task` は `direction.md` を自動タスク化しない（分解は方針決めを含むので代行しない設計）\nため、止めた先で誰も何もしない。ユーザーが戻るまで進まない点は、止めても止めなくても同じ。\n\n## 解くべき論点\n\n- 正典（WORKFLOW.md「指示メモ」節）の「他の作業より先にタスク化する」という文言を、\n  `/plan-tasks` を先に呼ぶ動機は残したまま、`/next-task` を止めない形にどう書き換えるか\n- `skills/setup-tasks/SKILL.md` の `PENDING:` の扱い（「`/plan-tasks` が先だと報告する」）が\n  この方針と矛盾しないか。setup 直後は todo が0件なので実質矛盾しない見込みだが、文言を確認する\n\n## やること\n\n1. `skills/next-task/SKILL.md` の手順1から、`direction.md` に中身があれば終了する記述を外す。\n   代わりに「中身があれば行数を数えて完了報告に添える」に変える\n2. 同 SKILL.md の手順2（選ぶ）に、`READY` が0件でかつ `direction.md` に中身があるときは\n   「進めるものが無く、未タスク化の指示がある → `/plan-tasks` が先」と報告して終了する、を足す\n3. 同 SKILL.md の「完了報告のフォーマット」に「未タスク化の指示の有無（あれば行数）」を1行足す\n4. `skills/task-workflow/WORKFLOW.md` の「指示メモ（`develop/direction.md`）」節を、\n   上の挙動に合わせて書き換える\n5. `skills/setup-tasks/SKILL.md` の `PENDING:` 行を確認し、矛盾していれば直す。\n   矛盾していなければ触らない\n6. 検証コマンド `./check.sh` を通す\n\n## 完了条件\n\n- `skills/next-task/SKILL.md` に「`direction.md` に中身があればタスクを実行せず終了する」旨の\n  記述が1つも残っていない（`grep -n 'direction' skills/next-task/SKILL.md` で確かめられる）\n- 同 SKILL.md に、`READY` が0件のときに `/plan-tasks` を促して終了する記述がある\n- 同 SKILL.md の「完了報告のフォーマット」に、未タスク化の指示を報告する行がある\n- `skills/task-workflow/WORKFLOW.md` の「指示メモ」節が新しい挙動と一致している\n- `./check.sh` が通る\n\n## 注意\n\n- `/plan-tasks` 側の挙動（`direction.md` を読んでタスク化する）は変えない\n- タスク化した時点で `develop/direction.md` を空にし `docs/history/direction.md` へ移す運用も変えない\n",
-    "status": "todo",
-    "passes": false,
-    "evidence": ""
+    "status": "done",
+    "passes": true,
+    "evidence": "skills/next-task/SKILL.md の手順1・手順2・完了報告のフォーマットと、skills/task-workflow/WORKFLOW.md「指示メモ」節を変更。\ngrep 'タスクを実行せず|実行せず終了' が2ファイルとも0件。setup-tasks は READY 0件時の報告と整合するため変更なし。\n./check.sh 通過（selftest 全項目 ok、19スキル不整合なし）。"
   },
   {
     "id": "T-002",
