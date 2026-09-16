@@ -1,1 +1,37 @@
-[]
+[
+  {
+    "id": "T-001",
+    "difficulty": "sonnet",
+    "loopable": "Y",
+    "dependencies": [],
+    "summary": "/next-task が direction.md の中身で止まるのをやめ、READY が0件のときだけ止める",
+    "task": "## 背景\n\n`skills/next-task/SKILL.md` の手順1の末尾に、`develop/direction.md` を\n`grep -v '^#' | grep -v '^\\s*$'` で見て、中身があればタスクを実行せず終了する記述がある。\n`/loop` 側はこれを「続行不要」の合図として扱う。根拠は `skills/task-workflow/WORKFLOW.md` の\n「指示メモ（`develop/direction.md`）」節にある「セッション開始時に中身があれば、他の作業より\n先にタスク化する」。\n\nこの挙動は非対称に損をしている。止めて得るのは「新しい指示で覆るかもしれないタスク1件を\n無駄に実行せずに済む」ことだけなのに、失うのは「READY な todo が全部止まる」こと。しかも\n`/next-task` は `direction.md` を自動タスク化しない（分解は方針決めを含むので代行しない設計）\nため、止めた先で誰も何もしない。ユーザーが戻るまで進まない点は、止めても止めなくても同じ。\n\n## 解くべき論点\n\n- 正典（WORKFLOW.md「指示メモ」節）の「他の作業より先にタスク化する」という文言を、\n  `/plan-tasks` を先に呼ぶ動機は残したまま、`/next-task` を止めない形にどう書き換えるか\n- `skills/setup-tasks/SKILL.md` の `PENDING:` の扱い（「`/plan-tasks` が先だと報告する」）が\n  この方針と矛盾しないか。setup 直後は todo が0件なので実質矛盾しない見込みだが、文言を確認する\n\n## やること\n\n1. `skills/next-task/SKILL.md` の手順1から、`direction.md` に中身があれば終了する記述を外す。\n   代わりに「中身があれば行数を数えて完了報告に添える」に変える\n2. 同 SKILL.md の手順2（選ぶ）に、`READY` が0件でかつ `direction.md` に中身があるときは\n   「進めるものが無く、未タスク化の指示がある → `/plan-tasks` が先」と報告して終了する、を足す\n3. 同 SKILL.md の「完了報告のフォーマット」に「未タスク化の指示の有無（あれば行数）」を1行足す\n4. `skills/task-workflow/WORKFLOW.md` の「指示メモ（`develop/direction.md`）」節を、\n   上の挙動に合わせて書き換える\n5. `skills/setup-tasks/SKILL.md` の `PENDING:` 行を確認し、矛盾していれば直す。\n   矛盾していなければ触らない\n6. 検証コマンド `./check.sh` を通す\n\n## 完了条件\n\n- `skills/next-task/SKILL.md` に「`direction.md` に中身があればタスクを実行せず終了する」旨の\n  記述が1つも残っていない（`grep -n 'direction' skills/next-task/SKILL.md` で確かめられる）\n- 同 SKILL.md に、`READY` が0件のときに `/plan-tasks` を促して終了する記述がある\n- 同 SKILL.md の「完了報告のフォーマット」に、未タスク化の指示を報告する行がある\n- `skills/task-workflow/WORKFLOW.md` の「指示メモ」節が新しい挙動と一致している\n- `./check.sh` が通る\n\n## 注意\n\n- `/plan-tasks` 側の挙動（`direction.md` を読んでタスク化する）は変えない\n- タスク化した時点で `develop/direction.md` を空にし `docs/history/direction.md` へ移す運用も変えない\n",
+    "status": "todo",
+    "passes": false,
+    "evidence": ""
+  },
+  {
+    "id": "T-002",
+    "difficulty": "opus",
+    "loopable": "N",
+    "dependencies": [],
+    "summary": "docs/ の置き場を固定し、docs/README.md を索引にする規約を各スキルに書く",
+    "task": "## 背景\n\n`docs/` に何をどこへ置くかの決め方が4通り混在している。\n\n- `docs/history/*`（`tasks-archive.md` / `progress-archive.md` / `direction.md`）は規約で固定\n  （`skills/task-workflow/scripts/taskfiles.py` の `HISTORY_DIR`）\n- `CONTEXT.md` はルート、`docs/adr/NNNN-slug.md` は固定（`skills/domain-modeling/SKILL.md` と\n  `ADR-FORMAT.md`）。どちらも遅延作成\n- アーキテクチャ提案は「リポジトリの慣習に従う」（`skills/architecture-proposal/SKILL.md` の\n  「### 6. 提案書を置く」。`docs/architecture-proposal.md` を例示するが固定していない）\n- 調査メモは「慣例があればそこ、無ければ適切と思われる場所」（`skills/research/SKILL.md` の3項目め）\n\n後ろ2つがその場のモデルの判断なので、同じプロジェクトでも呼ぶたびに置き場が変わりうる。\nさらに `docs/` に何が居るかの索引がどこにも無く、次のセッションは `ls docs/` で発見するしかない。\n\n## 解くべき論点\n\n- **提案書のファイル名**: 指示メモは `docs/architecture.md` と書いているが、\n  `architecture-proposal` は「既存の設計書（正典）を直接書き換えない」と明記しており、\n  `skills/architecture-proposal/evals/evals.json` は `docs/architecture.md` を\n  「既にある設計書」の例として扱っている。提案書をそこに固定すると正典と提案書が同じ名前を\n  取り合う。`docs/architecture-proposal.md` に固定するほうが整合するが、指示メモと食い違うので\n  **ユーザーに確認してから決める**\n- **索引の強制**: `docs/README.md` のズレを機械で検出したいが、`scripts/check_repo.py` が\n  検査するのはこのスキルリポジトリ自身であって、スキルを使う側のプロジェクトではない。\n  検証できる範囲は「各スキルが索引に足す指示を持っているか」までになる見込み。それで足りるか、\n  索引は規約だけにするかを決める\n- **正典の置き場**: 置き場の固定は各スキルに直接書けば済み、共有の正典ファイルは要らない。\n  一方「育て方の梯子」は人が読む案内なので `README.md`（T-003）。この切り分けでよいか\n\n## やること\n\n1. 論点1（提案書のファイル名）をユーザーに確認して決める\n2. `skills/architecture-proposal/SKILL.md` の「### 6. 提案書を置く」を、決めたパスに固定する\n   書き方に変える（「リポジトリの慣習に従う」をやめる。「ユーザーが場所を指定したらそれに従う」は残す）\n3. `skills/research/SKILL.md` の3項目めを `docs/research/<topic>.md` に固定する\n4. 「`docs/` に何かを書いたスキルは `docs/README.md` に1行足す」という運用を、上の2スキルと\n   `skills/domain-modeling/SKILL.md` に書く。`docs/README.md` が無ければそのとき作る（遅延作成）\n5. 論点2を調べ、`scripts/check_repo.py` で落とせる範囲があれば検査を足す。\n   **成り立たなければ足さずに、理由を evidence に書いて閉じる**\n6. 検証コマンド `./check.sh` を通す\n\n## 完了条件\n\n- `skills/architecture-proposal/SKILL.md` と `skills/research/SKILL.md` に、\n  「慣習に従う」「適切と思われる場所」という趣旨の記述が残っていない\n- 上の2スキルと `skills/domain-modeling/SKILL.md` に、`docs/README.md` へ1行足す指示がある\n- `./check.sh` が通る\n\n## 注意\n\n- `docs/history/` の置き場（`taskfiles.py` の `HISTORY_DIR`）は変えない\n- `CONTEXT.md` がルートにある点も変えない（`domain-modeling` の既存の決定）\n- 遅延作成の原則を崩さない。空の `docs/` や `docs/README.md` を先回りして作る指示にしない\n- `loopable` が `\"N\"` なのは、論点1がユーザーの判断（指示メモと既存スキルの食い違い）だから\n",
+    "status": "todo",
+    "passes": false,
+    "evidence": ""
+  },
+  {
+    "id": "T-003",
+    "difficulty": "sonnet",
+    "loopable": "Y",
+    "dependencies": [
+      "T-002"
+    ],
+    "summary": "README.md に docs/ を育てる順番（遅延作成→提案→用語集→ADR）の案内を足す",
+    "task": "## 背景\n\n「プロジェクトで `architecture.md` のような共通ドキュメントが欲しい」と思ったときに、\nどのスキルを呼べばいいのかが `README.md` から引けない。`README.md` の\n「## プロジェクト側に要るもの」節はタスク運用のファイルだけを扱っていて、`docs/` の育て方に\n触れていない。置き場そのものは T-002 で各スキルに固定されるので、ここで足すのは\n**人が読む案内**（どの順で何を作るか）。\n\n## やること\n\n1. `README.md` の「## プロジェクト側に要るもの」節の隣に、`docs/` の育て方を書く。中身は\n   「新規プロジェクトでは何も作らない（遅延作成）→ 構造で迷ったら `architecture-proposal` →\n   用語がブレ始めたら `CONTEXT.md`（`domain-modeling`）→ 覆すのが高くつく決定をしたら\n   ADR（`domain-modeling`）→ 調べ物は `research`」という梯子と、T-002 で固定した置き場の表\n2. 参照は**スキル名で書く**（`~/.claude/skills/...` の絶対パスを埋めない。\n   README「翻訳の方針」の慣習で、`check_repo.py` の相互参照チェックもこの形を前提にしている）\n3. 検証コマンド `./check.sh` を通す\n\n## 完了条件\n\n- `README.md` に `docs/` の育て方の節があり、梯子（順番）と置き場の表の両方が入っている\n- 表のパスが T-002 で各スキルに書いたものと一致している\n- `./check.sh` が通る\n\n## 注意\n\n- 「## 由来」の一覧は索引として `scripts/check_repo.py` が検査している。節を足すときに壊さない\n",
+    "status": "todo",
+    "passes": false,
+    "evidence": ""
+  }
+]
