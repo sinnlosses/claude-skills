@@ -24,9 +24,10 @@
 
 ## 未解決
 
-- T-002 の提案書の置き場: 指示メモは `docs/architecture.md` と書いているが、`architecture-proposal` は「既存の設計書（正典）を直接書き換えない」と明記していて、`evals.json` は `docs/architecture.md` を既存の設計書の例として扱っている。`docs/architecture-proposal.md` に固定するほうが整合するので、着手時にユーザーへ確認する
+- なし
 
 ## 注意
 
 - T-005 は3リポジトリ中 Git-Bulk-Maestro だけ完了（`a02cac4`、push なし）。helm-yadokari と tsukumo は 2026-09-16 時点で別セッションが作業中（未コミット33件ずつ）のため着手していない。詳細と再開時の手掛かりは T-005 の本文「## 進捗」に書いた
-- 利用側3プロジェクト（Git-Bulk-Maestro・helm-yadokari・tsukumo）は、`develop/workflow.json` の廃止が反映されていない。3つとも `workflow.json` が残り、CLAUDE.md に `- 検証コマンド:` の行が無い。今は `/next-task` のフォールバックが別の節から拾って動いている。移行は T-005。
+- `develop/workflow.json` の廃止が未反映なのは helm-yadokari と tsukumo の2つ（Git-Bulk-Maestro は `a02cac4` で移行済み）。2つとも `workflow.json` が残り、CLAUDE.md に `- 検証コマンド:` の行が無い。今は `/next-task` のフォールバックが別の節から拾って動いている。移行は T-005。
+- ブランチ運用は T-008 で `feature/T-<タスクID>` + main への ff マージ + ブランチ削除に変わる。T-008 が done になるまでは `CLAUDE.md` の `- ブランチ: 作業ブランチを切る` が有効
