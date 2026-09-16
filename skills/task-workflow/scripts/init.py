@@ -30,7 +30,11 @@ PROGRESS = """# 進捗
 
 ## 注意
 """
-DIRECTION = "# 未対応の指示メモ\n"
+DIRECTION = "# 未対応の指示メモ\n\n## ユーザーから\n\n## エージェントのドラフト\n"
+
+# direction.md の2節（正典「指示メモ」）。前方一致で探す。
+SECTION_USER = "## ユーザーから"
+SECTION_DRAFT = "## エージェントのドラフト"
 
 # progress.md に在るべき節。DONE_SECTION と同じく前方一致で探す（補足付きの表記が実在する）。
 PROGRESS_SECTIONS = (taskfiles.DONE_SECTION, "## 未解決", "## 注意")
@@ -101,10 +105,42 @@ def check_claude_md(path: str) -> str:
 
 
 def check_direction(path: str) -> str:
+    """節ごとの本文行数を数える（正典「指示メモ」の`## ユーザーから`/`## エージェントの
+    ドラフト`）。**節見出しが1つも無い（この変更より前に作られた）ファイルは、全体を
+    `## ユーザーから` とみなす**（後方互換。同じ扱いを skills/plan-tasks・skills/next-task の
+    SKILL.md 手順1でも行う）。
+    """
     with open(path, encoding="utf-8") as f:
-        body = [l for l in f.read().splitlines() if l.strip() and not l.startswith("#")]
-    if body:
-        return f"PENDING: 未タスク化の指示が{len(body)}行ある（/plan-tasks が先）"
+        lines = f.read().splitlines()
+
+    if not any(l.startswith(SECTION_USER) or l.startswith(SECTION_DRAFT) for l in lines):
+        body = [l for l in lines if l.strip() and not l.startswith("#")]
+        return _direction_result(len(body), 0)
+
+    user_n = draft_n = 0
+    current: str | None = None
+    for l in lines:
+        if l.startswith(SECTION_USER):
+            current = "user"
+            continue
+        if l.startswith(SECTION_DRAFT):
+            current = "draft"
+            continue
+        if l.startswith("#"):
+            current = None
+            continue
+        if not l.strip():
+            continue
+        if current == "user":
+            user_n += 1
+        elif current == "draft":
+            draft_n += 1
+    return _direction_result(user_n, draft_n)
+
+
+def _direction_result(user_n: int, draft_n: int) -> str:
+    if user_n or draft_n:
+        return f"PENDING: ユーザーから{user_n}行、エージェントのドラフト{draft_n}行（/plan-tasks が先）"
     return "OK: 未対応の指示は無い"
 
 

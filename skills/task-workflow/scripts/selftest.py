@@ -314,13 +314,46 @@ def test_init() -> None:
             )
             check("作った progress.md の節をアーカイブ側が見つけられる", sections is not None)
 
+            created_direction = open("develop/direction.md", encoding="utf-8").read()
+            check(
+                "作った direction.md に「ユーザーから」「エージェントのドラフト」の2節がある",
+                "## ユーザーから" in created_direction
+                and "## エージェントのドラフト" in created_direction,
+                created_direction,
+            )
+
             r = run("init.py", "develop")
             check("2回目は上書きしない", r.stdout.count("KEPT") == 3 and "CREATED" not in r.stdout)
             check("既存 tasks.json は OK 判定", "OK: 0件" in r.stdout, r.stdout)
 
+            # 節が無い（この変更より前の）ファイルは後方互換で全体を「ユーザーから」とみなす。
             write("develop/direction.md", "# 未対応の指示メモ\n\nこれをやって\n")
             r = run("init.py", "develop")
-            check("未タスク化の指示は PENDING", "PENDING:" in r.stdout, r.stdout)
+            check(
+                "節が無いファイルは全体を「ユーザーから」とみなして PENDING",
+                "PENDING:" in r.stdout and "ユーザーから1行" in r.stdout,
+                r.stdout,
+            )
+
+            # 新しい雛形（2節）は節ごとに行数を分けて数える。
+            write(
+                "develop/direction.md",
+                "# 未対応の指示メモ\n\n## ユーザーから\nこれをやって\n\n"
+                "## エージェントのドラフト\nこれも直したい\n",
+            )
+            r = run("init.py", "develop")
+            check(
+                "節ごとの行数を分けて数える",
+                "ユーザーから1行" in r.stdout and "エージェントのドラフト1行" in r.stdout,
+                r.stdout,
+            )
+
+            write(
+                "develop/direction.md",
+                "# 未対応の指示メモ\n\n## ユーザーから\n\n## エージェントのドラフト\n",
+            )
+            r = run("init.py", "develop")
+            check("両節とも空なら OK", "OK: 未対応の指示は無い" in r.stdout, r.stdout)
 
             write("CLAUDE.md", "# x\n\n## タスク運用\n\n- 検証コマンド: `なし`\n")
             r = run("init.py", "develop")
