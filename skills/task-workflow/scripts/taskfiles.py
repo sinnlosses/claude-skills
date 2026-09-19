@@ -22,8 +22,8 @@ import unicodedata
 # なくコンテキスト消費だから。日本語主体のタスク本文では実バイト数は約3倍になるので、
 # 出力のラベルも「文字」で統一してある（`B` と書くと3倍ズレて読まれる）。
 LIMITS = {
-    "doneCount": 10,
-    "doneChars": 30720,
+    "doneCount": 5,
+    "doneChars": 15000,
     "progressCount": 5,
     "progressChars": 8192,
 }

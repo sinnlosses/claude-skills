@@ -79,7 +79,7 @@
 | ------------------------- | ---------------- |
 | タスクIDの接頭辞          | `T-` + 3桁の連番 |
 | アーカイブの置き場        | `docs/history/`  |
-| `done` のアーカイブ基準   | 10件以上、または 30720文字 超 |
+| `done` のアーカイブ基準   | 5件以上、または 15000文字 超 |
 | `progress.md` に残す上限  | 5小節、または 8192文字 |
 
 **ブランチ運用の既定はここで決める。** 1タスク＝1ブランチで、`feature/T-<タスクID>`
@@ -443,8 +443,8 @@ IDはアーカイブ後も `docs/history/tasks.md` に `## <id>` の節として
 
 `develop/tasks.json` の基準（規約で固定。上の「ファイル配置と CLAUDE.md」）:
 
-- `status: done` が **10件以上**
-- または `done` のタスクが占めるサイズが **30720文字 超**（`json.dumps(ensure_ascii=False)` の
+- `status: done` が **5件以上**
+- または `done` のタスクが占めるサイズが **15000文字 超**（`json.dumps(ensure_ascii=False)` の
   文字数。**バイト数ではない**——減らしたいのがディスク使用量ではなくコンテキスト消費だから。
   日本語主体の本文では実バイト数は約3倍になるので、`B` と書かない）
 
@@ -470,7 +470,7 @@ python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/status.py develop/tasks.jso
 ```
 
 ```
-archive   NO    (done 7/10件, 24030/30720文字)
+archive   NO    (done 3/5件, 9204/15000文字)
 progress  YES   (8小節/5件, 3969/8192文字, 移す3小節)
 ```
 
