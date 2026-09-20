@@ -2,6 +2,18 @@
 
 ## 完了したこと
 
+### 2026-09-20 direction.md に指示が来てもループを止めないようにした（T-012）
+
+`READY` が0件かつ `develop/direction.md` の `## ユーザーから` に中身があるとき、`/next-task` が
+「`/plan-tasks` が先」と報告して終了していた挙動をやめ、その場でファイル入口の分だけタスク化して
+1件着手するように正典（`skills/task-workflow/WORKFLOW.md`「指示メモ」節）と `/next-task`・
+`/plan-tasks` の記述を揃えた。無人で方針決めが走ることはユーザーが承知のうえで許可している。
+
+タスク化の手順は `/plan-tasks` を参照するだけで書き写していない。空回りの出口（タスク化しても
+`READY` が生まれなければ止める）と、タスク化のコミットを `done` のコミットと分けることも明記した。
+他の停止シグナル（`doing` 残り・コンフリクト・`loopable: "N"` だけ・`INVALID`・`python3` の故障）は
+そのまま。`./check.sh` 通過。
+
 ### 2026-09-16 maintenance-docs スキルを追加した
 
 `docs/`（`history/` 以外）・`README.md`・`CLAUDE.md` を10検査にかけ、スキルが定めた置き場・索引・
