@@ -8,15 +8,17 @@ claude.ai 同期用に予約していて、git 管理下に混ざるのを避け
 
 ## 由来
 
-全20スキル。`skills/` にあるものが全てで、この一覧がその索引。
+全21スキル。`skills/` にあるものが全てで、この一覧がその索引。
 
 - [mattpocock/skills](https://github.com/mattpocock/skills) を日本語化したもの（10件）:
   `code-review` `codebase-design` `diagnosing-bugs` `domain-modeling` `grilling`
   `grill-with-docs` `implement` `research` `resolving-merge-conflicts` `tdd`
 - [anthropics/skills](https://github.com/anthropics/skills) を日本語化したもの（3件。Apache-2.0。
   各スキルの `LICENSE.txt` を同梱）: `frontend-design` `webapp-testing` `skill-creator`
-- 自作（7件）: `architecture-proposal`（様式とディレクトリ構造の提案書を書く）、
-  `maintenance-docs`（`docs/` と CLAUDE.md がスキルの記載とズレていないか点検して直す）と、
+- 自作（8件）: `architecture-proposal`（様式とディレクトリ構造の提案書を書く）、
+  `maintenance-docs`（`docs/` と CLAUDE.md がスキルの記載とズレていないか点検して直す）、
+  `retrospect`（どのコミットまで振り返ったかを記録し、未振り返りのタスクから次に効く改善を
+  取り出して指示メモのドラフトに積む）と、
   `develop/` 配下でタスクを管理する運用の `task-workflow`（正典・参照専用）
   `setup-tasks` `next-task` `plan-tasks` `list-tasks`
 
