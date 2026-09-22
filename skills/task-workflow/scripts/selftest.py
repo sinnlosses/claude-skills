@@ -131,12 +131,32 @@ def test_progress_sections() -> None:
     _, none_sections, _ = taskfiles.split_done_section("# 進捗\n\n## 未解決\n")
     check("「完了したこと」節が無ければ None", none_sections is None)
 
-    keep, move = taskfiles.progress_plan(sections, 2, 10**9)
+    keep, move = taskfiles.progress_plan(sections, 2, 10**9, 2, 10**9)
     check("件数の予算で新しい2つを残す", [s.date for s in keep] == ["2026-03-03", "2026-02-02"])
     check("溢れた古いほうを移す", [s.date for s in move] == ["2026-01-01"])
 
-    keep, move = taskfiles.progress_plan(sections, 99, 1)
+    keep, move = taskfiles.progress_plan(sections, 0, 10**9, 99, 1)
     check("1小節で予算を超えても最低1小節は残す", len(keep) == 1 and len(move) == 2)
+
+    # 点火する閾値と残す量を離してあること（T-342。同じ値だと毎サイクル1件ずつ移す振動になる）。
+    keep, move = taskfiles.progress_plan(sections, 3, 10**9, 1, 10**9)
+    check("閾値ちょうどでは点かない", move == [] and len(keep) == 3)
+
+    keep, move = taskfiles.progress_plan(sections, 2, 10**9, 1, 10**9)
+    check("点いたら残す量まで戻す", len(keep) == 1 and len(move) == 2)
+    again_keep, again_move = taskfiles.progress_plan(keep, 2, 10**9, 1, 10**9)
+    check("移した直後にもう一度かけても点かない", again_move == [] and again_keep == keep)
+
+    # 文字数で点いたときも、件数と文字数の両方を残す量まで戻す（片方だけ戻すと翌回に鳴る）。
+    keep, move = taskfiles.progress_plan(sections, 99, 5, 2, 10**9)
+    check("文字数で点いても件数の予算で切る", len(keep) == 2 and len(move) == 1)
+
+    lim = taskfiles.LIMITS
+    check(
+        "既定値は閾値のほうが残す量より大きい",
+        lim["progressCount"] > lim["progressKeepCount"]
+        and lim["progressChars"] > lim["progressKeepChars"],
+    )
 
 
 # --- status.py ----------------------------------------------------------
@@ -263,21 +283,31 @@ def test_archive_progress_order() -> None:
             os.makedirs("develop")
             p = write_tasks("develop/tasks.json", [task("T-001")])
             body = "# 進捗\n\n## 完了したこと\n\n" + "".join(
-                f"### 2026-01-{i:02d} 作業{i}（T-{i:03d}）\n本文{i}\n\n" for i in range(9, 0, -1)
+                f"### 2026-01-{i:02d} 作業{i}（T-{i:03d}）\n本文{i}\n\n" for i in range(13, 0, -1)
             ) + "## 未解決\n\nなし\n"
             write("develop/progress.md", body)
 
             r = run("archive.py", p)
             check("予算超過で MOVED", "progress\tMOVED" in r.stdout, r.stdout)
             left = open("develop/progress.md", encoding="utf-8").read()
-            check("新しい5小節が残る", "2026-01-09" in left and "2026-01-05" in left)
-            check("古い小節は消える", "2026-01-04" not in left)
+            check("新しい5小節が残る", "2026-01-13" in left and "2026-01-09" in left)
+            check("古い小節は消える", "2026-01-08" not in left)
             check("「未解決」節は残る", "## 未解決" in left)
             arch = open("docs/history/progress.md", encoding="utf-8").read()
-            check("移した先に古い小節がある", "2026-01-04" in arch and "2026-01-01" in arch)
+            check("移した先に古い小節がある", "2026-01-08" in arch and "2026-01-01" in arch)
             check(
                 "移した先も新しいものが上",
-                arch.index("2026-01-04") < arch.index("2026-01-01"),
+                arch.index("2026-01-08") < arch.index("2026-01-01"),
+            )
+
+            # 移した直後にもう一度かけても点かない（残す量が閾値より小さいから。T-342）。
+            r = run("archive.py", p)
+            check("移した直後は再点火しない", "progress\tSKIP" in r.stdout, r.stdout)
+            r = run("status.py", p)
+            check(
+                "status.py も同じ判定で NO",
+                "progress\tNO\t" in r.stdout,
+                r.stdout.splitlines()[-1] if r.stdout else "",
             )
 
             # 逆順のファイルには触らない（触ると新しいほうを捨てる）。

@@ -134,12 +134,26 @@ def progress_line(path: str, lim: dict) -> str:
     if not taskfiles.is_newest_first(sections):
         return "progress\tERROR\t（小節が新しい順に並んでいない。正典「progress.md の構成」）"
 
-    keep, move = taskfiles.progress_plan(sections, lim["progressCount"], lim["progressChars"])
+    keep, move = taskfiles.progress_plan(
+        sections,
+        lim["progressCount"],
+        lim["progressChars"],
+        lim["progressKeepCount"],
+        lim["progressKeepChars"],
+    )
     total = sum(len(s) for s in sections)
+    # 点火する閾値（分母）と残す量は別の値なので、両方を出す。片方だけだと `NO` のときに
+    # 「あと何小節で点くのか」も「点いたらどこまで戻るのか」も読めない。
+    budget = f"{lim['progressKeepCount']}小節・{lim['progressKeepChars']}文字"
+    detail = (
+        f"移す{len(move)}小節 → {len(keep)}小節/{sum(len(s) for s in keep)}文字が残る"
+        if move
+        else f"点いたら{budget}まで戻す"
+    )
     return (
         f"progress\t{'YES' if move else 'NO'}"
         f"\t({len(sections)}小節/{lim['progressCount']}件, {total}/{lim['progressChars']}文字"
-        f"{f', 移す{len(move)}小節' if move else ''})"
+        f", {detail})"
     )
 
 

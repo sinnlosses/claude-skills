@@ -194,11 +194,17 @@ def archive_progress(progress_path: str, history: str, lim: dict, dry_run: bool)
         )
         return False
 
-    keep, move = taskfiles.progress_plan(sections, lim["progressCount"], lim["progressChars"])
+    keep, move = taskfiles.progress_plan(
+        sections,
+        lim["progressCount"],
+        lim["progressChars"],
+        lim["progressKeepCount"],
+        lim["progressKeepChars"],
+    )
     total = sum(len(s) for s in sections)
     if not move:
         print(
-            f"progress\tSKIP\t予算内 ({len(sections)}/{lim['progressCount']}件, "
+            f"progress\tSKIP\tトリガー未達 ({len(sections)}/{lim['progressCount']}件, "
             f"{total}/{lim['progressChars']}文字)"
         )
         return False

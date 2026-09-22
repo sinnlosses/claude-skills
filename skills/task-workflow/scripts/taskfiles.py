@@ -21,11 +21,18 @@ import unicodedata
 # サイズは**文字数**で測る（`len`）。バイト数ではないのは、減らしたいのがディスク使用量では
 # なくコンテキスト消費だから。日本語主体のタスク本文では実バイト数は約3倍になるので、
 # 出力のラベルも「文字」で統一してある（`B` と書くと3倍ズレて読まれる）。
+#
+# `progress*` だけ「点火する閾値」と「残す量」が別の値になっている。同じ値にすると移した直後が
+# ちょうど閾値で、次のサイクルで小節が1件増えただけでまた点く（`progress_plan` の docstring）。
+# `done*` は閾値だけで足りる——移すときは**全件**なので、移した直後は0件になり、次に点くまで
+# 5件ぶんの間隔が自然に空く。
 LIMITS = {
     "doneCount": 5,
     "doneChars": 15000,
-    "progressCount": 5,
-    "progressChars": 8192,
+    "progressCount": 10,
+    "progressChars": 16384,
+    "progressKeepCount": 5,
+    "progressKeepChars": 8192,
 }
 HISTORY_DIR = "docs/history"
 
@@ -142,20 +149,35 @@ def is_newest_first(sections: list[Section]) -> bool:
 
 
 def progress_plan(
-    sections: list[Section], count_limit: int, chars_limit: int
+    sections: list[Section],
+    count_limit: int,
+    chars_limit: int,
+    keep_count: int,
+    keep_chars: int,
 ) -> tuple[list[Section], list[Section]]:
-    """新しい順に count_limit 件、かつ chars_limit 文字以内を残し、残りを移す。
+    """点火したときだけ、新しい順に keep_count 件・keep_chars 文字ぶんを残して残りを移す。
+
+    **点火する閾値（count_limit / chars_limit）と残す量（keep_count / keep_chars）を離す。**
+    同じ値にすると移した直後がちょうど閾値なので、次のサイクルで小節が1件増えるだけでまた点き、
+    毎サイクル1小節だけを移す振動になる（実測: 23コミット中6件がアーカイブ専用のコミットで、
+    うち3件は小節1件を移しただけの `+4/-4` だった）。
+
+    **点火した物差しがどちらでも、残す量は件数と文字数の両方で切る。** 点いたほうだけを
+    戻すと、もう片方が閾値の際に残ったままになり、結局その片方が翌サイクルに鳴る。
 
     セッションの識別は諦めて予算で切る。「このセッション分だけ残す」はファイルから
     機械的に決められない（新しいセッションは、上の小節を誰が書いたか判別できないし、
     `/loop` の1セッションは何小節も書く）。
     """
+    if len(sections) <= count_limit and sum(len(s) for s in sections) <= chars_limit:
+        return sections, []
+
     keep: list[Section] = []
     size = 0
     for s in sections:
-        if len(keep) >= count_limit:
+        if len(keep) >= keep_count:
             break
-        if keep and size + len(s) > chars_limit:
+        if keep and size + len(s) > keep_chars:
             break
         keep.append(s)
         size += len(s)
