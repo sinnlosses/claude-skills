@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """1件1ファイル＋台帳の形のタスク運用を操作する入口コマンド。
 
-使い方: task.py <status|new|claim|release|done|ship> ...
+使い方: task.py <status|new|claim|release|done|ship|prune|migrate> ...
 
 正典は `docs/task-workflow-redesign.md`（5章が `task` コマンド、4章が状態と台帳、
 3章がタスクファイル、6章が送り出し、5.9・10章が `migrate`）。スキルからは
@@ -598,6 +598,103 @@ def _leave_feature_branch(root: str, toplevel: str, branch: str) -> str:
     return f"branch={landed}"
 
 
+# --- prune（5.10） ----------------------------------------------------------
+
+# develop/retrospective.md の中で機械が読む1行（retrospect/scripts/scan.py と同じ形）。
+RETROSPECT_LINE = re.compile(r"^最後に振り返ったコミット:\s*`([0-9a-f]{7,40})`")
+# 1件ごとの振り返りが済んだ印。`## 結果` の中のこの形の行（WORKFLOW.md「結果の書き方と知見の置き場」）。
+REVIEWED_LINE = re.compile(r"^- 振り返り:")
+
+
+def cmd_prune(toplevel: str, dry_run: bool) -> None:
+    """振り返りが済んだ done/dropped のタスクファイルを `git rm` して stage する（コミットしない）。
+
+    判定は `HEAD` の版で done/dropped・台帳に印が無い・次のどちらか:
+    `reviewed` = `## 結果` に `- 振り返り:` の行がある（1件ごとの振り返り済み）、
+    `retrospect` = `develop/retrospective.md` の基準点の版で既に done/dropped（まとめての振り返りが
+    読み終えた）。印のあるタスクを除くのは、`ship` が `main` の版で done を見て印を消すため。
+    """
+    if not dry_run and not ledger.is_clean(cwd=toplevel):
+        print("DIRTY")
+        raise SystemExit(4)
+
+    since, err = _retrospect_base(toplevel)
+    if err is not None:
+        print(f"INVALID\t{err}")
+        raise SystemExit(3)
+
+    claims = set(ledger.list_claims(ledger.ledger_root(cwd=toplevel)))
+    targets: list[tuple[str, str]] = []
+    for tid, task in sorted(_tasks_at(toplevel, "HEAD").items(), key=lambda kv: taskfile.id_number(kv[0])):
+        if task.status not in ("done", "dropped") or tid in claims:
+            continue
+        if _has_review_line(task.body):
+            targets.append((tid, "reviewed"))
+        elif since is not None and _status_at(toplevel, since, tid) in ("done", "dropped"):
+            targets.append((tid, "retrospect"))
+
+    if not targets:
+        print("NOTHING\t(消せるタスクファイルが無い)")
+        return
+    for tid, reason in targets:
+        print(f"PRUNE\t{tid}\t{reason}")
+    if dry_run:
+        print(f"PLAN\t{len(targets)}")
+        return
+    paths = [f"develop/{TASK_DIR_NAME}/{tid}.md" for tid, _ in targets]
+    r = _run_git(toplevel, ["rm", "-q", "--", *paths])
+    if r.returncode != 0:
+        raise ledger.GitCommandError(f"git rm が失敗した: {r.stderr.strip()}")
+    print(f"PRUNED\t{len(targets)}")
+
+
+def _retrospect_base(toplevel: str) -> tuple[str | None, str | None]:
+    """`(基準点のハッシュ, INVALIDの理由)`。記録ファイルや1行が無ければ基準点なし（`reviewed` だけで判定）。"""
+    path = os.path.join(toplevel, "develop", "retrospective.md")
+    if not os.path.exists(path):
+        return None, None
+    with open(path, encoding="utf-8") as f:
+        m = next((m for m in (RETROSPECT_LINE.match(l.strip()) for l in f) if m), None)
+    if m is None:
+        return None, None
+    since = m.group(1)
+    if _run_git(toplevel, ["cat-file", "-e", f"{since}^{{commit}}"]).returncode != 0:
+        return None, f"develop/retrospective.md の基準点 {since} がこのリポジトリに無い"
+    return since, None
+
+
+def _tasks_at(toplevel: str, rev: str) -> dict[str, taskfile.Task]:
+    r = _run_git(toplevel, ["ls-tree", "--name-only", rev, f"develop/{TASK_DIR_NAME}/"])
+    tasks: dict[str, taskfile.Task] = {}
+    for path in r.stdout.splitlines() if r.returncode == 0 else []:
+        stem = os.path.splitext(os.path.basename(path))[0]
+        if not path.endswith(".md") or not taskfile.ID_PATTERN.match(stem):
+            continue
+        shown = _run_git(toplevel, ["show", f"{rev}:{path}"])
+        parsed, err = taskfile.parse(shown.stdout) if shown.returncode == 0 else (None, "読めない")
+        if err is None and parsed is not None and parsed.id == stem:
+            tasks[stem] = parsed
+    return tasks
+
+
+def _status_at(toplevel: str, rev: str, task_id: str) -> str | None:
+    shown = _run_git(toplevel, ["show", f"{rev}:develop/{TASK_DIR_NAME}/{task_id}.md"])
+    if shown.returncode != 0:
+        return None
+    parsed, err = taskfile.parse(shown.stdout)
+    return parsed.status if err is None and parsed is not None else None
+
+
+def _has_review_line(body: str) -> bool:
+    in_result = False
+    for line in body.splitlines():
+        if line.startswith("## "):
+            in_result = line.strip() == taskfile.RESULT_HEADING
+        elif in_result and REVIEWED_LINE.match(line):
+            return True
+    return False
+
+
 # --- migrate（5.9・10章） ----------------------------------------------------
 
 
@@ -664,6 +761,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("ship")
 
+    p_prune = sub.add_parser("prune")
+    p_prune.add_argument("--dry-run", dest="dry_run", action="store_true")
+
     p_migrate = sub.add_parser("migrate")
     p_migrate.add_argument("--dry-run", dest="dry_run", action="store_true")
 
@@ -703,6 +803,8 @@ def main(argv: list[str] | None = None) -> None:
         cmd_done(toplevel, args.task_id, args.dropped, args.result_file)
     elif args.command == "ship":
         cmd_ship(toplevel)
+    elif args.command == "prune":
+        cmd_prune(toplevel, args.dry_run)
     elif args.command == "migrate":
         cmd_migrate(toplevel, args.dry_run)
 

@@ -29,7 +29,7 @@
 
 | 場所 | 役割 |
 | --- | --- |
-| `develop/task/T-xxx.md` | タスク1件1ファイル（正典。`done`・`dropped` も同じ場所に残す。アーカイブの段は無い） |
+| `develop/task/T-xxx.md` | タスク1件1ファイル（正典。`done`・`dropped` も同じ場所に残し、**振り返りが済んだら `task prune` で消す**（移す先は無い。本文は git の履歴から読む）） |
 | `develop/direction.md` | まだタスクになっていない指示（2節。下の「指示メモ」）。**新形式の目印**も兼ねる |
 | `develop/retrospective.md` | 手で呼ぶ `/retrospect`（まとめての振り返り）がどこまで振り返ったかの記録。1件ごとの振り返りは書かない（印は `## 結果` の `- 振り返り:` の行） |
 | `docs/history/direction.md` | 指示の履歴（タスク化した指示を日付見出しの下に移す） |
@@ -130,7 +130,7 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 - `CLAIMED`（作業中）は「`todo` ＋ 台帳の印」。`hold` は人の判断待ちで、`claim` は拒む。
   `hold` ↔ `todo` はサブコマンドを持たず、人（か人がいるセッション）が1語直してコミットし `ship` で送る
   （ユーザーが直接呼んだ `/next-task` が、メインで判断を聞いてこの切り替えをすることもある）
-- **依存の解決**: `done`・`dropped` と、タスクファイルに無い ID（旧アーカイブ由来）は解決済み。
+- **依存の解決**: `done`・`dropped` と、タスクファイルに無い ID（`task prune` で消したもの・旧アーカイブ由来）は解決済み。
   `todo`・`hold` は未解決
 - **取り残し**（前提: 1つの作業ツリーでは同時に1セッション）:
 
@@ -210,7 +210,10 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 6. `task done T-xxx --result-file -`（`status` と `## 結果` を書いて stage。印はまだ消さない）
 7. 作業とタスクファイル（積んだなら `develop/direction.md` も）を**1コミット**（`T-xxx: <件名>`。
    触ったファイルを個別に `git add`）
-8. `task ship`（`main` へ送り、印を消す）
+7a. `task prune`（振り返り済みの `done`・`dropped` を `git rm` して stage）。`PRUNED` なら**別の1コミット**
+   （件名 `振り返り済みのタスクファイルを消す（N件）`。タスクIDを置かない——`scan.py` が件名のIDで
+   割り付けるので、置くとそのタスクの材料に削除が混ざる）。いま完了にしたタスクは印があるので次の回で消える
+8. `task ship`（`main` へ送り、印を消す。7a のコミットも一緒に送る）
 
 ## 送り出し
 
@@ -221,6 +224,8 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 - 送るのは `git -C <本体> merge --ff-only <コミット>`（本体 = `main` を出している作業ツリー）か、
   本体が無ければ比較付きの `git update-ref`。先を越されたら rebase からやり直し、3回で `RACE`
 - **merge commit は作らない**。本体が汚れていれば `MAIN_DIRTY` で送らない
+- 並行する作業ツリーが同じタスクファイルを `task prune` で消していても、両側の削除は衝突しない
+  （中身がすべて `main` にあるコミットは rebase が落とす）。消したファイルを相手が書き換えていたときだけ `CONFLICT`
 - `main` を出している作業ツリーで起こしたときは送る段が無く、印を消して `SHIPPED main` を返す
 
 | 検証コマンドを打つ時点 | 誰が | なぜ |
@@ -304,6 +309,7 @@ zsh で単語に分かれず空振りし、`;` で続けた後続のコマンド
 | `release T-xxx [--force]` | 印を消すだけ（ファイルは戻さない）。`--force` は人が取り残しを片付けるとき | `RELEASED`・`NOT_CLAIMED`・`NOT_OWNER` |
 | `done T-xxx [--dropped] --result-file <path\|->` | `status` と `## 結果` を書いて stage（コミットしない・印は残す） | `DONE`・`NOT_OWNER` |
 | `ship` | rebase → （付け替えたら）検証 → ff-only で送る → 印を消す → 作業ブランチから降りる | `SHIPPED`・`NOTHING`・`MAIN_DIRTY`・`CONFLICT`・`VERIFY_FAILED`・`RACE` |
+| `prune [--dry-run]` | `HEAD` で `done`・`dropped`・印なし、かつ振り返り済み（`## 結果` に `- 振り返り:` の行がある＝`reviewed`／`develop/retrospective.md` の基準点の版で既に `done`・`dropped`＝`retrospect`）のタスクファイルを `git rm` して stage（コミットしない）。`--dry-run` は一覧だけ（汚れていても打てる） | 対象ごとに `PRUNE\tT-xxx\t<reviewed\|retrospect>`、最後に `PRUNED\t<N>`／`PLAN\t<N>`（`--dry-run`）。対象が無ければ `NOTHING`。`DIRTY`・`INVALID`（基準点のハッシュが無い） |
 | `migrate [--dry-run]` | 旧形式を変換する（下の「旧形式からの移行」） | `WRITE`・`MOVE`・`LEFTOVER`・`REMOVE`・`PLAN`/`MIGRATED` |
 
 | 終了コード | 先頭語 | 意味 | スキルがすること |
@@ -311,7 +317,7 @@ zsh で単語に分かれず空振りし、`;` で続けた後続のコマンド
 | 0 | 各成功語 | 成功 | 次へ |
 | 1 | （traceback） | 環境の故障 | エラー出力を報告して止まる。**手で代用しない** |
 | 2 | （stderr） | 渡した引数・本文の誤り | 直して打ち直す |
-| 3 | `INVALID` | データの不備（読めないタスクファイル、移行途中、`- ブランチ:` が読めない、`--check` の重複） | 理由をそのまま報告して止まる。**直しに行かない** |
+| 3 | `INVALID` | データの不備（読めないタスクファイル、移行途中、`- ブランチ:` が読めない、`--check` の重複、`develop/retrospective.md` の基準点がリポジトリに無い） | 理由をそのまま報告して止まる。**直しに行かない** |
 | 4 | `TAKEN`・`NOT_READY`・`DIRTY`・`MAIN_DIRTY`・`UNSHIPPED`・`LOCKED`・`NOT_OWNER` | いまの状態では進めない | 各スキルの表のとおり（別の1件を選ぶか止まる） |
 | 5 | `LEGACY` | 旧形式 | 下の「旧形式からの移行」を案内して止まる |
 | 6 | `MISSING` | タスク運用を始めていない | `/setup-tasks` を案内して止まる |

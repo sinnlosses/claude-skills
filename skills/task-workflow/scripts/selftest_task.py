@@ -952,6 +952,61 @@ def test_branch_setting_reads_leading_word() -> None:
         check("語彙に無い先頭語は INVALID（終了コード3）", r.returncode == 3 and r.stdout.startswith("INVALID\t"), r.stdout + r.stderr)
 
 
+def test_prune() -> None:
+    print("task.py prune: 振り返り済みの done/dropped だけを git rm して stage する")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, _wt1, _wt2 = make_repo(tmp, branch="切らない")
+        reviewed_body = BODY + "\n## 結果\n\n- 検証: x\n- 振り返り: 兆候なし\n"
+        plain_body = BODY + "\n## 結果\n\n- 検証: x\n"
+        commit_task(main_path, taskfile.Task("T-102", "基準点より前に done", "dropped", "sonnet", "Y", (), plain_body))
+        base = git(main_path, "rev-parse", "--short", "HEAD").stdout.strip()
+        commit_task(main_path, taskfile.Task("T-101", "1件ごとに振り返り済み", "done", "sonnet", "Y", (), reviewed_body))
+        commit_task(main_path, taskfile.Task("T-103", "基準点より後に done", "done", "sonnet", "Y", (), plain_body))
+        commit_task(main_path, taskfile.Task("T-104", "T-101 を待つ", "todo", "sonnet", "Y", ("T-101",), BODY))
+        commit_task(main_path, taskfile.Task("T-105", "印が立っている", "done", "sonnet", "Y", (), reviewed_body))
+        record = os.path.join(main_path, "develop", "retrospective.md")
+        write(record, f"# 振り返りの記録\n\n最後に振り返ったコミット: `{base}`\n")
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "記録")
+        ledger.try_claim(ledger.ledger_root(cwd=main_path), "T-105", main_path, "main")
+
+        r = run_task(main_path, "prune", "--dry-run")
+        check("--dry-run は PLAN で2件", r.returncode == 0 and r.stdout.splitlines()[-1] == "PLAN\t2", r.stdout + r.stderr)
+        check(
+            "対象と理由",
+            r.stdout.splitlines()[:2] == ["PRUNE\tT-101\treviewed", "PRUNE\tT-102\tretrospect"],
+            r.stdout,
+        )
+        check("--dry-run は消さない", os.path.exists(os.path.join(main_path, "develop", "task", "T-101.md")))
+
+        write(os.path.join(main_path, "scratch.txt"), "x\n")
+        r = run_task(main_path, "prune")
+        check("汚れていれば DIRTY(4)", r.returncode == 4 and r.stdout.strip() == "DIRTY", r.stdout + r.stderr)
+        r = run_task(main_path, "prune", "--dry-run")
+        check("--dry-run は汚れていても打てる", r.returncode == 0, r.stdout + r.stderr)
+        os.remove(os.path.join(main_path, "scratch.txt"))
+
+        r = run_task(main_path, "prune")
+        check("PRUNED で2件", r.returncode == 0 and r.stdout.splitlines()[-1] == "PRUNED\t2", r.stdout + r.stderr)
+        staged = git(main_path, "diff", "--cached", "--name-status").stdout.split()
+        check(
+            "2件の削除だけが stage される",
+            staged == ["D", "develop/task/T-101.md", "D", "develop/task/T-102.md"],
+            str(staged),
+        )
+        git(main_path, "commit", "-q", "-m", "振り返り済みのタスクファイルを消す（2件）")
+        status = run_task(main_path, "status").stdout
+        check("消した依存は解決済みのまま", any(l.startswith("T-104\ttodo") and "\tREADY\t" in l for l in status.splitlines()), status)
+        check("status --check が通る", run_task(main_path, "status", "--check").returncode == 0)
+        r = run_task(main_path, "prune")
+        check("2回目は NOTHING", r.returncode == 0 and r.stdout.startswith("NOTHING"), r.stdout + r.stderr)
+
+        write(record, "最後に振り返ったコミット: `0000000`\n")
+        git(main_path, "commit", "-q", "-am", "壊れた記録")
+        r = run_task(main_path, "prune", "--dry-run")
+        check("基準点が無いコミットなら INVALID(3)", r.returncode == 3 and r.stdout.startswith("INVALID\t"), r.stdout + r.stderr)
+
+
 def main() -> None:
     for t in (
         test_taskfile_parse,
@@ -977,6 +1032,7 @@ def main() -> None:
         test_ship_race_gives_up_after_three_tries,
         test_ship_default_branch_leaves_feature_branch,
         test_branch_setting_reads_leading_word,
+        test_prune,
     ):
         t()
     print()
