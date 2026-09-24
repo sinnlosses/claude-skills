@@ -68,7 +68,7 @@ python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py status
 - 理由は決め手になったもの1行。推薦が `loopable: N` なら「ユーザーの判断が要るので `/loop` では
   進まない」と添える
 - **`HOLD` は推薦しない。** `READY` が0件なら推薦の代わりに1行で、待ち先（「`T-xxx` が終わると
-  `T-yyy` が開く」）か、`HOLD` があれば「人の判断待ち: T-xxx」
+  `T-yyy` が開く」）か、`HOLD` があれば「人の判断待ち: T-xxx（`/next-task` を直接呼ぶと決められる）」
 
 ## 出さないもの
 
