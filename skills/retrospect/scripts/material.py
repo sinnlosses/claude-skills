@@ -64,7 +64,11 @@ def main() -> None:
 
 
 def print_task(root: str, task_id: str) -> bool:
-    """タスクの本文を出す。新しい形（`develop/task/`）で見つかれば True。"""
+    """タスクの本文を出す。新しい形（`develop/task/`）で見つかれば True。
+
+    振り返り後にファイルを消したタスクは `HEAD` に無いので、最後に存在した版
+    （`last_existing_ref`）を代わりに読む。
+    """
     rel = f"develop/task/{task_id}.md"
     text, _ = git_out(root, "show", f"HEAD:{rel}")
     if text is not None:
@@ -72,6 +76,15 @@ def print_task(root: str, task_id: str) -> bool:
         print()
         print(text.rstrip())
         return True
+
+    ref = last_existing_ref(root, rel)
+    if ref is not None:
+        text, _ = git_out(root, "show", f"{ref}:{rel}")
+        if text is not None:
+            print(f"出典\t{rel}（{ref}、削除前の最後の版）")
+            print()
+            print(text.rstrip())
+            return True
 
     live = os.path.join(root, "develop", "tasks.json")
     if os.path.exists(live):
@@ -103,10 +116,11 @@ def print_task(root: str, task_id: str) -> bool:
 
 
 def print_task_file_diff(root: str, task_id: str) -> None:
-    """登録した版（ファイルを足したコミット）と `HEAD` の版の差を出す。
+    """登録した版（ファイルを足したコミット）と最後の版の差を出す。
 
     登録の粗さと、着手までにどれだけ前提が動いたかがここに出る（`## やること` は着手直後に
-    書く節なので、登録時の版には無い）。
+    書く節なので、登録時の版には無い）。`HEAD` に無いタスクは、最後に存在した版
+    （`last_existing_ref`）までの差にする。
     """
     rel = f"develop/task/{task_id}.md"
     added, err = git_out(root, "log", "--diff-filter=A", "--format=%h", "--", rel)
@@ -117,13 +131,34 @@ def print_task_file_diff(root: str, task_id: str) -> None:
     base = first[-1]
     print(f"登録\t{base}")
     registered, _ = git_out(root, "show", f"{base}:{rel}")
+    end_ref = "HEAD"
     current, _ = git_out(root, "show", f"HEAD:{rel}")
+    if current is None:
+        ref = last_existing_ref(root, rel)
+        if ref is not None:
+            end_ref = ref
+            current, _ = git_out(root, "show", f"{end_ref}:{rel}")
+    if end_ref != "HEAD":
+        print(f"最後の版\t{end_ref}（HEAD に無いので、消える直前の版までの差）")
     for label, text in (("登録時の節", registered), ("いまの節", current)):
         heads = [ln for ln in (text or "").splitlines() if ln.startswith("## ")]
         print(f"{label}\t" + (", ".join(f"{h[3:]}" for h in heads) or "-"))
-    diff, _ = git_out(root, "diff", f"{base}", "HEAD", "--", rel)
+    diff, _ = git_out(root, "diff", f"{base}", end_ref, "--", rel)
     print()
     print((diff or "（差分なし）").rstrip())
+
+
+def last_existing_ref(root: str, rel: str) -> str | None:
+    """`rel` が `HEAD` に無いとき、最後に存在した版を指す ref を返す。
+
+    「そのパスを最後に消したコミット」の親が、消える直前＝最後に存在した版。パスが一度も
+    消えていなければ（そもそも作られていない等）`None`。
+    """
+    deleted, _ = git_out(root, "log", "-1", "--diff-filter=D", "--format=%H", "--", rel)
+    deleted_hash = (deleted or "").strip()
+    if not deleted_hash:
+        return None
+    return f"{deleted_hash}^"
 
 
 def find_archived_task(path: str, task_id: str) -> str | None:
