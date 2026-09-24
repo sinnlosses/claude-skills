@@ -75,10 +75,12 @@ description: "develop/direction.md に書かれたユーザーからの指示（
    **当時の記述のまま**移して節を見出しだけに戻し、`## エージェントのドラフト` は承認を得た項目だけを
    出典1行つきで移して未承認は残す。会話入口は発言を生の言い回しのまま書く。
 
-7. **コミットして送る**: 登録したタスクファイル・`develop/direction.md`・`docs/history/direction.md`
-   （と直した既存タスク）を**個別に** `git add` して1コミット（件名にタスクIDを付けない。
-   例「指示をタスクにする（T-531〜T-533）」）→ `task ship`。`SHIPPED` 以外の扱いは `next-task`
-   スキルの手順8の表と同じ（止まって預ける）。push はしない。
+7. **コミットして送る**: `git add` する前に整形コマンドを打つ（`タスク運用`節が `なし` なら不要。
+   手順6で書き換えた `develop/direction.md` と `docs/history/direction.md` はそのままだと
+   整形コマンドの検査に引っかかりうる）。打ったら、登録したタスクファイル・`develop/direction.md`・
+   `docs/history/direction.md`（と直した既存タスク）を**個別に** `git add` して1コミット（件名に
+   タスクIDを付けない。例「指示をタスクにする（T-531〜T-533）」）→ `task ship`。`SHIPPED` 以外の
+   扱いは `next-task` スキルの手順8の表と同じ（止まって預ける）。push はしない。
 
 ## 完了報告のフォーマット
 
