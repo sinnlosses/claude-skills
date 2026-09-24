@@ -26,10 +26,11 @@ description: "実行し終えたタスクを振り返り、次に効く改善だ
 
 ### 1. 範囲を決める
 
-先に形式を確かめる:
+先に形式を確かめる。以下の `task` は、PATH に `task` があればそれを、無ければ
+`python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py` を打つ（どちらも変数に入れない）:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py status > /dev/null; echo $?
+task status > /dev/null; echo $?
 ```
 
 `5`（`LEGACY`）なら「旧形式（`develop/tasks.json`）。`task-workflow` スキルの WORKFLOW.md
@@ -150,8 +151,8 @@ diff が上限で切れたら、気になるファイルだけ `git show <hash> 
 `develop/retrospective.md` と `develop/direction.md` の2ファイルを指定してコミットする
 （`git add -A` を使わない）。件名は `振り返り <since>..<head>（<N>コミット）` の形にし、タスクIDは
 件名に置かない（タスクのコミットと混ざると `scan.py` の割り付けが狂う）。コミットしたら
-`python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py ship` で `main` へ送る（`SHIPPED` 以外で
-止まったら、先頭語と行をそのまま報告して預ける。扱いは `next-task` スキルの手順8の表と同じ）。
+`task ship` で `main` へ送る（`SHIPPED` 以外で止まったら、先頭語と行をそのまま報告して預ける。
+扱いは `next-task` スキルの手順8の表と同じ）。
 
 **初回**は記録ファイルを作るところから。この雛形をそのまま置く:
 

@@ -285,9 +285,20 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 
 ## `task` コマンドの参照
 
-スキルからは `python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py <サブコマンド>`
-（以下 `task`。PATH には入れない）。どのディレクトリから打ってもリポジトリの根で動く。出力は常に
-stdout の TSV で、1行目の先頭語が種類。
+スキルからは `task <サブコマンド>`（**PATH に `task` があればそれを、無ければ
+`python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py <サブコマンド>` を打つ。
+どちらも変数に入れない**——変数に入れて呼ぶと zsh で単語に分かれず空振りし、`;` で続けた
+後続のコマンドだけが走る事故があった）。どのディレクトリから打ってもリポジトリの根で動く。
+出力は常に stdout の TSV で、1行目の先頭語が種類。
+
+`task` を PATH 上のコマンドにするのは、`bin/task`（`task.py` を呼ぶだけの薄い入口。symlink
+越しでも自分の実体を探して隣の `task.py` を呼ぶ）への symlink を人が張ることで行う
+（**このリポジトリの `install.sh` は張らない**——グローバルなツールの導入にあたるため）。
+
+```sh
+ln -s ~/ghq/github.com/sinnlosses/claude-skills/bin/task ~/.local/bin/task   # 張る
+rm ~/.local/bin/task                                                         # 外す
+```
 
 | サブコマンド | すること | 主な出力 |
 | --- | --- | --- |

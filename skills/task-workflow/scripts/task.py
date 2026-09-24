@@ -6,8 +6,8 @@
 正典は `docs/task-workflow-redesign.md`（5章が `task` コマンド、4章が状態と台帳、
 3章がタスクファイル、6章が送り出し、5.9・10章が `migrate`）。スキルからは
 `python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py <サブコマンド> …` で呼ぶ
-（5.1。PATH には入れない）。スキル側の呼び方の正典は task-workflow の WORKFLOW.md
-「`task` コマンドの参照」。
+（5.1。PATH に `task` があれば `task <サブコマンド>` で呼んでもよい。`bin/task` への symlink を
+人が張る）。スキル側の呼び方の正典は task-workflow の WORKFLOW.md「`task` コマンドの参照」。
 
 出力は常に stdout（先頭語で種類を判定する TSV）、stderr は使い方の誤りだけ、
 終了コードは5.2の表のとおり。データの不備で traceback を出さない

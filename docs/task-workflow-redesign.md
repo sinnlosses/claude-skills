@@ -53,7 +53,7 @@ tsukumo では6本の作業ツリーが `main` の上の `develop/tasks.json` �
 | 取り残しの判定 | 自分の作業ツリーの印が残っていれば取り残し（1作業ツリー＝同時に1セッションの前提）。他の作業ツリーの印は、その作業ツリーが消えている・`main` でもう done/dropped になっている・`owner` が書かれないまま60秒経った、のどれかで `STALE` と表示するだけで、消すのは人（4.3） |
 | `main` を出している作業ツリーで起こしたとき | 着手の印と採番は同じ。完了のコミットがそのまま `main` に乗るので `ship` は送る段を飛ばして印を消すだけ（4.4） |
 | `task` のサブコマンドの引数・出力・終了コード | 5章の表。出力は常に stdout で1行目の先頭語が種類、終了コードは 0/1/2/3/4/5/6/7/8/9 の10種で分岐できる形（5.2） |
-| スキルからの呼び方 | `python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py <サブコマンド>`。PATH には入れない（5.1） |
+| スキルからの呼び方 | `python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py <サブコマンド>`。PATH に `bin/task` への symlink を人が張れば `task <サブコマンド>` でもよい（5.1） |
 | `ship` と `- ブランチ:` 設定の関係 | 値の先頭語を語彙として読む。`既定`／`作業ブランチを切る` は `feature/T-xxx` を `claim` が切り `ship` が消す、`切らない` はいまの枝のまま。どちらも送り方は同じ（`main` より遅れていれば `git rebase main` → `--ff-only` 相当で送る）で、merge commit は作らない（6.1・6.2） |
 | 検証コマンドをいつ打つか | 受け入れ（done の前）でスキルが1回。`ship` は付け替え（rebase）が実際に起きた回だけ `task` 自身が打つ（6.3） |
 | `hold` を `/next-task` がどう扱うか | 選ばない。`claim` も拒む。`hold` に依存する `todo` は `BLOCKED`。残りが `hold` だけなら「人の判断待ち」と ID を出して止まる（4.1・9.2） |
@@ -262,8 +262,10 @@ L/
 - **Python 3.9 の標準ライブラリだけ**（macOS の `/usr/bin/python3` が 3.9.6。`tomllib`・
   `match` は使わない）。`git` を `subprocess` で呼ぶ
 - スキルからは `python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py <サブコマンド> …`。
-  以下 `task` と略す。PATH には入れない（グローバルなツールの導入になるため）。人が手で
-  打ちたければ各自 alias を張る
+  以下 `task` と略す。PATH には `bin/task`（`task.py` を呼ぶだけの入口）への symlink を人が張れば
+  `task <サブコマンド>` と打てる（symlink を張ること自体はグローバルなツールの導入にあたるので
+  人が行う。当初は alias で代用する案だったが、変数に入れて呼ぶ運用が zsh の単語分割で空振りする
+  事故を繰り返したため、PATH 上のコマンドに変えた）
 - どのディレクトリから打っても `git rev-parse --show-toplevel` を根として動く
 - 自己テストは `skills/task-workflow/scripts/selftest_task.py`。一時ディレクトリに git
   リポジトリと作業ツリー2本を作って通す。`check.sh` に1行足す（T-521）

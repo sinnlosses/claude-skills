@@ -4,9 +4,10 @@ description: "develop/task/ の未着手タスクを1件選び、task コマン�
 ---
 
 タスクを1サイクルぶん前に進めて終わる（全件進めたいときは `/loop /next-task`。続行/停止は `/loop` が
-決める）。ルールは `task-workflow` スキルの `WORKFLOW.md`（以下「正典」）。以下の `task` は
-`python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py` の略。**`task` の代わりに台帳や
-タスクファイルを手で操作しない。**
+決める）。ルールは `task-workflow` スキルの `WORKFLOW.md`（以下「正典」）。以下の `task` は、
+PATH に `task` があればそれを、無ければ
+`python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py` を打つ（どちらも変数に入れない）。
+**`task` の代わりに台帳やタスクファイルを手で操作しない。**
 
 ## このプロジェクトの設定（CLAUDE.md の「## タスク運用」節）
 

@@ -4,8 +4,8 @@ description: "develop/direction.md に書かれたユーザーからの指示（
 ---
 
 `develop/direction.md` に溜まった指示をタスクにする。ルールは `task-workflow` スキルの
-`WORKFLOW.md`（以下「正典」）。以下の `task` は
-`python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py` の略。
+`WORKFLOW.md`（以下「正典」）。以下の `task` は、PATH に `task` があればそれを、無ければ
+`python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py` を打つ（どちらも変数に入れない）。
 
 **登録までで止め、実行はしない**（実行は `/next-task`）。分解は方針決めを含むので、**委譲せず
 ユーザーがいるセッションで行い**、`/loop` から直接は呼ばない。例外は `/next-task` が `READY` 0件の
