@@ -496,6 +496,10 @@ merge commit を作る運用（旧既定の `git merge`、`--no-ff` の例）は
 
 ## 7. 登録の上限と `## 積み残し`
 
+**2026-09-24 に撤去した（ユーザー決定）。** `task new` は `READY` の件数で拒まなくなり、
+`CAP`・`## 積み残し`・`task status` の `backlog` 行と `ready` の上限表示はなくなった。以下は
+当時の設計として残す。
+
 ### 7.1 並列数
 
 **並列数 = `git worktree list` のうち `refs/heads/main` を出していない作業ツリーの数（最低1）**。

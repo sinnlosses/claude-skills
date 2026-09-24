@@ -77,7 +77,7 @@ def make_repo(tmp: str, branch: str = "既定", verify: str | None = None) -> tu
     git(main_path, "config", "user.name", "test")
     write(
         os.path.join(main_path, "develop", "direction.md"),
-        "# 未対応の指示メモ\n\n## ユーザーから\n\n## エージェントのドラフト\n\n## 積み残し\n",
+        "# 未対応の指示メモ\n\n## ユーザーから\n\n## エージェントのドラフト\n",
     )
     write(os.path.join(main_path, "docs", "history", "tasks.md"), "# 完了タスクのアーカイブ\n")
     claude_md = "# x\n\n## タスク運用\n\n"
@@ -267,7 +267,7 @@ def _make_legacy_repo(tmp: str, tasks: list[dict] | None = None, progress: str |
     git(repo, "config", "user.name", "test")
     write(
         os.path.join(repo, "develop", "direction.md"),
-        "# 未対応の指示メモ\n\n## ユーザーから\n\n## エージェントのドラフト\n\n## 積み残し\n",
+        "# 未対応の指示メモ\n\n## ユーザーから\n\n## エージェントのドラフト\n",
     )
     write(os.path.join(repo, "docs", "history", "tasks.md"), "# 完了タスクのアーカイブ\n")
     if tasks is not None:

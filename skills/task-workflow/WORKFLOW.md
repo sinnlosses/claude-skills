@@ -19,7 +19,7 @@
 | ## 送り出し | `ship` の送り方、検証コマンドを打つ時点、作業ブランチの後始末 |
 | ## 結果の書き方と知見の置き場 | `## 結果` に書くこと、`progress.md` をなくした後の置き場 |
 | ## コミットメッセージ | タスクIDの付け方 |
-| ## 指示メモ（`develop/direction.md`） | 3節と承認ゲート、入口2つ、登録の上限と `## 積み残し`、指示の履歴 |
+| ## 指示メモ（`develop/direction.md`） | 2節と承認ゲート、入口2つ、指示の履歴 |
 | ## `task` コマンドの参照 | サブコマンドと出力、終了コードの表 |
 | ## 旧形式からの移行 | `LEGACY` が出たときの案内 |
 
@@ -30,7 +30,7 @@
 | 場所 | 役割 |
 | --- | --- |
 | `develop/task/T-xxx.md` | タスク1件1ファイル（正典。`done`・`dropped` も同じ場所に残す。アーカイブの段は無い） |
-| `develop/direction.md` | まだタスクになっていない指示（3節。下の「指示メモ」）。**新形式の目印**も兼ねる |
+| `develop/direction.md` | まだタスクになっていない指示（2節。下の「指示メモ」）。**新形式の目印**も兼ねる |
 | `develop/retrospective.md` | `/retrospect` がどこまで振り返ったかの記録 |
 | `docs/history/direction.md` | 指示の履歴（タスク化した指示を日付見出しの下に移す） |
 | `docs/history/tasks.md`・`docs/history/progress.md` | 旧形式の時代の履歴。**読むだけで書き足さない** |
@@ -260,33 +260,22 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 
 ## 指示メモ（`develop/direction.md`）
 
-まだタスクになっていない指示の置き場で、書き手と扱いで3節に分ける:
+まだタスクになっていない指示の置き場で、書き手と扱いで2節に分ける:
 
 | 節 | 書き手 | タスク化してよい条件 |
 | --- | --- | --- |
 | `## ユーザーから` | ユーザー（ファイル入口） | いつでも（`/loop` の `/next-task` からも） |
 | `## エージェントのドラフト` | エージェント（作業中の「これも直したい」、`/retrospect`） | **対話セッションでユーザーの承認を得たものだけ**。`/loop` からは触らない |
-| `## 積み残し` | `/plan-tasks`（上限で登録できなかった分） | 分解と承認は済んでいるので、無人でも繰り上げてよい |
 
 - **会話入口**: チャットでの明示の指示（「これタスクにして」「それでいいよ」）も拾う。検討中の発言・
   思いつきは拾わない。迷ったら拾わない。`/loop` から回っているときは使わない
-- 節見出しの無い古いファイルは、全体を `## ユーザーから` とみなす。`## 積み残し` に中身があっても
-  「未タスク化の指示」には数えない
-- **登録の上限**: `READY` の `todo` は **並列数 × 2** まで（並列数 = `git worktree list` のうち `main` を
-  出していない作業ツリーの数、最低1）。`task new` が錠の中で数えて `CAP` で拒むので、残りは
-  `## 積み残し` へ、**ID を振らずに**置く（`hold`・依存で `BLOCKED` になるものは数えない）:
-
-```markdown
-- <summary>（difficulty: sonnet / loopable: Y / 元の指示: docs/history/direction.md 2026-09-24「…」）
-  - 目的: …
-  - 完了条件: …
-```
-
-- 積み残しを繰り上げるときは、いまの `main` に照らして背景を書き直してから `task new` する。
-  古くなって要らなくなった項目は理由を添えて消す
+- 節見出しの無い古いファイルは、全体を `## ユーザーから` とみなす
+- **登録する数に上限は置かない**（`READY` が何件あっても `task new` は拒まない）。登録から着手まで
+  間が空いたタスクは `## 背景` が `main` とずれうるので、着手直後の `## やること` を書くときに
+  いまの `main` と突き合わせる
 - **タスク化した項目は節から取り除き、`docs/history/direction.md` の先頭に日付見出し
   （`## YYYY-MM-DD`）で移す。** 書くのは3つだけ: ユーザーの生の言い回し（ドラフト由来なら
-  `（エージェントのドラフト / 承認: 「…」）` を1行添える）、項目 → タスクID／積み残しの対応表、
+  `（エージェントのドラフト / 承認: 「…」）` を1行添える）、項目 → タスクIDの対応表、
   タスクにしなかった項目の理由。噛み砕いた説明は書かない（本文の `## 背景` と二重になる）。
   移した記述は後から書き換えない
 
@@ -298,8 +287,8 @@ stdout の TSV で、1行目の先頭語が種類。
 
 | サブコマンド | すること | 主な出力 |
 | --- | --- | --- |
-| `status [--all] [--check]` | 一覧（done/dropped は件数だけ。`--all` で行も）。`--check` は検証コマンド向けの厳しい判定 | 行 `id/status/difficulty/loopable/dependencies/着手可否/印/summary`、`---` の後に `counts`・`ready`・`todo_loopable`・`stale`・`backlog`・`invalid`・（残っていれば）`legacy_progress` |
-| `new --summary … --difficulty … --loopable Y\|N [--deps T-001,…] [--hold] --body-file <path\|->` | 錠の中で採番してファイルを作る（コミットしない） | `CREATED`・`CAP`・`LOCKED` |
+| `status [--all] [--check]` | 一覧（done/dropped は件数だけ。`--all` で行も）。`--check` は検証コマンド向けの厳しい判定 | 行 `id/status/difficulty/loopable/dependencies/着手可否/印/summary`、`---` の後に `counts`・`ready`・`todo_loopable`・`stale`・`invalid`・（残っていれば）`legacy_progress` |
+| `new --summary … --difficulty … --loopable Y\|N [--deps T-001,…] [--hold] --body-file <path\|->` | 錠の中で採番してファイルを作る（コミットしない） | `CREATED`・`LOCKED` |
 | `claim T-xxx` | clean・未送りなしを確かめ、`main` へ追い付き、印を立て、設定なら枝を切る | `CLAIMED`・`TAKEN`・`NOT_READY`・`DIRTY`・`UNSHIPPED` |
 | `release T-xxx [--force]` | 印を消すだけ（ファイルは戻さない）。`--force` は人が取り残しを片付けるとき | `RELEASED`・`NOT_CLAIMED`・`NOT_OWNER` |
 | `done T-xxx [--dropped] --result-file <path\|->` | `status` と `## 結果` を書いて stage（コミットしない・印は残す） | `DONE`・`NOT_OWNER` |
@@ -312,7 +301,7 @@ stdout の TSV で、1行目の先頭語が種類。
 | 1 | （traceback） | 環境の故障 | エラー出力を報告して止まる。**手で代用しない** |
 | 2 | （stderr） | 渡した引数・本文の誤り | 直して打ち直す |
 | 3 | `INVALID` | データの不備（読めないタスクファイル、移行途中、`- ブランチ:` が読めない、`--check` の重複） | 理由をそのまま報告して止まる。**直しに行かない** |
-| 4 | `TAKEN`・`NOT_READY`・`CAP`・`DIRTY`・`MAIN_DIRTY`・`UNSHIPPED`・`LOCKED`・`NOT_OWNER` | いまの状態では進めない | 各スキルの表のとおり（別の1件を選ぶか止まる） |
+| 4 | `TAKEN`・`NOT_READY`・`DIRTY`・`MAIN_DIRTY`・`UNSHIPPED`・`LOCKED`・`NOT_OWNER` | いまの状態では進めない | 各スキルの表のとおり（別の1件を選ぶか止まる） |
 | 5 | `LEGACY` | 旧形式 | 下の「旧形式からの移行」を案内して止まる |
 | 6 | `MISSING` | タスク運用を始めていない | `/setup-tasks` を案内して止まる |
 | 7 | `CONFLICT` | rebase が衝突した（`--abort` 済み） | 衝突したファイルを添えて人に預ける |

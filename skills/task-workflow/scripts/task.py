@@ -210,14 +210,6 @@ def _section_bullets(text: str, heading_prefix: str) -> int:
     return sum(1 for l in lines[start + 1 : end] if l.strip().startswith("- "))
 
 
-def count_backlog_items(toplevel: str) -> int:
-    path = os.path.join(toplevel, "develop", "direction.md")
-    if not os.path.exists(path):
-        return 0
-    with open(path, encoding="utf-8") as f:
-        return _section_bullets(f.read(), "## 積み残し")
-
-
 def read_body(path: str) -> str:
     if path == "-":
         return sys.stdin.read()
@@ -279,11 +271,10 @@ def cmd_status(toplevel: str, show_all: bool, check: bool) -> None:
     counts["claimed"] = len(claims)
     print("counts\t" + "\t".join(f"{k}={v}" for k, v in counts.items()))
 
-    cap = ledger.parallelism(cwd=toplevel) * 2
     ready_count = sum(
         1 for tid, t in tasks.items() if t.status == "todo" and readiness(t, tasks, claims) == "READY"
     )
-    print(f"ready\t{ready_count}/{cap}\t(並列数 {ledger.parallelism(cwd=toplevel)})")
+    print(f"ready\t{ready_count}")
 
     todo_loopable_n = sum(1 for t in tasks.values() if t.status == "todo" and t.loopable == "N")
     print(f"todo_loopable\tN={todo_loopable_n}")
@@ -302,7 +293,6 @@ def cmd_status(toplevel: str, show_all: bool, check: bool) -> None:
             stale_entries.append(f"{tid}:{label}({detail})" if detail else f"{tid}:{label}")
     print(f"stale\t{len(stale_entries)}\t" + (",".join(stale_entries) if stale_entries else "-"))
 
-    print(f"backlog\t{count_backlog_items(toplevel)}\t(develop/direction.md の ## 積み残し)")
     print(f"invalid\t{len(invalid)}\t" + (",".join(sorted(invalid)) if invalid else "-"))
 
     progress_path = os.path.join(toplevel, "develop", "progress.md")
@@ -348,23 +338,6 @@ def cmd_new(toplevel: str, args: argparse.Namespace) -> None:
         tasks, invalid, _ = load_tasks(toplevel)
 
         status = "hold" if args.hold else "todo"
-        deps_resolved = all(is_resolved(d, tasks) for d in deps)
-        counts_toward_cap = status == "todo" and deps_resolved
-        if counts_toward_cap:
-            cap = ledger.parallelism(cwd=toplevel) * 2
-            claims = set(ledger.list_claims(root))
-            ready_count = sum(
-                1
-                for tid, t in tasks.items()
-                if t.status == "todo" and readiness(t, tasks, claims) == "READY"
-            )
-            if ready_count >= cap:
-                print(
-                    f"CAP\t{ready_count}/{cap}\t(並列数 {ledger.parallelism(cwd=toplevel)})"
-                    "\t残りは develop/direction.md の ## 積み残し へ"
-                )
-                raise SystemExit(4)
-
         history_path = os.path.join(toplevel, "docs", "history", "tasks.md")
         candidate_ids = (
             list(tasks) + [i for i in invalid if taskfile.ID_PATTERN.match(i)]

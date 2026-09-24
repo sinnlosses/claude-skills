@@ -3,8 +3,8 @@
 
 使い方: init.py [develop-dir]   （既定: develop）
 
-作るのは `develop/direction.md` の骨組み（`## ユーザーから`・`## エージェントのドラフト`・
-`## 積み残し` の3節）だけ（正典は task-workflow の WORKFLOW.md「ファイル配置と CLAUDE.md」）。
+作るのは `develop/direction.md` の骨組み（`## ユーザーから`・`## エージェントのドラフト` の
+2節）だけ（正典は task-workflow の WORKFLOW.md「ファイル配置と CLAUDE.md」）。
 `develop/task/` は最初の `task new` が作り、`direction.md` が新形式の目印になる（空の
 ディレクトリは git に載らないため）。骨組みは決まりきっているのでモデルに書かせない
 （`direction.md` に見出し以外の行が混ざると `/plan-tasks` が「未対応の指示がある」と誤判定する）。
@@ -23,12 +23,11 @@ import os
 import re
 import sys
 
-DIRECTION = "# 未対応の指示メモ\n\n## ユーザーから\n\n## エージェントのドラフト\n\n## 積み残し\n"
+DIRECTION = "# 未対応の指示メモ\n\n## ユーザーから\n\n## エージェントのドラフト\n"
 
-# direction.md の3節（正典「指示メモ」）。前方一致で探す。
+# direction.md の2節（正典「指示メモ」）。前方一致で探す。
 SECTION_USER = "## ユーザーから"
 SECTION_DRAFT = "## エージェントのドラフト"
-SECTION_BACKLOG = "## 積み残し"
 
 # CLAUDE.md 側の正典（正典「ファイル配置と CLAUDE.md」）。スキルと task.py はこの節を読む。
 CLAUDE_MD = "CLAUDE.md"
@@ -90,43 +89,33 @@ def check_claude_md(path: str) -> str:
 def check_direction(path: str) -> str:
     """`## ユーザーから`・`## エージェントのドラフト` の本文行数を数える（正典「指示メモ」）。
 
-    `## 積み残し` は分解と承認が済んだ項目なので「未タスク化の指示」に数えない。**節見出しが
-    1つも無い（古い）ファイルは、全体を `## ユーザーから` とみなす**（後方互換）。
+    **節見出しが1つも無い（古い）ファイルは、全体を `## ユーザーから` とみなす**（後方互換）。
     """
     with open(path, encoding="utf-8") as f:
         lines = f.read().splitlines()
 
-    known = (SECTION_USER, SECTION_DRAFT, SECTION_BACKLOG)
+    known = (SECTION_USER, SECTION_DRAFT)
     if not any(l.startswith(k) for l in lines for k in known):
         body = [l for l in lines if l.strip() and not l.startswith("#")]
-        return _direction_result(len(body), 0, has_backlog=False)
+        return _direction_result(len(body), 0)
 
-    counts = {"user": 0, "draft": 0, "backlog": 0}
+    counts = {"user": 0, "draft": 0}
     current: str | None = None
     for l in lines:
         if l.startswith(SECTION_USER):
             current = "user"
         elif l.startswith(SECTION_DRAFT):
             current = "draft"
-        elif l.startswith(SECTION_BACKLOG):
-            current = "backlog"
         elif l.startswith("#"):
             current = None
         elif l.strip() and current is not None:
             counts[current] += 1
-    has_backlog = any(l.startswith(SECTION_BACKLOG) for l in lines)
-    result = _direction_result(counts["user"], counts["draft"], has_backlog)
-    if counts["backlog"]:
-        result += f"（積み残し{counts['backlog']}行）"
-    return result
+    return _direction_result(counts["user"], counts["draft"])
 
 
-def _direction_result(user_n: int, draft_n: int, has_backlog: bool) -> str:
-    missing = "" if has_backlog else f"（{SECTION_BACKLOG} 節が無い。見出し行だけ足す）"
+def _direction_result(user_n: int, draft_n: int) -> str:
     if user_n or draft_n:
-        return f"PENDING: ユーザーから{user_n}行、エージェントのドラフト{draft_n}行（/plan-tasks が先）{missing}"
-    if missing:
-        return f"MISSING_SECTION: {SECTION_BACKLOG}"
+        return f"PENDING: ユーザーから{user_n}行、エージェントのドラフト{draft_n}行（/plan-tasks が先）"
     return "OK: 未対応の指示は無い"
 
 

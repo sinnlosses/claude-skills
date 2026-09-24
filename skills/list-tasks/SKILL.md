@@ -12,7 +12,7 @@ python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py status
 ```
 
 行の列は `id / status / difficulty / loopable / dependencies / 着手可否 / 印 / summary`。`---` の後ろに
-`counts`・`ready`（READY 件数/上限と並列数）・`todo_loopable`・`stale`・`backlog`・`invalid`、
+`counts`・`ready`（READY 件数）・`todo_loopable`・`stale`・`invalid`、
 残っていれば `legacy_progress`。
 
 ## 表示のしかた
@@ -44,8 +44,8 @@ python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py status
    - **1列1値**。`内容` は `summary` を切らずにそのまま貼る（端末幅で折り返してよい）。依存の列は
      作らない（`状態` が待ち先を持つ）。done/dropped の行は出さない
 
-3. テーブルの下に**1行**: 件数（todo／作業中／判断待ち／done／dropped。`counts` から）、`ready` と
-   上限、`backlog` の件数、`todo_loopable` の `N` が1件以上なら「うち `/loop` では進まない N 件」。
+3. テーブルの下に**1行**: 件数（todo／作業中／判断待ち／done／dropped。`counts` から）、`ready` の
+   件数、`todo_loopable` の `N` が1件以上なら「うち `/loop` では進まない N 件」。
    続けて、あるものだけ1行ずつ:
    - `stale` が1件以上: 「取り残しの印: T-xxx（STALE:gone …）。片付けるのは人（`task release T-xxx --force`）」
    - `invalid` が1件以上: 「読めないタスクファイル: T-xxx」

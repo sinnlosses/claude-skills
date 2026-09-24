@@ -59,7 +59,7 @@ class Worktree:
 
 
 def list_worktrees(cwd: str | None = None) -> list[Worktree]:
-    """`git worktree list --porcelain` を読む（4.3 の取り残し判定・7.1 の並列数に使う）。"""
+    """`git worktree list --porcelain` を読む（4.3 の取り残し判定に使う）。"""
     out = _git(["worktree", "list", "--porcelain"], cwd)
     worktrees: list[Worktree] = []
     path: str | None = None
@@ -77,12 +77,6 @@ def list_worktrees(cwd: str | None = None) -> list[Worktree]:
             ref = line[len("branch ") :]
             branch = ref[len("refs/heads/") :] if ref.startswith("refs/heads/") else ref
     return worktrees
-
-
-def parallelism(cwd: str | None = None) -> int:
-    """7.1: `main` を出していない作業ツリーの数（最低1）。"""
-    n = sum(1 for w in list_worktrees(cwd) if w.branch != "main")
-    return max(n, 1)
 
 
 def ledger_root(cwd: str | None = None) -> str:

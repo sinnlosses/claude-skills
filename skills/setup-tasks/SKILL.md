@@ -1,6 +1,6 @@
 ---
 name: setup-tasks
-description: "タスク運用に要る develop/direction.md（## ユーザーから・## エージェントのドラフト・## 積み残し）をプロジェクトに用意し、検証コマンド・整形コマンド・ブランチの3行を CLAUDE.md の「## タスク運用」節に書く。ユーザーが「タスク運用を始めたい」「develop/ を用意して」「このプロジェクトでもタスク管理を使いたい」と言ったとき、/next-task・/plan-tasks・/list-tasks が MISSING を返したときに使う。既にあるファイルは上書きしない。旧形式（develop/tasks.json）なら作らずに移行を案内する。"
+description: "タスク運用に要る develop/direction.md（## ユーザーから・## エージェントのドラフト）をプロジェクトに用意し、検証コマンド・整形コマンド・ブランチの3行を CLAUDE.md の「## タスク運用」節に書く。ユーザーが「タスク運用を始めたい」「develop/ を用意して」「このプロジェクトでもタスク管理を使いたい」と言ったとき、/next-task・/plan-tasks・/list-tasks が MISSING を返したときに使う。既にあるファイルは上書きしない。旧形式（develop/tasks.json）なら作らずに移行を案内する。"
 ---
 
 `/next-task` `/plan-tasks` `/list-tasks` が読む**プロジェクト側のファイルを用意する**。置き場と役割は
@@ -21,7 +21,6 @@ description: "タスク運用に要る develop/direction.md（## ユーザーか
    | `LEGACY`（終了コード5） | **旧形式**（`develop/tasks.json` がある）。何も作っていない。「正典「旧形式からの移行」の手順で `task migrate --dry-run` から移す（全作業ツリーの手を止めてから）」と案内して終了する |
    | `CREATED` | `develop/direction.md` を骨組みで作った |
    | `KEPT` + `OK:` | 既にあり、筋が通っている。触っていない |
-   | `KEPT` + `MISSING_SECTION:` | 足りない節（`## 積み残し`）を**見出し行だけ**末尾に足す。既存の中身は動かさない |
    | `KEPT` + `PENDING:` | セットアップとしては完了。未タスク化の指示が残っているので `/plan-tasks` が先と報告する |
    | 最終行 `MISSING`/`NO_SECTION`/`MISSING_LINE`/`BAD_BRANCH`/`OK` | CLAUDE.md の点検結果。手順2で使う |
 

@@ -126,8 +126,8 @@ def test_init() -> None:
 
             created = open("develop/direction.md", encoding="utf-8").read()
             check(
-                "作った direction.md に3節がある",
-                all(h in created for h in ("## ユーザーから", "## エージェントのドラフト", "## 積み残し")),
+                "作った direction.md に2節がある",
+                all(h in created for h in ("## ユーザーから", "## エージェントのドラフト")),
                 created,
             )
 
@@ -146,22 +146,14 @@ def test_init() -> None:
             write(
                 "develop/direction.md",
                 "# 未対応の指示メモ\n\n## ユーザーから\nこれをやって\n\n"
-                "## エージェントのドラフト\nこれも直したい\n\n## 積み残し\n- 後で\n",
+                "## エージェントのドラフト\nこれも直したい\n",
             )
             r = run("init.py", "develop")
             check(
-                "節ごとの行数を分けて数え、積み残しは PENDING に数えない",
-                "ユーザーから1行" in r.stdout and "エージェントのドラフト1行" in r.stdout and "積み残し1行" in r.stdout,
+                "節ごとの行数を分けて数える",
+                "ユーザーから1行" in r.stdout and "エージェントのドラフト1行" in r.stdout,
                 r.stdout,
             )
-
-            write("develop/direction.md", "# 未対応の指示メモ\n\n## ユーザーから\n\n## エージェントのドラフト\n\n## 積み残し\n- 後で\n")
-            r = run("init.py", "develop")
-            check("積み残しだけなら OK", "OK: 未対応の指示は無い" in r.stdout, r.stdout)
-
-            write("develop/direction.md", "# 未対応の指示メモ\n\n## ユーザーから\n\n## エージェントのドラフト\n")
-            r = run("init.py", "develop")
-            check("古い2節の骨組みは積み残し節の欠けを知らせる", "MISSING_SECTION: ## 積み残し" in r.stdout, r.stdout)
 
             write("CLAUDE.md", "# x\n\n## タスク運用\n\n- 検証コマンド: `なし`\n- 整形コマンド: `なし`\n")
             r = run("init.py", "develop")
