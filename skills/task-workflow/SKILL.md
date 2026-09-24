@@ -19,9 +19,8 @@ user-invocable: false
 「## タスク運用」節（WORKFLOW.md「ファイル配置と CLAUDE.md」）。
 
 手順は `scripts/task.py` が持つ。**モデルが手で代用しない**（台帳・採番・送り出しを手で行うと、
-取り合いの錠と自己テストで守った手順を素通りする）。呼び方（`task` の略記）は WORKFLOW.md
-「`task` コマンドの参照」:
+取り合いの錠と自己テストで守った手順を素通りする）:
 
 ```bash
-task status   # 一覧（読み取り専用）
+python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py status   # 一覧（読み取り専用）
 ```

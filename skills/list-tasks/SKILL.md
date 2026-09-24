@@ -5,12 +5,10 @@ description: "task status の出力から、develop/task/ に登録されてい�
 
 未完了タスクを**テーブル1つに要約し、次の1件を推薦する**。**何も書き換えない・実行しない**（実行は
 `/next-task`、登録は `/plan-tasks`）。ルールは `task-workflow` スキルの `WORKFLOW.md`（以下「正典」）。
-以下の `task` は、PATH に `task` があればそれを、無ければ
-`python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py` を打つ（どちらも変数に入れない）。
 タスクファイルは開かない（要約は `summary` にある）。
 
 ```bash
-task status
+python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py status
 ```
 
 行の列は `id / status / difficulty / loopable / dependencies / 着手可否 / 印 / summary`。`---` の後ろに

@@ -4,9 +4,7 @@ description: "タスク運用に要る develop/direction.md（## ユーザーか
 ---
 
 `/next-task` `/plan-tasks` `/list-tasks` が読む**プロジェクト側のファイルを用意する**。置き場と役割は
-`task-workflow` スキルの `WORKFLOW.md`（以下「正典」）「ファイル配置と CLAUDE.md」。以下の
-`task` は、PATH に `task` があればそれを、無ければ
-`python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py` を打つ（どちらも変数に入れない）。
+`task-workflow` スキルの `WORKFLOW.md`（以下「正典」）「ファイル配置と CLAUDE.md」。
 **タスクは登録しない。既にあるファイルは上書きしない**（点検結果を出し、直すかは下で決める）。
 
 ## 手順
@@ -59,11 +57,11 @@ description: "タスク運用に要る develop/direction.md（## ユーザーか
    | `BAD_BRANCH` | `- ブランチ:` の先頭語が語彙に無い（`task` が `INVALID` で止まる）。どの語にするかユーザーに聞いてから直す |
    | `OK` | 触らない |
 
-3. **通しで確かめる**: `task status`。まっさらなら `---` と末尾の集計行だけが出る
-   （終了コード0）。`MISSING` なら手順1が効いていない。
+3. **通しで確かめる**: `python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py status`。
+   まっさらなら `---` と末尾の集計行だけが出る（終了コード0）。`MISSING` なら手順1が効いていない。
 
 4. **コミットする**（件名にタスクIDは付けない。push はしない）。作業ツリーの枝に居るなら
-   `task ship` で `main` へ送る。
+   `python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py ship` で `main` へ送る。
 
 5. **報告する**: 作ったファイル、CLAUDE.md に書いた値（と、そのコマンドが実際に通ったこと）、
    CLAUDE.md の扱い（新規／末尾に追記／触らず）、点検で見つかった問題。最後に次の一歩を1行:
