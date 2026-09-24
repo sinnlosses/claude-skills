@@ -14,6 +14,8 @@ import os
 import re
 from collections import Counter
 
+TASK_ID = re.compile(r"\bT-\d{3,}\b")
+
 
 def subagent_dirs(root: str) -> list[str]:
     """このリポジトリの `subagents/` ディレクトリ。無ければ空（材料が1つ減るだけ）。"""
@@ -52,14 +54,19 @@ def _slug(path: str) -> str:
 
 
 def find_transcripts(root: str, task_id: str) -> list[str]:
-    """先頭の数行にタスクIDが出てくる jsonl だけを拾う（mtime では当てにいかない）。"""
+    """先頭の数行で**最初に出てくるタスクID**が `task_id` の jsonl だけを拾う（mtime では当てにいかない）。
+
+    委譲の指示は自分のタスクIDから書き始めるので、最初のIDがそのタスク。後ろで依存や後続として
+    名前を挙げただけの別のタスクのトランスクリプトは拾わない。
+    """
     hits = []
     for sub in subagent_dirs(root):
         for name in sorted(os.listdir(sub)):
             if not name.endswith(".jsonl"):
                 continue
             path = os.path.join(sub, name)
-            if task_id in _head_text(path):
+            first = TASK_ID.search(_head_text(path))
+            if first is not None and first.group(0) == task_id:
                 hits.append(path)
     return hits
 

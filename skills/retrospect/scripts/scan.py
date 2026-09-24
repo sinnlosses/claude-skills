@@ -6,6 +6,10 @@
 diff も本文も出さない。**どこまで振り返ったか**と**何が未振り返りか**だけを出す道具で、
 1件ずつの材料は material.py が出す。
 
+`/next-task` の中で1件ごとに振り返ったタスクは、`## 結果` に `- 振り返り:` の行を持つ
+（retrospect の SKILL.md「1件だけ振り返る」）。範囲内のそのタスクのコミットの版にこの行が
+あれば `reviewed` に回し、`tasks`（まとめての振り返りの対象）から外す。
+
 **データの不備で traceback を出さない。** 呼び出し側のスキルは「`MISSING`・`EMPTY`・
 `INVALID`・TSV のいずれでもない出力」を「`python3` が使えない」の合図として扱うので、
 ここが落ちると *データの不備が環境の故障として報告される*。
@@ -23,6 +27,9 @@ import transcript
 # develop/retrospective.md の先頭付近にあるこの形の行だけが、機械の読む値。
 HASH_LINE = re.compile(r"^最後に振り返ったコミット:\s*`([0-9a-f]{7,40})`")
 TASK_ID = re.compile(r"\bT-\d{3,}\b")
+# 1件ごとの振り返りが済んだ印。`## 結果` の中のこの形の行（task-workflow の WORKFLOW.md
+# 「結果の書き方と知見の置き場」）。
+REVIEWED_LINE = re.compile(r"^- 振り返り:")
 
 
 def main() -> None:
@@ -60,6 +67,7 @@ def main() -> None:
 
     print(f"range\t{since}..{head}")
     tasks: list[str] = []
+    reviewed: list[str] = []
     unmapped = 0
     for ln in commits:
         h, date, subject = ln.split("\t", 2)
@@ -67,6 +75,8 @@ def main() -> None:
         for i in ids:
             if i not in tasks:
                 tasks.append(i)
+            if i not in reviewed and has_review_line(root, h, i):
+                reviewed.append(i)
         if not ids:
             unmapped += 1
         files, ins, dele = diffstat(root, h)
@@ -74,7 +84,9 @@ def main() -> None:
 
     print("---")
     print(f"commits\t{len(commits)}")
-    print(f"tasks\t{','.join(tasks) or '-'}")
+    todo = [t for t in tasks if t not in reviewed]
+    print(f"tasks\t{','.join(todo) or '-'}")
+    print(f"reviewed\t{','.join(reviewed) or '-'}\t(1件ごとに振り返り済み。材料を集め直さない)")
     print(f"unmapped\t{unmapped}\t(タスクIDの無いコミット。振り返りの対象から外してよい)")
     print(f"transcripts\t{len(transcript.subagent_dirs(root))}\t(見つかったトランスクリプトの置き場)")
 
@@ -108,6 +120,21 @@ def read_since(path: str) -> tuple[str, str]:
     except OSError as e:
         return "", f"読めない: {e}"
     return "", "「最後に振り返ったコミット: `<hash>`」の行が無い"
+
+
+def has_review_line(root: str, rev: str, task_id: str) -> bool:
+    """`rev` の版のタスクファイルの `## 結果` に `- 振り返り:` の行があるか。
+
+    いまの `HEAD` ではなくそのコミットの版を読むので、あとでファイルを消したタスクでも判定できる。
+    """
+    text, _ = git_out(root, "show", f"{rev}:develop/task/{task_id}.md")
+    in_result = False
+    for line in (text or "").splitlines():
+        if line.startswith("## "):
+            in_result = line.strip() == "## 結果"
+        elif in_result and REVIEWED_LINE.match(line):
+            return True
+    return False
 
 
 def diffstat(root: str, rev: str) -> tuple[int, int, int]:

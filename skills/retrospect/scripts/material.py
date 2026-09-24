@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """1件のタスクについて、振り返りの材料をまとめて出す。
 
-使い方: material.py <リポジトリの根> <T-XXX> [--diff] [--diff-bytes N]
+使い方: material.py <リポジトリの根> <T-XXX> [--diff] [--diff-bytes N] [--signals]
 
-出すのは4つ。
+出すのは4つ（`--signals` のときは「手数」だけ。`/next-task` の中の1件ごとの振り返りが、
+兆候に当たったかを数だけで見るのに使う。本文と diff はメインが受け入れで読み終えている）。
 
 - **タスク**: `develop/task/T-XXX.md`（`HEAD` の版。front matter と本文、`## 結果`）。
   無ければ旧形式の `develop/tasks.json`、それも無ければ `docs/history/tasks.md` から本文と evidence
@@ -34,9 +35,14 @@ DEFAULT_DIFF_BYTES = 40000
 
 
 def main() -> None:
-    root, task_id, want_diff, diff_bytes = parse_args(sys.argv[1:])
+    root, task_id, want_diff, diff_bytes, signals_only = parse_args(sys.argv[1:])
     if not re.fullmatch(r"T-\d{3,}", task_id):
         print(f"INVALID\t{task_id}\tタスクIDは T- + 3桁以上")
+        return
+
+    if signals_only:
+        section("手数（トランスクリプトから取った数だけ）")
+        print_signals(root, task_id)
         return
 
     section("タスク")
@@ -293,14 +299,17 @@ def section(title: str) -> None:
     print(f"===== {title} =====")
 
 
-def parse_args(argv: list[str]) -> tuple[str, str, bool, int]:
+def parse_args(argv: list[str]) -> tuple[str, str, bool, int, bool]:
     positional: list[str] = []
     want_diff = False
+    signals_only = False
     diff_bytes = DEFAULT_DIFF_BYTES
     i = 0
     while i < len(argv):
         if argv[i] == "--diff":
             want_diff = True
+        elif argv[i] == "--signals":
+            signals_only = True
         elif argv[i] == "--diff-bytes" and i + 1 < len(argv):
             diff_bytes = int(argv[i + 1])
             i += 1
@@ -308,10 +317,10 @@ def parse_args(argv: list[str]) -> tuple[str, str, bool, int]:
             positional.append(argv[i])
         i += 1
     if len(positional) != 2:
-        print("usage: material.py <リポジトリの根> <T-XXX> [--diff] [--diff-bytes N]",
+        print("usage: material.py <リポジトリの根> <T-XXX> [--diff] [--diff-bytes N] [--signals]",
               file=sys.stderr)
         raise SystemExit(2)
-    return positional[0], positional[1], want_diff, diff_bytes
+    return positional[0], positional[1], want_diff, diff_bytes, signals_only
 
 
 def git_out(root: str, *args: str) -> tuple[str | None, str]:

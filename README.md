@@ -17,8 +17,9 @@ claude.ai 同期用に予約していて、git 管理下に混ざるのを避け
   各スキルの `LICENSE.txt` を同梱）: `frontend-design` `webapp-testing` `skill-creator`
 - 自作（8件）: `architecture-proposal`（様式とディレクトリ構造の提案書を書く）、
   `maintenance-docs`（`docs/` と CLAUDE.md がスキルの記載とズレていないか点検して直す）、
-  `retrospect`（どのコミットまで振り返ったかを記録し、未振り返りのタスクから次に効く改善を
-  取り出して指示メモのドラフトに積む）と、
+  `retrospect`（`/next-task` の中で1件ごとに振り返って兆候に当たったときだけ、手で呼んだときは
+  どのコミットまで振り返ったかを記録して未振り返りのタスクから、次に効く改善を取り出して
+  指示メモのドラフトに積む）と、
   `develop/` 配下でタスクを管理する運用の `task-workflow`（正典・参照専用）
   `setup-tasks` `next-task` `plan-tasks` `list-tasks`
 
