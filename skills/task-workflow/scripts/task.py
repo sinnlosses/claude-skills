@@ -4,14 +4,15 @@
 使い方: task.py <status|new|claim|release|done|ship> ...
 
 正典は `docs/task-workflow-redesign.md`（5章が `task` コマンド、4章が状態と台帳、
-3章がタスクファイル、6章が送り出し）。スキルからは
+3章がタスクファイル、6章が送り出し、5.9・10章が `migrate`）。スキルからは
 `python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py <サブコマンド> …` で呼ぶ
 （5.1。PATH には入れない）。**このファイルはまだどのスキルからも呼ばれない**
 （12章: T-521〜T-523 は `task.py` 一式を足すだけで、切り替えは T-526）。
 
 出力は常に stdout（先頭語で種類を判定する TSV）、stderr は使い方の誤りだけ、
 終了コードは5.2の表のとおり。データの不備で traceback を出さない
-（`status.py`/`taskfiles.py` と同じ立場）。`migrate` はここでは作らない（T-523の担当）。
+（`status.py`/`taskfiles.py` と同じ立場）。`migrate` の実体は `legacy.py`（旧形式の
+読み取りと実際の書き換え）にあり、ここは結果を印字するだけ（`ship.py`/`cmd_ship` と同じ形）。
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ import sys
 import time
 
 import ledger
+import legacy
 import ship
 import taskfile
 
@@ -560,6 +562,37 @@ def cmd_ship(toplevel: str) -> None:
     )
 
 
+# --- migrate（5.9・10章） ----------------------------------------------------
+
+
+def cmd_migrate(toplevel: str, dry_run: bool) -> None:
+    result = legacy.migrate(toplevel, dry_run)
+    if result.kind == "DIRTY":
+        print("DIRTY")
+        raise SystemExit(4)
+    if result.kind == "NOTHING":
+        print(f"NOTHING\t{result.detail}")
+        return
+    if result.kind == "INVALID":
+        print(f"INVALID\t{result.detail}")
+        raise SystemExit(3)
+    if result.kind == "NOT_READY":
+        print(f"NOT_READY\t{result.detail}")
+        raise SystemExit(4)
+
+    for path in result.written:
+        print(f"WRITE\t{path}")
+    if result.moved_sections > 0:
+        print(f"MOVE\tprogress 完了したこと {result.moved_sections}小節 → docs/history/progress.md")
+    if result.leftover_counts is not None:
+        unresolved, note = result.leftover_counts
+        print(f"LEFTOVER\tdevelop/progress.md\t未解決 {unresolved} / 注意 {note}")
+    elif result.progress_removed:
+        print("REMOVE\tdevelop/progress.md")
+    print("REMOVE\tdevelop/tasks.json")
+    print(f"{'PLAN' if dry_run else 'MIGRATED'}\t{result.task_count}")
+
+
 # --- 入口 -------------------------------------------------------------------
 
 
@@ -592,6 +625,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_done.add_argument("--result-file", required=True)
 
     sub.add_parser("ship")
+
+    p_migrate = sub.add_parser("migrate")
+    p_migrate.add_argument("--dry-run", dest="dry_run", action="store_true")
 
     return parser
 
@@ -629,6 +665,8 @@ def main(argv: list[str] | None = None) -> None:
         cmd_done(toplevel, args.task_id, args.dropped, args.result_file)
     elif args.command == "ship":
         cmd_ship(toplevel)
+    elif args.command == "migrate":
+        cmd_migrate(toplevel, args.dry_run)
 
 
 if __name__ == "__main__":
