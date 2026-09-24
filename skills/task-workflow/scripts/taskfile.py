@@ -25,6 +25,8 @@ LOOPABLE_VALUES = ("Y", "N")
 REQUIRED_NEW_SECTIONS = ("## 目的", "## 完了条件", "## 背景")
 FORBIDDEN_NEW_SECTIONS = ("## やること", "## 結果")
 
+RESULT_HEADING = "## 結果"  # done/dropped で必須（3.3）。常に本文の最後に置く。
+
 _HEADER_LINE_COUNT = 8  # "---" + 6フィールド + "---"
 
 
@@ -139,6 +141,27 @@ def validate_new_body(body: str) -> str | None:
     if present:
         return "本文に登録時にはまだ書けない節がある（着手直後に書く節）: " + "、".join(present)
     return None
+
+
+def set_result_section(body: str, content: str) -> str:
+    """本文の `## 結果` 節を `content` に置き換える（無ければ末尾に足す。3.3・3.4・5.7）。
+
+    節の並びは固定で `## 結果` は常に最後（3.3）なので、既存の節があれば丸ごと外し、
+    改めて末尾に置き直す（順の入れ替えは起きない）。
+    """
+    content = content.strip("\n")
+    lines = body.split("\n")
+    start = next((i for i, l in enumerate(lines) if l == RESULT_HEADING), None)
+    if start is not None:
+        end = next(
+            (i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")),
+            len(lines),
+        )
+        lines = lines[:start] + lines[end:]
+        body = "\n".join(lines)
+    body = body.rstrip("\n")
+    prefix = f"{body}\n\n" if body else ""
+    return f"{prefix}{RESULT_HEADING}\n\n{content}\n"
 
 
 def task_path(task_dir: str, task_id: str) -> str:

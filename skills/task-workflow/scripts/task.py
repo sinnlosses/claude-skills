@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 """1件1ファイル＋台帳の形のタスク運用を操作する入口コマンド。
 
-使い方: task.py <status|new|claim|release> ...
+使い方: task.py <status|new|claim|release|done|ship> ...
 
 正典は `docs/task-workflow-redesign.md`（5章が `task` コマンド、4章が状態と台帳、
-3章がタスクファイル）。スキルからは
+3章がタスクファイル、6章が送り出し）。スキルからは
 `python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py <サブコマンド> …` で呼ぶ
 （5.1。PATH には入れない）。**このファイルはまだどのスキルからも呼ばれない**
 （12章: T-521〜T-523 は `task.py` 一式を足すだけで、切り替えは T-526）。
 
 出力は常に stdout（先頭語で種類を判定する TSV）、stderr は使い方の誤りだけ、
 終了コードは5.2の表のとおり。データの不備で traceback を出さない
-（`status.py`/`taskfiles.py` と同じ立場）。`done`・`ship`・`migrate` はここでは
-作らない（T-522・T-523の担当）。
+（`status.py`/`taskfiles.py` と同じ立場）。`migrate` はここでは作らない（T-523の担当）。
 """
 
 from __future__ import annotations
@@ -26,6 +25,7 @@ import sys
 import time
 
 import ledger
+import ship
 import taskfile
 
 TASK_DIR_NAME = "task"
@@ -443,6 +443,123 @@ def cmd_release(toplevel: str, task_id: str, force: bool) -> None:
     raise SystemExit(4)
 
 
+# --- done（5.7） ------------------------------------------------------------
+
+
+def cmd_done(toplevel: str, task_id: str, dropped: bool, result_path: str) -> None:
+    if not taskfile.ID_PATTERN.match(task_id):
+        print(f"usage: {task_id!r} が T-999 の形式でない", file=sys.stderr)
+        raise SystemExit(2)
+
+    root = ledger.ledger_root(cwd=toplevel)
+    owner = ledger.read_owner(ledger.claim_dir(root, task_id))
+    if owner is None or owner.get("worktree") != toplevel:
+        print(f"NOT_OWNER\t{task_id}")
+        raise SystemExit(4)
+
+    task_dir = os.path.join(toplevel, "develop", TASK_DIR_NAME)
+    path = taskfile.task_path(task_dir, task_id)
+    task, err = taskfile.read_task_file(path)
+    if err is not None or task is None:
+        print(f"INVALID\t{err or '読めない'}")
+        raise SystemExit(3)
+
+    result = read_body(result_path).strip()
+    if result == "":
+        print("usage: --result-file の中身が空", file=sys.stderr)
+        raise SystemExit(2)
+
+    new_status = "dropped" if dropped else "done"
+    new_body = taskfile.set_result_section(task.body, result)
+    rendered = taskfile.render(
+        taskfile.Task(task.id, task.summary, new_status, task.difficulty, task.loopable, task.dependencies, new_body)
+    )
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(rendered)
+
+    relpath = os.path.join("develop", TASK_DIR_NAME, f"{task_id}.md")
+    _run_git(toplevel, ["add", relpath])
+    print(f"DONE\t{task_id}\t{relpath}\tstaged")
+
+
+# --- ship（5.8・6章） --------------------------------------------------------
+
+
+def _release_own_claims_when_shipped(root: str, toplevel: str) -> list[str]:
+    """4.4・5.8手順7: 自分の作業ツリーの印のうち、`main`（HEAD）で done/dropped に
+    なったものを消す。`main` を正として読む（`load_tasks` は git show 経由なので、
+    直前に送った変更もここで反映済みのものとして見える）。"""
+    tasks, _invalid, _local_only = load_tasks(toplevel)
+    released: list[str] = []
+    for tid in ledger.list_claims(root):
+        owner = ledger.read_owner(ledger.claim_dir(root, tid))
+        if owner is None or owner.get("worktree") != toplevel:
+            continue
+        t = tasks.get(tid)
+        if t is not None and t.status in ("done", "dropped"):
+            ledger.release_claim(root, tid, toplevel)
+            released.append(tid)
+    return released
+
+
+def cmd_ship(toplevel: str) -> None:
+    if not ledger.is_clean(cwd=toplevel):
+        print("DIRTY")
+        raise SystemExit(4)
+
+    root = ledger.ledger_root(cwd=toplevel)
+    branch = ledger.current_branch(cwd=toplevel)
+
+    if branch == "main":
+        # 4.4: main を出している作業ツリーで起こしたときは送る段が無い。
+        released = _release_own_claims_when_shipped(root, toplevel)
+        print(f"SHIPPED\tmain\t(送る段なし)\treleased={','.join(released) or '-'}")
+        return
+
+    ahead = _run_git(toplevel, ["rev-list", "--count", "main..HEAD"])
+    ahead_count = int(ahead.stdout.strip()) if ahead.returncode == 0 and ahead.stdout.strip().isdigit() else 0
+    if ahead_count == 0:
+        _release_own_claims_when_shipped(root, toplevel)
+        print("NOTHING\t(main に無いコミットが無い)")
+        return
+
+    worktrees = ledger.list_worktrees(cwd=toplevel)
+    main_worktree = ship.find_main_worktree(worktrees, toplevel)
+    if main_worktree is not None and not ledger.is_clean(cwd=main_worktree.path):
+        print(f"MAIN_DIRTY\t{main_worktree.path}")
+        raise SystemExit(4)
+
+    old_main = _run_git(toplevel, ["rev-parse", "main"]).stdout.strip()
+    verify_command = ship.read_verify_command(toplevel)
+    outcome = ship.attempt(toplevel, branch, main_worktree, verify_command)
+
+    if outcome.kind == "CONFLICT":
+        print("CONFLICT\t" + (",".join(outcome.conflict_files) or "?"))
+        raise SystemExit(7)
+    if outcome.kind == "VERIFY_FAILED":
+        print(f"VERIFY_FAILED\t{outcome.verify_command}")
+        if outcome.verify_tail:
+            print(outcome.verify_tail)
+        raise SystemExit(8)
+    if outcome.kind == "RACE":
+        print("RACE\t3")
+        raise SystemExit(9)
+
+    branch_setting = read_branch_setting(toplevel)
+    if branch_setting in ("既定", "作業ブランチを切る"):
+        # 送った直後なので、この枝はどの作業ツリーにも要らない（6.2手順7）。
+        r = _run_git(toplevel, ["checkout", "main"])
+        if r.returncode == 0:
+            _run_git(toplevel, ["branch", "-d", branch])
+
+    released = _release_own_claims_when_shipped(root, toplevel)
+    new_main = _run_git(toplevel, ["rev-parse", "main"]).stdout.strip()
+    print(
+        f"SHIPPED\t{old_main}..{new_main}\trebased={'yes' if outcome.rebased else 'no'}"
+        f"\tverify={outcome.verify_state}\ttries={outcome.tries}\treleased={','.join(released) or '-'}"
+    )
+
+
 # --- 入口 -------------------------------------------------------------------
 
 
@@ -468,6 +585,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_release = sub.add_parser("release")
     p_release.add_argument("task_id")
     p_release.add_argument("--force", action="store_true")
+
+    p_done = sub.add_parser("done")
+    p_done.add_argument("task_id")
+    p_done.add_argument("--dropped", action="store_true")
+    p_done.add_argument("--result-file", required=True)
+
+    sub.add_parser("ship")
 
     return parser
 
@@ -501,6 +625,10 @@ def main(argv: list[str] | None = None) -> None:
         cmd_claim(toplevel, args.task_id)
     elif args.command == "release":
         cmd_release(toplevel, args.task_id, args.force)
+    elif args.command == "done":
+        cmd_done(toplevel, args.task_id, args.dropped, args.result_file)
+    elif args.command == "ship":
+        cmd_ship(toplevel)
 
 
 if __name__ == "__main__":

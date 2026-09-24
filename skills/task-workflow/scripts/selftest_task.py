@@ -16,6 +16,8 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -61,8 +63,13 @@ def start_task(cwd: str, *args: str) -> subprocess.Popen:
     )
 
 
-def make_repo(tmp: str) -> tuple[str, str, str]:
-    """`(本体, 作業ツリー1, 作業ツリー2)`。本体だけが `main` を出す。"""
+def make_repo(tmp: str, branch: str = "既定", verify: str | None = None) -> tuple[str, str, str]:
+    """`(本体, 作業ツリー1, 作業ツリー2)`。本体だけが `main` を出す。
+
+    `branch`/`verify` は CLAUDE.md「## タスク運用」の `- ブランチ:`／`- 検証コマンド:` の値
+    （6.1・6.3）。`verify` を省略すると行自体を書かない（`ship.read_verify_command` は
+    `None` を返す＝打たない）。
+    """
     main_path = os.path.join(tmp, "main")
     os.makedirs(main_path)
     git(main_path, "init", "-q", "-b", "main")
@@ -73,7 +80,12 @@ def make_repo(tmp: str) -> tuple[str, str, str]:
         "# 未対応の指示メモ\n\n## ユーザーから\n\n## エージェントのドラフト\n\n## 積み残し\n",
     )
     write(os.path.join(main_path, "docs", "history", "tasks.md"), "# 完了タスクのアーカイブ\n")
-    write(os.path.join(main_path, "CLAUDE.md"), "# x\n\n## タスク運用\n\n- ブランチ: 既定\n")
+    claude_md = "# x\n\n## タスク運用\n\n"
+    if verify is not None:
+        claude_md += f"- 検証コマンド: {verify}\n"
+    claude_md += f"- ブランチ: {branch}\n"
+    write(os.path.join(main_path, "CLAUDE.md"), claude_md)
+    write(os.path.join(main_path, "shared.txt"), "line1\n")
     git(main_path, "add", "-A")
     git(main_path, "commit", "-q", "-m", "init")
 
@@ -294,6 +306,249 @@ def test_new_avoids_history_ids() -> None:
         check("履歴のT-050より大きい番号になる（重複を避ける）", taskfile.id_number(task_id) > 50, task_id)
 
 
+# --- taskfile.py: `## 結果` 節（5.7） ---------------------------------------
+
+
+def test_taskfile_set_result_section() -> None:
+    print("taskfile.set_result_section")
+    body = "## 目的\nx\n\n## 完了条件\nx\n\n## 背景\nx\n"
+    out = taskfile.set_result_section(body, "結果その1")
+    check("結果が無ければ末尾に足す", out.endswith("## 結果\n\n結果その1\n"), out)
+    check("元の節は残る", "## 目的" in out and "## 背景" in out, out)
+
+    out2 = taskfile.set_result_section(out, "結果その2（差し替え）")
+    check(
+        "既存の結果は置き換わる",
+        "結果その1" not in out2 and "結果その2（差し替え）" in out2,
+        out2,
+    )
+    check("置き換え後も節は1つだけ", out2.count("## 結果") == 1, out2)
+
+
+# --- task.py: done（5.7） ----------------------------------------------------
+
+
+def test_done_single_worktree() -> None:
+    print("task.py done（単独の作業ツリー）")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp)
+        commit_task(main_path, taskfile.Task("T-100", "完了させる", "todo", "sonnet", "Y", (), BODY))
+
+        # premature.md は wt1 の外に置く（中に置くと未claimの判定の前にDIRTYでclaimが拒まれる）。
+        premature = write(os.path.join(tmp, "premature.md"), "早すぎる結果\n")
+        r = run_task(wt1, "done", "T-100", "--result-file", premature)
+        check("未claimはNOT_OWNER", r.returncode == 4 and r.stdout.strip() == "NOT_OWNER\tT-100", r.stdout)
+
+        r = run_task(wt1, "claim", "T-100")
+        check("claimできる", r.returncode == 0, r.stdout + r.stderr)
+
+        empty_result = write(os.path.join(wt1, "empty.md"), "   \n")
+        r = run_task(wt1, "done", "T-100", "--result-file", empty_result)
+        check("結果が空なら終了コード2", r.returncode == 2 and r.stdout == "", r.stdout + r.stderr)
+
+        result_path = write(os.path.join(wt1, "result.md"), "bun run check: 5 pass\n")
+        r = run_task(wt1, "done", "T-100", "--result-file", result_path)
+        check(
+            "DONEで返りstaged",
+            r.returncode == 0 and r.stdout.strip() == "DONE\tT-100\tdevelop/task/T-100.md\tstaged",
+            r.stdout,
+        )
+
+        staged = git(wt1, "diff", "--cached", "--name-only").stdout
+        check("develop/task/T-100.mdがstageされる", "develop/task/T-100.md" in staged, staged)
+
+        task_path = os.path.join(wt1, "develop", "task", "T-100.md")
+        task, err = taskfile.read_task_file(task_path)
+        check("statusがdoneになる", err is None and task is not None and task.status == "done", str(err))
+        check(
+            "結果節が入る",
+            task is not None and "bun run check: 5 pass" in task.body,
+            task.body if task else "",
+        )
+
+        r = run_task(wt1, "done", "T-100", "--dropped", "--result-file", result_path)
+        check("--droppedもDONEで返る", r.returncode == 0, r.stdout + r.stderr)
+        task2, _err2 = taskfile.read_task_file(task_path)
+        check("--droppedでdroppedになる", task2 is not None and task2.status == "dropped")
+
+
+# --- task.py: ship（5.8・6章） -----------------------------------------------
+
+
+def _claim_work_and_done(wt: str, task_id: str, note: str = "") -> None:
+    """`claim` 済みのタスクに1件コミットぶんの作業をして `done` にする（コミットはしない）。"""
+    write(os.path.join(wt, f"work{note}.txt"), "x")
+    git(wt, "add", "-A")
+    result_path = write(os.path.join(wt, f"result{note}.md"), "検証OK\n")
+    r = run_task(wt, "done", task_id, "--result-file", result_path)
+    if r.returncode != 0:
+        raise RuntimeError(f"task done が失敗: {r.stdout}{r.stderr}")
+    git(wt, "add", "-A")
+    git(wt, "commit", "-q", "-m", f"{task_id}: 完了")
+
+
+def _no_merge_commits(repo: str) -> str:
+    return git(repo, "log", "--oneline", "--merges", "main").stdout
+
+
+def test_ship_fast_forward() -> None:
+    print("task.py ship: main が進んでいなければ追い付くだけで送る")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp, branch="切らない")
+        commit_task(main_path, taskfile.Task("T-100", "追い付くだけ", "todo", "sonnet", "Y", (), BODY))
+
+        run_task(wt1, "claim", "T-100")
+        _claim_work_and_done(wt1, "T-100")
+
+        r = run_task(wt1, "ship")
+        check("SHIPPEDで返る", r.returncode == 0 and r.stdout.startswith("SHIPPED\t"), r.stdout + r.stderr)
+        check("rebasedはno", "rebased=no" in r.stdout, r.stdout)
+        check("releasedにT-100を含む", "released=T-100" in r.stdout, r.stdout)
+        check("main にmerge commitが無い", _no_merge_commits(main_path).strip() == "")
+
+        head_task = git(main_path, "show", "main:develop/task/T-100.md").stdout
+        check("mainのタスクファイルがdoneになる", "status: done" in head_task, head_task)
+        check(
+            "着手の印は消える",
+            not os.path.isdir(ledger.claim_dir(ledger.ledger_root(cwd=wt1), "T-100")),
+        )
+
+
+def test_ship_rebases_when_main_advances() -> None:
+    print("task.py ship: main が先に進んでいれば付け替えてから送る")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp, branch="切らない", verify="`echo verified`")
+        commit_task(main_path, taskfile.Task("T-100", "付け替え", "todo", "sonnet", "Y", (), BODY))
+
+        run_task(wt1, "claim", "T-100")
+
+        write(os.path.join(main_path, "unrelated.txt"), "x")
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "mainだけの変更")
+
+        _claim_work_and_done(wt1, "T-100")
+
+        r = run_task(wt1, "ship")
+        check("SHIPPEDで返る", r.returncode == 0 and r.stdout.startswith("SHIPPED\t"), r.stdout + r.stderr)
+        check("rebasedはyes", "rebased=yes" in r.stdout, r.stdout)
+        check("verifyはran", "verify=ran" in r.stdout, r.stdout)
+        check("main にmerge commitが無い", _no_merge_commits(main_path).strip() == "")
+
+        log = git(main_path, "log", "--oneline", "main").stdout
+        check("mainだけの変更がmainに残る", "mainだけの変更" in log, log)
+        check("T-100の完了もmainに乗る", "T-100: 完了" in log, log)
+
+
+def test_ship_conflict_aborts_rebase() -> None:
+    print("task.py ship: 衝突すればrebase --abortして止まる")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp, branch="切らない")
+        commit_task(main_path, taskfile.Task("T-100", "衝突", "todo", "sonnet", "Y", (), BODY))
+
+        run_task(wt1, "claim", "T-100")
+
+        write(os.path.join(main_path, "shared.txt"), "main側の変更\n")
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "main側でshared.txtを変える")
+
+        write(os.path.join(wt1, "shared.txt"), "wt1側の変更\n")
+        git(wt1, "add", "-A")
+        result_path = write(os.path.join(wt1, "result.md"), "検証OK\n")
+        run_task(wt1, "done", "T-100", "--result-file", result_path)
+        git(wt1, "add", "-A")
+        git(wt1, "commit", "-q", "-m", "T-100: 完了")
+
+        r = run_task(wt1, "ship")
+        check("CONFLICTで終了コード7", r.returncode == 7 and r.stdout.startswith("CONFLICT\t"), r.stdout + r.stderr)
+        check("衝突ファイルにshared.txtが出る", "shared.txt" in r.stdout, r.stdout)
+        check(
+            "rebase --abort済みで作業ツリーがきれい",
+            git(wt1, "status", "--porcelain").stdout.strip() == "",
+        )
+        check("main にmerge commitが無い", _no_merge_commits(main_path).strip() == "")
+
+
+def test_ship_main_dirty_stops() -> None:
+    print("task.py ship: 本体が汚れていれば送らずに止まる")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp, branch="切らない")
+        commit_task(main_path, taskfile.Task("T-100", "本体汚れ", "todo", "sonnet", "Y", (), BODY))
+
+        run_task(wt1, "claim", "T-100")
+        _claim_work_and_done(wt1, "T-100")
+
+        write(os.path.join(main_path, "dirty.txt"), "汚れ")
+
+        r = run_task(wt1, "ship")
+        check("MAIN_DIRTYで終了コード4", r.returncode == 4 and r.stdout.startswith("MAIN_DIRTY\t"), r.stdout + r.stderr)
+        check("main にmerge commitが無い", _no_merge_commits(main_path).strip() == "")
+
+
+def test_ship_skips_send_on_main_worktree() -> None:
+    print("task.py ship: main の作業ツリーで起こしたときは送る段を飛ばす")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, _wt1, _wt2 = make_repo(tmp, branch="切らない")
+        commit_task(main_path, taskfile.Task("T-100", "本体で完結", "todo", "sonnet", "Y", (), BODY))
+
+        r = run_task(main_path, "claim", "T-100")
+        check("main上でもclaimできる", r.returncode == 0, r.stdout + r.stderr)
+        check("branchはmainのまま", ledger.current_branch(cwd=main_path) == "main")
+
+        _claim_work_and_done(main_path, "T-100")
+
+        r = run_task(main_path, "ship")
+        check(
+            "SHIPPED main（送る段なし）で返る",
+            r.returncode == 0 and r.stdout.startswith("SHIPPED\tmain\t(送る段なし)"),
+            r.stdout + r.stderr,
+        )
+        check("releasedにT-100を含む", "released=T-100" in r.stdout, r.stdout)
+        check("main にmerge commitが無い", _no_merge_commits(main_path).strip() == "")
+        check(
+            "着手の印は消える",
+            not os.path.isdir(ledger.claim_dir(ledger.ledger_root(cwd=main_path), "T-100")),
+        )
+
+
+def test_ship_race_gives_up_after_three_tries() -> None:
+    print("task.py ship: 相手に先を越され続けるとRACEで終わる")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp, branch="切らない", verify="`sleep 0.4`")
+        commit_task(main_path, taskfile.Task("T-100", "競争", "todo", "sonnet", "Y", (), BODY))
+
+        run_task(wt1, "claim", "T-100")
+        _claim_work_and_done(wt1, "T-100")
+
+        stop = threading.Event()
+
+        def racer() -> None:
+            i = 0
+            while not stop.is_set():
+                i += 1
+                try:
+                    write(os.path.join(main_path, f"race-{i}.txt"), "x")
+                    git(main_path, "add", "-A")
+                    git(main_path, "commit", "-q", "-m", f"race {i}")
+                except RuntimeError:
+                    pass  # 本体のref/index取り合いは無視して次の周へ（テストの脇役）
+                time.sleep(0.1)
+
+        racer_thread = threading.Thread(target=racer, daemon=True)
+        racer_thread.start()
+        try:
+            r = run_task(wt1, "ship")
+        finally:
+            stop.set()
+            racer_thread.join(timeout=5)
+
+        check("RACEで終了コード9", r.returncode == 9 and r.stdout.strip() == "RACE\t3", r.stdout + r.stderr)
+        check(
+            "3回試したあとも作業ツリーはきれい（rebaseは完了、送るのだけ失敗）",
+            git(wt1, "status", "--porcelain").stdout.strip() == "",
+        )
+        check("main にmerge commitが無い", _no_merge_commits(main_path).strip() == "")
+
+
 def main() -> None:
     for t in (
         test_taskfile_parse,
@@ -303,6 +558,14 @@ def main() -> None:
         test_new_parallel_no_collision,
         test_claim_race,
         test_new_avoids_history_ids,
+        test_taskfile_set_result_section,
+        test_done_single_worktree,
+        test_ship_fast_forward,
+        test_ship_rebases_when_main_advances,
+        test_ship_conflict_aborts_rebase,
+        test_ship_main_dirty_stops,
+        test_ship_skips_send_on_main_worktree,
+        test_ship_race_gives_up_after_three_tries,
     ):
         t()
     print()
