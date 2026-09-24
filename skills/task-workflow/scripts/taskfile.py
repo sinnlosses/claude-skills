@@ -96,12 +96,20 @@ def parse(text: str) -> tuple[Task | None, str | None]:
     if lines[7] != "---":
         return None, "front matter を閉じる2つ目の --- が無い"
 
-    body = "\n".join(lines[8:])
+    # `render` と同じ形（前後の空行を落とし、末尾は改行1つ）に揃え、往復で本文が変わらないようにする。
+    body = "\n".join(lines[8:]).strip("\n")
+    body = f"{body}\n" if body else ""
     return Task(id_value, summary, status, difficulty, loopable, dependencies, body), None
 
 
 def render(task: Task) -> str:
-    """`parse` の逆。front matter を6行ちょうどで書く。"""
+    """`parse` の逆。front matter を6行ちょうどで書く。
+
+    本文は「閉じる `---` の次に空行1行、末尾は改行1つ」に揃える。Markdown の整形ツール
+    （oxfmt・prettier）は見出しの前に空行を求めるので、`## 目的` から始まる本文をそのまま
+    連結すると、登録した直後のファイルが整形の検査で落ちる。
+    """
+    body = task.body.strip("\n")
     return (
         "---\n"
         f"id: {task.id}\n"
@@ -111,7 +119,7 @@ def render(task: Task) -> str:
         f"loopable: {task.loopable}\n"
         f"dependencies: [{', '.join(task.dependencies)}]\n"
         "---\n"
-        f"{task.body}"
+        + (f"\n{body}\n" if body else "")
     )
 
 

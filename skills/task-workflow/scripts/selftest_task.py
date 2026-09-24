@@ -177,6 +177,13 @@ def test_new_and_status_single_worktree() -> None:
             "develop/task/T-xxx.md ができる",
             os.path.exists(os.path.join(wt1, "develop", "task", f"{task_id}.md")),
         )
+        with open(os.path.join(wt1, "develop", "task", f"{task_id}.md"), encoding="utf-8") as f:
+            written = f.read()
+        check(
+            "閉じる --- の次は空行1行で、末尾は改行1つ（整形ツールの検査に合う）",
+            "\n---\n\n## " in written and "\n---\n\n\n" not in written and written.endswith("\n") and not written.endswith("\n\n"),
+            written,
+        )
 
         r = run_task(wt1, "status")
         check(
