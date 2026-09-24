@@ -63,13 +63,12 @@ def _run(cwd: str, args: list[str]) -> subprocess.CompletedProcess:
 
 def attempt(
     toplevel: str,
-    branch: str,
     main_worktree: ledger.Worktree | None,
     verify_command: str | None,
 ) -> ShipOutcome:
     """最大 `MAX_TRIES` 回、rebase → 検証（付け替えた回だけ）→ 送る、を繰り返す（6.2手順5・6）。
 
-    送る先は `main_worktree` があれば `git -C <本体> merge --ff-only <枝>`、無ければ
+    送る先は `main_worktree` があれば `git -C <本体> merge --ff-only <HEAD のコミット>`、無ければ
     比較付きの `git update-ref`。失敗（相手に先を越された）は次の回の rebase からやり直す。
     """
     rebased_any = False
@@ -101,11 +100,12 @@ def attempt(
                     verify_tail=tail,
                 )
 
+        # 枝の名前ではなくコミットで送る（detached HEAD の `HEAD` は本体の側では本体自身を指す）。
+        head = _run(toplevel, ["rev-parse", "HEAD"]).stdout.strip()
         if main_worktree is not None:
-            sent = _run(main_worktree.path, ["merge", "--ff-only", branch]).returncode == 0
+            sent = _run(main_worktree.path, ["merge", "--ff-only", head]).returncode == 0
         else:
             seen_main = _run(toplevel, ["rev-parse", "main"]).stdout.strip()
-            head = _run(toplevel, ["rev-parse", "HEAD"]).stdout.strip()
             sent = _run(toplevel, ["update-ref", "refs/heads/main", head, seen_main]).returncode == 0
 
         if sent:

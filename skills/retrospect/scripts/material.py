@@ -5,8 +5,11 @@
 
 出すのは4つ。
 
-- **タスク**: `develop/tasks.json`、無ければ `docs/history/tasks.md` から本文と evidence
-- **progress**: `develop/progress.md`、無ければ `docs/history/progress.md` から該当の小節
+- **タスク**: `develop/task/T-XXX.md`（`HEAD` の版。front matter と本文、`## 結果`）。
+  無ければ旧形式の `develop/tasks.json`、それも無ければ `docs/history/tasks.md` から本文と evidence
+- **登録から完了までの差分**: `develop/task/T-XXX.md` を足したコミットの版と `HEAD` の版の差
+  （着手時に書き足した `## やること`・`## 注意` の量が出る）。旧タスクは代わりに
+  `develop/progress.md`・`docs/history/progress.md` の該当の小節
 - **コミット**: 件名とファイルごとの増減（`--diff` を付けたときだけ中身も）
 - **手数**: サブエージェントのトランスクリプトから取った**数だけ**
 
@@ -32,15 +35,19 @@ DEFAULT_DIFF_BYTES = 40000
 
 def main() -> None:
     root, task_id, want_diff, diff_bytes = parse_args(sys.argv[1:])
-    if not re.fullmatch(r"T-\d{3}", task_id):
-        print(f"INVALID\t{task_id}\tタスクIDは T- + 3桁")
+    if not re.fullmatch(r"T-\d{3,}", task_id):
+        print(f"INVALID\t{task_id}\tタスクIDは T- + 3桁以上")
         return
 
     section("タスク")
-    print_task(root, task_id)
+    is_file_task = print_task(root, task_id)
 
-    section("progress の小節")
-    print_progress(root, task_id)
+    if is_file_task:
+        section("登録から完了までの差分（タスクファイル）")
+        print_task_file_diff(root, task_id)
+    else:
+        section("progress の小節（旧形式のタスク）")
+        print_progress(root, task_id)
 
     section("コミット")
     revs = print_commits(root, task_id, want_diff, diff_bytes)
@@ -56,7 +63,16 @@ def main() -> None:
 # ---- タスク本文と evidence ----------------------------------------------------
 
 
-def print_task(root: str, task_id: str) -> None:
+def print_task(root: str, task_id: str) -> bool:
+    """タスクの本文を出す。新しい形（`develop/task/`）で見つかれば True。"""
+    rel = f"develop/task/{task_id}.md"
+    text, _ = git_out(root, "show", f"HEAD:{rel}")
+    if text is not None:
+        print(f"出典\t{rel}（HEAD）")
+        print()
+        print(text.rstrip())
+        return True
+
     live = os.path.join(root, "develop", "tasks.json")
     if os.path.exists(live):
         try:
@@ -73,16 +89,41 @@ def print_task(root: str, task_id: str) -> None:
                 print("evidence\t" + str(t.get("evidence", "")))
                 print()
                 print(t.get("task", ""))
-                return
+                return False
 
     archive = os.path.join(root, "docs", "history", "tasks.md")
     body = find_archived_task(archive, task_id)
     if body is None:
-        print(f"-\t{task_id} が tasks.json にもアーカイブにも無い")
-        return
+        print(f"-\t{task_id} が develop/task/ にも tasks.json にもアーカイブにも無い")
+        return False
     print(f"出典\t{archive}")
     print()
     print(body)
+    return False
+
+
+def print_task_file_diff(root: str, task_id: str) -> None:
+    """登録した版（ファイルを足したコミット）と `HEAD` の版の差を出す。
+
+    登録の粗さと、着手までにどれだけ前提が動いたかがここに出る（`## やること` は着手直後に
+    書く節なので、登録時の版には無い）。
+    """
+    rel = f"develop/task/{task_id}.md"
+    added, err = git_out(root, "log", "--diff-filter=A", "--format=%h", "--", rel)
+    first = (added or "").split()
+    if not first:
+        print(f"-\t{rel} を足したコミットが見つからない（{err or '履歴に無い'}）")
+        return
+    base = first[-1]
+    print(f"登録\t{base}")
+    registered, _ = git_out(root, "show", f"{base}:{rel}")
+    current, _ = git_out(root, "show", f"HEAD:{rel}")
+    for label, text in (("登録時の節", registered), ("いまの節", current)):
+        heads = [ln for ln in (text or "").splitlines() if ln.startswith("## ")]
+        print(f"{label}\t" + (", ".join(f"{h[3:]}" for h in heads) or "-"))
+    diff, _ = git_out(root, "diff", f"{base}", "HEAD", "--", rel)
+    print()
+    print((diff or "（差分なし）").rstrip())
 
 
 def find_archived_task(path: str, task_id: str) -> str | None:
@@ -96,7 +137,7 @@ def find_archived_task(path: str, task_id: str) -> str | None:
             lines = f.read().splitlines()
     except OSError:
         return None
-    head = re.compile(r"^## (T-\d{3})\b")
+    head = re.compile(r"^## (T-\d{3,})\b")
     start = None
     for i, ln in enumerate(lines):
         m = head.match(ln)

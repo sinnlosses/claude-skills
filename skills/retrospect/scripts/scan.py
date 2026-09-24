@@ -22,7 +22,7 @@ import transcript
 
 # develop/retrospective.md の先頭付近にあるこの形の行だけが、機械の読む値。
 HASH_LINE = re.compile(r"^最後に振り返ったコミット:\s*`([0-9a-f]{7,40})`")
-TASK_ID = re.compile(r"\bT-\d{3}\b")
+TASK_ID = re.compile(r"\bT-\d{3,}\b")
 
 
 def main() -> None:

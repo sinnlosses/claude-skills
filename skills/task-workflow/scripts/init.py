@@ -3,46 +3,39 @@
 
 使い方: init.py [develop-dir]   （既定: develop）
 
-正典（task-workflow の WORKFLOW.md「ファイル配置と CLAUDE.md」）が定める
-3ファイルを、決まった骨組みで作る。骨組みは決まりきっているのでモデルに書かせない
-（`progress.md` の節名がズレると archive.py が節を見つけられず、`direction.md` に
-見出し以外の行が混ざると `/plan-tasks` が「未対応の指示がある」と誤判定する）。
+作るのは `develop/direction.md` の骨組み（`## ユーザーから`・`## エージェントのドラフト`・
+`## 積み残し` の3節）だけ（正典は task-workflow の WORKFLOW.md「ファイル配置と CLAUDE.md」）。
+`develop/task/` は最初の `task new` が作り、`direction.md` が新形式の目印になる（空の
+ディレクトリは git に載らないため）。骨組みは決まりきっているのでモデルに書かせない
+（`direction.md` に見出し以外の行が混ざると `/plan-tasks` が「未対応の指示がある」と誤判定する）。
+
+**旧形式（`develop/tasks.json` がある）なら何も作らず `LEGACY` で止まる**（終了コード5。
+`task.py` と同じ）。移すのは `task migrate` で、ここでは骨組みを混ぜない。
 
 **既存ファイルは上書きしない。** 中身の点検結果だけを出し、直すかどうかは呼び出し側が決める。
 CLAUDE.md は**点検するだけで書かない**（節に入る値は検証コマンドの選定そのもので、
 判断が要る。書くのは `/setup-tasks` の手順2）。
-`docs/history/` も掘らない（archive.py が移すときに作る）。
 """
 
 from __future__ import annotations
 
 import os
+import re
 import sys
 
-import taskfiles
+DIRECTION = "# 未対応の指示メモ\n\n## ユーザーから\n\n## エージェントのドラフト\n\n## 積み残し\n"
 
-TASKS = "[]\n"
-PROGRESS = """# 進捗
-
-## 完了したこと
-
-## 未解決
-
-## 注意
-"""
-DIRECTION = "# 未対応の指示メモ\n\n## ユーザーから\n\n## エージェントのドラフト\n"
-
-# direction.md の2節（正典「指示メモ」）。前方一致で探す。
+# direction.md の3節（正典「指示メモ」）。前方一致で探す。
 SECTION_USER = "## ユーザーから"
 SECTION_DRAFT = "## エージェントのドラフト"
+SECTION_BACKLOG = "## 積み残し"
 
-# progress.md に在るべき節。DONE_SECTION と同じく前方一致で探す（補足付きの表記が実在する）。
-PROGRESS_SECTIONS = (taskfiles.DONE_SECTION, "## 未解決", "## 注意")
-
-# CLAUDE.md 側の正典（正典「ファイル配置と CLAUDE.md」）。スキルはこの節を読む。
+# CLAUDE.md 側の正典（正典「ファイル配置と CLAUDE.md」）。スキルと task.py はこの節を読む。
 CLAUDE_MD = "CLAUDE.md"
 CLAUDE_SECTION = "## タスク運用"
-CLAUDE_KEYS = ("- 検証コマンド:", "- 整形コマンド:")
+CLAUDE_KEYS = ("- 検証コマンド:", "- 整形コマンド:", "- ブランチ:")
+# `- ブランチ:` の値の先頭語（正典「ファイル配置と CLAUDE.md」の語彙。task.py の read_branch_setting と同じ）。
+BRANCH_WORDS = ("既定", "作業ブランチを切る", "切らない")
 
 
 def main() -> None:
@@ -53,12 +46,13 @@ def main() -> None:
         print("usage: init.py [develop-dir]   （既定: develop）", file=sys.stderr)
         raise SystemExit(2)
     root = args[0] if args else "develop"
+
+    if os.path.exists(os.path.join(root, "tasks.json")):
+        print(f"LEGACY\t{os.path.join(root, 'tasks.json')}\ttask migrate --dry-run")
+        raise SystemExit(5)
+
     os.makedirs(root, exist_ok=True)
-
-    create(os.path.join(root, "tasks.json"), TASKS, check_tasks)
-    create(os.path.join(root, "progress.md"), PROGRESS, check_progress)
     create(os.path.join(root, "direction.md"), DIRECTION, check_direction)
-
     print(check_claude_md(CLAUDE_MD))
 
 
@@ -72,24 +66,8 @@ def create(path: str, body: str, check) -> None:
     print(f"CREATED\t{path}")
 
 
-def check_tasks(path: str) -> str:
-    # 読めるかどうかの判定は `taskfiles.load_tasks` に集約する（`status.py` の `INVALID`
-    # 行と同じ理由を返すので、どのスキルから見ても同じ言葉で説明される）。
-    tasks, err = taskfiles.load_tasks(path)
-    if err:
-        return f"INVALID: {err}"
-    return f"OK: {len(tasks)}件"
-
-
-def check_progress(path: str) -> str:
-    with open(path, encoding="utf-8") as f:
-        lines = f.read().splitlines()
-    missing = [s for s in PROGRESS_SECTIONS if not any(l.startswith(s) for l in lines)]
-    return "OK: 3節そろっている" if not missing else "MISSING_SECTION: " + ", ".join(missing)
-
-
 def check_claude_md(path: str) -> str:
-    """検証コマンドの置き場（正典の「## タスク運用」節）が在るかを見る。書き換えはしない。"""
+    """「## タスク運用」節と3行が在るか、`- ブランチ:` の先頭語が語彙に当たるかを見る。書き換えはしない。"""
     if not os.path.exists(path):
         return f"MISSING\t{path}\t（「{CLAUDE_SECTION}」節ごと作る）"
     with open(path, encoding="utf-8") as f:
@@ -101,46 +79,54 @@ def check_claude_md(path: str) -> str:
     missing = [k for k in CLAUDE_KEYS if not any(l.startswith(k) for l in lines)]
     if missing:
         return f"MISSING_LINE\t{path}\t" + ", ".join(missing)
+    branch_line = next(l for l in lines if l.startswith("- ブランチ:"))
+    m = re.match(r"- ブランチ:\s*(\S+)", branch_line)
+    word = m.group(1).rstrip("。、") if m else ""
+    if not any(word.startswith(w) for w in BRANCH_WORDS):
+        return f"BAD_BRANCH\t{path}\t（- ブランチ: の先頭語 {word!r} が {' / '.join(BRANCH_WORDS)} のどれでもない）"
     return f"OK\t{path}\t（{CLAUDE_SECTION} 節あり）"
 
 
 def check_direction(path: str) -> str:
-    """節ごとの本文行数を数える（正典「指示メモ」の`## ユーザーから`/`## エージェントの
-    ドラフト`）。**節見出しが1つも無い（この変更より前に作られた）ファイルは、全体を
-    `## ユーザーから` とみなす**（後方互換。同じ扱いを skills/plan-tasks・skills/next-task の
-    SKILL.md 手順1でも行う）。
+    """`## ユーザーから`・`## エージェントのドラフト` の本文行数を数える（正典「指示メモ」）。
+
+    `## 積み残し` は分解と承認が済んだ項目なので「未タスク化の指示」に数えない。**節見出しが
+    1つも無い（古い）ファイルは、全体を `## ユーザーから` とみなす**（後方互換）。
     """
     with open(path, encoding="utf-8") as f:
         lines = f.read().splitlines()
 
-    if not any(l.startswith(SECTION_USER) or l.startswith(SECTION_DRAFT) for l in lines):
+    known = (SECTION_USER, SECTION_DRAFT, SECTION_BACKLOG)
+    if not any(l.startswith(k) for l in lines for k in known):
         body = [l for l in lines if l.strip() and not l.startswith("#")]
-        return _direction_result(len(body), 0)
+        return _direction_result(len(body), 0, has_backlog=False)
 
-    user_n = draft_n = 0
+    counts = {"user": 0, "draft": 0, "backlog": 0}
     current: str | None = None
     for l in lines:
         if l.startswith(SECTION_USER):
             current = "user"
-            continue
-        if l.startswith(SECTION_DRAFT):
+        elif l.startswith(SECTION_DRAFT):
             current = "draft"
-            continue
-        if l.startswith("#"):
+        elif l.startswith(SECTION_BACKLOG):
+            current = "backlog"
+        elif l.startswith("#"):
             current = None
-            continue
-        if not l.strip():
-            continue
-        if current == "user":
-            user_n += 1
-        elif current == "draft":
-            draft_n += 1
-    return _direction_result(user_n, draft_n)
+        elif l.strip() and current is not None:
+            counts[current] += 1
+    has_backlog = any(l.startswith(SECTION_BACKLOG) for l in lines)
+    result = _direction_result(counts["user"], counts["draft"], has_backlog)
+    if counts["backlog"]:
+        result += f"（積み残し{counts['backlog']}行）"
+    return result
 
 
-def _direction_result(user_n: int, draft_n: int) -> str:
+def _direction_result(user_n: int, draft_n: int, has_backlog: bool) -> str:
+    missing = "" if has_backlog else f"（{SECTION_BACKLOG} 節が無い。見出し行だけ足す）"
     if user_n or draft_n:
-        return f"PENDING: ユーザーから{user_n}行、エージェントのドラフト{draft_n}行（/plan-tasks が先）"
+        return f"PENDING: ユーザーから{user_n}行、エージェントのドラフト{draft_n}行（/plan-tasks が先）{missing}"
+    if missing:
+        return f"MISSING_SECTION: {SECTION_BACKLOG}"
     return "OK: 未対応の指示は無い"
 
 

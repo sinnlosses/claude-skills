@@ -6,8 +6,6 @@
 一時ディレクトリに git リポジトリと作業ツリー2本を作り、`task.py` を実際に
 子プロセスで（並行するテストは同時に）起こして検証する。正典は
 `docs/task-workflow-redesign.md`。落ちたら非0で終わる（`selftest.py` と同じ形）。
-
-**この一式はまだどのスキルからも呼ばれない**（12章。切り替えはT-524〜T-526）。
 """
 
 from __future__ import annotations
@@ -186,6 +184,13 @@ def test_new_and_status_single_worktree() -> None:
             any(l.startswith(f"{task_id}\t") and "\tlocal\t" in l for l in r.stdout.splitlines()),
             r.stdout,
         )
+        check("long_summary 行は0件", "\nlong_summary\t0\t-" in r.stdout, r.stdout)
+
+        run_task(
+            wt1, "new", "--summary", "あ" * 41, "--difficulty", "haiku", "--loopable", "Y", "--body-file", body_file(wt1)
+        )
+        r = run_task(wt1, "status")
+        check("80桁を超える summary を long_summary に出す", "\nlong_summary\t1\t" in r.stdout, r.stdout)
 
         bad_body = write(os.path.join(wt1, "bad.md"), "## 目的\nx\n")
         r = run_task(
@@ -891,6 +896,55 @@ def test_ship_race_gives_up_after_three_tries() -> None:
         check("main にmerge commitが無い", _no_merge_commits(main_path).strip() == "")
 
 
+def test_ship_default_branch_leaves_feature_branch() -> None:
+    print("task.py ship: 既定の枝設定で本体が main を出していても feature 枝を残さない")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp, branch="既定")
+        commit_task(main_path, taskfile.Task("T-100", "戻り先あり", "todo", "sonnet", "Y", (), BODY))
+        commit_task(main_path, taskfile.Task("T-101", "戻り先なし", "todo", "sonnet", "Y", (), BODY))
+
+        r = run_task(wt1, "claim", "T-100")
+        check("claim が feature/T-100 を切る", "branch=feature/T-100" in r.stdout, r.stdout + r.stderr)
+        _claim_work_and_done(wt1, "T-100")
+        r = run_task(wt1, "ship")
+        check("SHIPPEDで返る", r.returncode == 0 and r.stdout.startswith("SHIPPED\t"), r.stdout + r.stderr)
+        check("claim した時点の枝へ戻る", r.stdout.rstrip().endswith("branch=wt1-branch"), r.stdout)
+        check("戻った枝は main に追い付いている", git(wt1, "rev-parse", "HEAD").stdout == git(main_path, "rev-parse", "main").stdout)
+        check(
+            "feature/T-100 は消える",
+            git(main_path, "branch", "--list", "feature/T-100").stdout.strip() == "",
+        )
+
+        # 戻り先が無い（detached で claim した）ときは main の位置で detached にして枝を消す。
+        git(wt2, "checkout", "-q", "--detach", "main")
+        r = run_task(wt2, "claim", "T-101")
+        check("detached からでも claim できる", r.returncode == 0 and "branch=feature/T-101" in r.stdout, r.stdout + r.stderr)
+        _claim_work_and_done(wt2, "T-101", note="2")
+        r = run_task(wt2, "ship")
+        check("SHIPPEDで返る（detached）", r.returncode == 0 and r.stdout.startswith("SHIPPED\t"), r.stdout + r.stderr)
+        check("戻れなければ detached と出す", r.stdout.rstrip().endswith("branch=detached"), r.stdout)
+        check(
+            "feature/T-101 も消える",
+            git(main_path, "branch", "--list", "feature/T-101").stdout.strip() == "",
+        )
+        check("main にmerge commitが無い", _no_merge_commits(main_path).strip() == "")
+
+
+def test_branch_setting_reads_leading_word() -> None:
+    print("task.py claim: - ブランチ: は先頭語だけを読む（後ろの説明は自由）")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp, branch="切らない。作業ツリーの枝のまま ship で送る")
+        commit_task(main_path, taskfile.Task("T-100", "先頭語", "todo", "sonnet", "Y", (), BODY))
+        r = run_task(wt1, "claim", "T-100")
+        check("句読点で続いても切らない として読む", r.returncode == 0 and "branch=wt1-branch" in r.stdout, r.stdout + r.stderr)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp, branch="自分で切らない")
+        commit_task(main_path, taskfile.Task("T-100", "語彙外", "todo", "sonnet", "Y", (), BODY))
+        r = run_task(wt1, "claim", "T-100")
+        check("語彙に無い先頭語は INVALID（終了コード3）", r.returncode == 3 and r.stdout.startswith("INVALID\t"), r.stdout + r.stderr)
+
+
 def main() -> None:
     for t in (
         test_taskfile_parse,
@@ -914,6 +968,8 @@ def main() -> None:
         test_ship_main_dirty_stops,
         test_ship_skips_send_on_main_worktree,
         test_ship_race_gives_up_after_three_tries,
+        test_ship_default_branch_leaves_feature_branch,
+        test_branch_setting_reads_leading_word,
     ):
         t()
     print()

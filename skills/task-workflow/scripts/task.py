@@ -6,12 +6,12 @@
 正典は `docs/task-workflow-redesign.md`（5章が `task` コマンド、4章が状態と台帳、
 3章がタスクファイル、6章が送り出し、5.9・10章が `migrate`）。スキルからは
 `python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py <サブコマンド> …` で呼ぶ
-（5.1。PATH には入れない）。**このファイルはまだどのスキルからも呼ばれない**
-（12章: T-521〜T-523 は `task.py` 一式を足すだけで、切り替えは T-526）。
+（5.1。PATH には入れない）。スキル側の呼び方の正典は task-workflow の WORKFLOW.md
+「`task` コマンドの参照」。
 
 出力は常に stdout（先頭語で種類を判定する TSV）、stderr は使い方の誤りだけ、
 終了コードは5.2の表のとおり。データの不備で traceback を出さない
-（`status.py`/`taskfiles.py` と同じ立場）。`migrate` の実体は `legacy.py`（旧形式の
+（traceback は「環境の故障」の合図として取っておく）。`migrate` の実体は `legacy.py`（旧形式の
 読み取りと実際の書き換え）にあり、ここは結果を印字するだけ（`ship.py`/`cmd_ship` と同じ形）。
 """
 
@@ -24,6 +24,7 @@ import shlex
 import subprocess
 import sys
 import time
+import unicodedata
 
 import ledger
 import legacy
@@ -134,6 +135,16 @@ def readiness(task: taskfile.Task, tasks: dict[str, taskfile.Task], claims: set[
     return "READY"
 
 
+# WORKFLOW.md「summary」の「1行に収める」に反すると見なす幅。80桁はその一行だけで端末が
+# 折り返す長さ（旧 status.py の実測: 52件中14件が該当。狭めると大半に火が点いて合図にならない）。
+LONG_SUMMARY_WIDTH = 80
+
+
+def display_width(s: str) -> int:
+    """端末に出したときの桁数。日本語（East Asian Wide/Fullwidth）は2桁。"""
+    return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in s)
+
+
 def format_elapsed(seconds: float) -> str:
     seconds = max(0, int(seconds))
     if seconds < 60:
@@ -167,15 +178,27 @@ def classify_claim(
     return "CLAIMED", f"{os.path.basename(worktree)} {elapsed}"
 
 
+BRANCH_WORDS = ("既定", "作業ブランチを切る", "切らない")
+
+
 def read_branch_setting(toplevel: str) -> str:
-    """CLAUDE.md の `- ブランチ:` 行の先頭語だけを読む（6.1）。無ければ `既定`。"""
+    """CLAUDE.md の `- ブランチ:` 行の先頭語だけを読む（6.1）。無ければ `既定`。
+
+    後ろは人向けの説明で自由なので、`切らない。main に積む` のように句読点で続いても
+    先頭語で決める。語彙のどれでも始まらなければ、その値の最初の語をそのまま返す
+    （呼ぶ側が `INVALID` にする）。
+    """
     path = os.path.join(toplevel, "CLAUDE.md")
     if not os.path.exists(path):
         return "既定"
     with open(path, encoding="utf-8") as f:
         text = f.read()
-    m = re.search(r"^- ブランチ:\s*(\S+)", text, flags=re.MULTILINE)
-    return m.group(1) if m else "既定"
+    m = re.search(r"^- ブランチ:[ \t]*(.*)$", text, flags=re.MULTILINE)
+    if m is None:
+        return "既定"
+    value = m.group(1).strip()
+    word = next((w for w in BRANCH_WORDS if value.startswith(w)), None)
+    return word if word is not None else (value.split() or [""])[0]
 
 
 def _section_bullets(text: str, heading_prefix: str) -> int:
@@ -264,6 +287,13 @@ def cmd_status(toplevel: str, show_all: bool, check: bool) -> None:
 
     todo_loopable_n = sum(1 for t in tasks.values() if t.status == "todo" and t.loopable == "N")
     print(f"todo_loopable\tN={todo_loopable_n}")
+
+    long_ids = [
+        tid
+        for tid in sorted(tasks, key=taskfile.id_number)
+        if tasks[tid].status in ("todo", "hold") and display_width(tasks[tid].summary) > LONG_SUMMARY_WIDTH
+    ]
+    print(f"long_summary\t{len(long_ids)}\t" + (",".join(long_ids) or "-"))
 
     stale_entries = []
     for tid in claims:
@@ -373,7 +403,7 @@ def cmd_claim(toplevel: str, task_id: str) -> None:
         raise SystemExit(2)
 
     branch_setting = read_branch_setting(toplevel)
-    if branch_setting not in ("既定", "作業ブランチを切る", "切らない"):
+    if branch_setting not in BRANCH_WORDS:
         print(f"INVALID\t- ブランチ: の値 {branch_setting!r} を機械が読めない")
         raise SystemExit(3)
 
@@ -533,7 +563,7 @@ def cmd_ship(toplevel: str) -> None:
 
     old_main = _run_git(toplevel, ["rev-parse", "main"]).stdout.strip()
     verify_command = ship.read_verify_command(toplevel)
-    outcome = ship.attempt(toplevel, branch, main_worktree, verify_command)
+    outcome = ship.attempt(toplevel, main_worktree, verify_command)
 
     if outcome.kind == "CONFLICT":
         print("CONFLICT\t" + (",".join(outcome.conflict_files) or "?"))
@@ -547,19 +577,52 @@ def cmd_ship(toplevel: str) -> None:
         print("RACE\t3")
         raise SystemExit(9)
 
-    branch_setting = read_branch_setting(toplevel)
-    if branch_setting in ("既定", "作業ブランチを切る"):
-        # 送った直後なので、この枝はどの作業ツリーにも要らない（6.2手順7）。
-        r = _run_git(toplevel, ["checkout", "main"])
-        if r.returncode == 0:
-            _run_git(toplevel, ["branch", "-d", branch])
+    branch_note = f"branch={branch}"
+    if read_branch_setting(toplevel) in ("既定", "作業ブランチを切る") and FEATURE_BRANCH.fullmatch(branch):
+        # 印を消す前に読む（戻り先は印の owner にある）。
+        branch_note = _leave_feature_branch(root, toplevel, branch)
 
     released = _release_own_claims_when_shipped(root, toplevel)
     new_main = _run_git(toplevel, ["rev-parse", "main"]).stdout.strip()
     print(
         f"SHIPPED\t{old_main}..{new_main}\trebased={'yes' if outcome.rebased else 'no'}"
         f"\tverify={outcome.verify_state}\ttries={outcome.tries}\treleased={','.join(released) or '-'}"
+        f"\t{branch_note}"
     )
+
+
+FEATURE_BRANCH = re.compile(r"feature/(T-\d{3,})")
+
+
+def _leave_feature_branch(root: str, toplevel: str, branch: str) -> str:
+    """送り終えた `feature/T-xxx` から降りて枝を消す（6.2手順7）。出力の `branch=…` 欄を返す。
+
+    戻り先は `claim` した時点の枝（印の owner の `branch=`）→ `main` の順に試す。`main` を
+    別の作業ツリー（本体）が出していると `checkout main` は通らないので、作業ツリー固有の枝が
+    あればそこへ戻して `main` まで追い付かせる。どちらにも移れなければ `main` の位置で
+    detached HEAD にする（枝を黙って残さない。detached のままでも次の `claim` は `main` から切る）。
+    消せなかったときは `kept=<枝>` を添えて知らせる。
+    """
+    m = FEATURE_BRANCH.fullmatch(branch)
+    owner = ledger.read_owner(ledger.claim_dir(root, m.group(1))) if m else None
+    back = (owner or {}).get("branch")
+    targets = [b for b in dict.fromkeys([back, "main"]) if b and b not in (branch, "HEAD")]
+
+    landed = None
+    for target in targets:
+        if _run_git(toplevel, ["checkout", "-q", target]).returncode == 0:
+            if target != "main":
+                _run_git(toplevel, ["merge", "--ff-only", "-q", "main"])
+            landed = target
+            break
+    if landed is None:
+        if _run_git(toplevel, ["checkout", "-q", "--detach", "main"]).returncode != 0:
+            return f"branch={branch}\tkept={branch}"
+        landed = "detached"
+
+    if _run_git(toplevel, ["branch", "-d", branch]).returncode != 0:
+        return f"branch={landed}\tkept={branch}"
+    return f"branch={landed}"
 
 
 # --- migrate（5.9・10章） ----------------------------------------------------

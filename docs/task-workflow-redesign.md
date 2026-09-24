@@ -163,8 +163,8 @@ dependencies: [T-521, T-525]
 ```
 
 読み手（Python の `taskfile.py` と tsukumo の `src/shared/task-summary.ts`）は、次の見本を
-**両方のテストに写す**（片方だけ直して黙ってずれるのを防ぐ。見本の正典はこの表で、
-T-524 で WORKFLOW.md へ移す）:
+**両方のテストに写す**（片方だけ直して黙ってずれるのを防ぐ。見本の正典は T-524 で
+`skills/task-workflow/WORKFLOW.md`「タスクファイル」へ移した。下は設計時の写し）:
 
 | 入力（front matter の該当行） | 読んだ結果 |
 | --- | --- |
@@ -469,7 +469,11 @@ merge commit を作る運用（旧既定の `git merge`、`--no-ff` の例）は
       越された合図なので1へ
 6. 3回とも送れなければ `RACE`
 7. 送れたら、新しい `main` で done/dropped になった自分の印を消す。ブランチ設定が `既定` なら
-   `main` に移って `feature/T-xxx` を消す（`git branch -d`。送った直後なので必ず消せる）
+   `main` に移って `feature/T-xxx` を消す（`git branch -d`。送った直後なので必ず消せる）。
+   **T-524 で変えた点**: 別の作業ツリーが `main` を出していると `checkout main` が通らず枝が黙って
+   残るので、戻り先を「`claim` した時点の枝（印の `branch=`。`main` まで追い付かせる）→ `main` →
+   `main` の位置で detached HEAD」の順にし、降りた先を `SHIPPED` 行末の `branch=`（消せなければ
+   `kept=`）に出す。detached からでも送れるよう、送るのは枝の名前ではなく `HEAD` のコミットにした
 
 **merge commit は作らない**（取り込みは rebase、送るのは fast-forward か比較付きの更新だけ）。
 自己テストは `git log --merges main` が0件であることを見る（T-522）。

@@ -37,10 +37,12 @@ claude.ai 同期用に予約していて、git 管理下に混ざるのを避け
 
 ## プロジェクト側に要るもの
 
-タスク系スキルを使うプロジェクトは、`develop/tasks.json` `develop/progress.md`
-`develop/direction.md` を置き、検証コマンドと整形コマンドを CLAUDE.md の「## タスク運用」節に
-書く。**用意するのは `/setup-tasks`**（既にあるファイルは上書きしない）。置き場と節の形は
-`skills/task-workflow/WORKFLOW.md`「ファイル配置と CLAUDE.md」。
+タスク系スキルを使うプロジェクトは、`develop/direction.md` を置き（タスクは `develop/task/` に
+1件1ファイルで `task new` が作る）、検証コマンド・整形コマンド・ブランチの3行を CLAUDE.md の
+「## タスク運用」節に書く。**用意するのは `/setup-tasks`**（既にあるファイルは上書きしない）。
+置き場と節の形は `skills/task-workflow/WORKFLOW.md`「ファイル配置と CLAUDE.md」。旧形式
+（`develop/tasks.json`）のプロジェクトでは、タスク系のスキルが `LEGACY` で止まって
+`task migrate` を案内する（同「旧形式からの移行」）。
 
 `docs/` 系は逆に、**新規プロジェクトでは何も作らない**（遅延作成。最初に書くべき内容ができた
 スキルが、そのとき作る）。育つ順序と置き場は次の「## docs/ の育て方」。
@@ -77,7 +79,8 @@ claude.ai 同期用に予約していて、git 管理下に混ざるのを避け
 ```
 
 1. `install.sh` の構文、2. `skills/task-workflow/scripts/` の自己テスト
-（`selftest.py`。判定と転記の経路を実ファイルで通す）、3. リポジトリの整合
+（`selftest.py` が旧形式の読み取りと `init.py`、`selftest_task.py` が `task` コマンドを一時リポジトリと
+作業ツリー2本で通す）、3. リポジトリの整合
 （`scripts/check_repo.py`。frontmatter の `name` とディレクトリ名の一致、この README の
 由来一覧と `skills/` の一致、`${CLAUDE_SKILL_DIR}` で書かれた参照先の実在、スキル名の
 相互参照の実在、`docs/` に書くスキル（`architecture-proposal` `domain-modeling` `research`。

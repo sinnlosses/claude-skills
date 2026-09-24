@@ -7,7 +7,7 @@ YAML にしない理由・見出しの意味は正典を参照（同ファイル
 
 読み手は例外を投げない。呼び出し側が「INVALID＝データの不備」と
 「traceback＝環境の故障」を取り違えないよう、`(値, 理由)` の対を返す
-（`status.py` の `load_tasks` と同じ形）。
+（`legacy.load_tasks` と同じ形）。
 """
 
 from __future__ import annotations

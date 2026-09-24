@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""task-workflow の3スクリプトの自己テスト。
+"""`legacy.py`（旧形式の読み取り）と `init.py` の自己テスト。
 
 使い方: python3 selftest.py
 
 標準ライブラリだけで動く（このリポジトリに依存パッケージを増やさないため）。
-落ちたら非0で終わる。
+落ちたら非0で終わる。`task.py` 一式は `selftest_task.py` が見る。
 
 **ここで守っているのは「モデルが誤読しない出力を返すこと」**。
-判定そのものより、`INVALID` と traceback の区別・新しい順の保全・書き戻しの拒否といった、
-間違えると*静かに*データを失う／原因を取り違える経路を重点的に見る。
+`INVALID` と traceback の区別、旧形式で骨組みを混ぜないこと、既存ファイルを上書きしないこと
+といった、間違えると*静かに*データを失う／原因を取り違える経路を重点的に見る。
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-import taskfiles  # noqa: E402
+import legacy  # noqa: E402
 
 failures: list[str] = []
 
@@ -43,290 +43,74 @@ def run(script: str, *args: str) -> subprocess.CompletedProcess:
     )
 
 
-def task(tid: str, **kw) -> dict:
-    t = {
-        "id": tid,
-        "difficulty": "haiku",
-        "loopable": "Y",
-        "dependencies": [],
-        "summary": f"{tid} のやること",
-        "task": "## 背景\n本文\n",
-        "status": "todo",
-        "passes": False,
-        "evidence": "",
-    }
-    t.update(kw)
-    return t
-
-
 def write(path: str, body: str) -> str:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(body)
     return path
 
 
-def write_tasks(path: str, tasks: list[dict]) -> str:
-    return write(path, json.dumps(tasks, ensure_ascii=False))
-
-
-# --- taskfiles ----------------------------------------------------------
+# --- legacy: tasks.json の読み取り ------------------------------------------
 
 
 def test_load_tasks() -> None:
-    print("taskfiles.load_tasks")
+    print("legacy.load_tasks")
     with tempfile.TemporaryDirectory() as d:
-        ok, err = taskfiles.load_tasks(write_tasks(os.path.join(d, "a.json"), [task("T-001")]))
+        ok, err = legacy.load_tasks(write(os.path.join(d, "a.json"), json.dumps([{"id": "T-001"}])))
         check("正しいファイルは (中身, None)", err is None and len(ok) == 1, str(err))
 
-        _, err = taskfiles.load_tasks(write(os.path.join(d, "b.json"), "[{"))
+        _, err = legacy.load_tasks(write(os.path.join(d, "b.json"), "[{"))
         check("壊れた JSON は理由を返す（例外を投げない）", err is not None and "JSON" in err, str(err))
 
-        _, err = taskfiles.load_tasks(write(os.path.join(d, "c.json"), '{"a":1}'))
+        _, err = legacy.load_tasks(write(os.path.join(d, "c.json"), '{"a":1}'))
         check("配列でなければ理由を返す", err is not None and "配列ではない" in err, str(err))
 
-        _, err = taskfiles.load_tasks(write(os.path.join(d, "d.json"), "[1,2]"))
+        _, err = legacy.load_tasks(write(os.path.join(d, "d.json"), "[1,2]"))
         check("要素がオブジェクトでなければ理由を返す", err is not None and "オブジェクト" in err, str(err))
 
-        _, err = taskfiles.load_tasks(os.path.join(d, "無い.json"))
+        _, err = legacy.load_tasks(os.path.join(d, "無い.json"))
         check("開けないファイルも理由を返す", err is not None, str(err))
 
 
-def test_done_plan() -> None:
-    print("taskfiles.done_plan")
-    todos = [task(f"T-{i:03d}") for i in range(50)]
-    _, _, hit = taskfiles.done_plan(todos, 10, 10)
-    check("todo はサイズにも件数にも数えない", hit is False)
-
-    dones = [task(f"T-{i:03d}", status="done") for i in range(10)]
-    done, _, hit = taskfiles.done_plan(dones, 10, 10**9)
-    check("done が件数に達したら鳴る", hit is True and len(done) == 10)
-
-    _, size, hit = taskfiles.done_plan(dones[:1], 99, 10)
-    check("done が文字数を超えたら鳴る", hit is True and size > 10)
-
-    # サイズは**文字数**。日本語でバイト数と取り違えていないこと。
-    ja = [task("T-001", status="done", summary="あ" * 100, task="", evidence="")]
-    _, size, _ = taskfiles.done_plan(ja, 99, 10**9)
-    check("サイズは文字数で測る（UTF-8 バイト数ではない）", size < 400, f"size={size}")
+# --- legacy: progress.md の節分け -------------------------------------------
 
 
 def test_progress_sections() -> None:
-    print("taskfiles: progress.md の節")
+    print("legacy: progress.md の節")
     body = (
         "# 進捗\n\n## 完了したこと\n\n"
         "### 2026-03-03 c（T-003）\nccc\n\n"
         "### 2026-02-02 b（T-002）\nbbb\n\n"
         "### 2026-01-01 a（T-001）\naaa\n\n"
-        "## 未解決\n\nなし\n"
+        "## 未解決\n\n- なし\n"
     )
-    head, sections, tail = taskfiles.split_done_section(body)
+    head, sections, tail = legacy.split_done_section(body)
     check("小節を3つに割る", sections is not None and len(sections) == 3)
+    check("小節の日付を読む", [s.date for s in sections or []] == ["2026-03-03", "2026-02-02", "2026-01-01"])
     check("「未解決」以降は後ろに残す", tail.startswith("## 未解決"))
     check("見出しは前に残す", head.rstrip().endswith("## 完了したこと"))
-    check("新しい順なら True", taskfiles.is_newest_first(sections))
 
-    rev = list(reversed(sections))
-    check("古い順なら False（アーカイブを止める）", not taskfiles.is_newest_first(rev))
-
-    _, none_sections, _ = taskfiles.split_done_section("# 進捗\n\n## 未解決\n")
+    _, none_sections, _ = legacy.split_done_section("# 進捗\n\n## 未解決\n")
     check("「完了したこと」節が無ければ None", none_sections is None)
 
-    keep, move = taskfiles.progress_plan(sections, 2, 10**9, 2, 10**9)
-    check("件数の予算で新しい2つを残す", [s.date for s in keep] == ["2026-03-03", "2026-02-02"])
-    check("溢れた古いほうを移す", [s.date for s in move] == ["2026-01-01"])
+    _, mid, _ = legacy.split_named_section(body, "## 未解決")
+    check("名前つきの節を切り出す", mid.startswith("## 未解決") and "- なし" in mid, mid)
+    _, mid, _ = legacy.split_named_section(body, "## 注意")
+    check("無い節は空文字", mid == "")
 
-    keep, move = taskfiles.progress_plan(sections, 0, 10**9, 99, 1)
-    check("1小節で予算を超えても最低1小節は残す", len(keep) == 1 and len(move) == 2)
-
-    # 点火する閾値と残す量を離してあること（T-342。同じ値だと毎サイクル1件ずつ移す振動になる）。
-    keep, move = taskfiles.progress_plan(sections, 3, 10**9, 1, 10**9)
-    check("閾値ちょうどでは点かない", move == [] and len(keep) == 3)
-
-    keep, move = taskfiles.progress_plan(sections, 2, 10**9, 1, 10**9)
-    check("点いたら残す量まで戻す", len(keep) == 1 and len(move) == 2)
-    again_keep, again_move = taskfiles.progress_plan(keep, 2, 10**9, 1, 10**9)
-    check("移した直後にもう一度かけても点かない", again_move == [] and again_keep == keep)
-
-    # 文字数で点いたときも、件数と文字数の両方を残す量まで戻す（片方だけ戻すと翌回に鳴る）。
-    keep, move = taskfiles.progress_plan(sections, 99, 5, 2, 10**9)
-    check("文字数で点いても件数の予算で切る", len(keep) == 2 and len(move) == 1)
-
-    lim = taskfiles.LIMITS
-    check(
-        "既定値は閾値のほうが残す量より大きい",
-        lim["progressCount"] > lim["progressKeepCount"]
-        and lim["progressChars"] > lim["progressKeepChars"],
-    )
-
-
-# --- status.py ----------------------------------------------------------
-
-
-def test_status() -> None:
-    print("status.py")
     with tempfile.TemporaryDirectory() as d:
-        p = os.path.join(d, "tasks.json")
-
-        r = run("status.py", os.path.join(d, "無い.json"))
-        check("ファイルが無ければ MISSING", r.stdout.strip() == "MISSING" and r.returncode == 0)
-
-        write_tasks(p, [])
-        r = run("status.py", p)
-        check("空なら EMPTY", r.stdout.startswith("EMPTY") and r.returncode == 0)
-
-        write(p, "[{")
-        r = run("status.py", p)
+        p = os.path.join(d, "docs", "history", "progress.md")
+        legacy.prepend_to_history(p, legacy.PROGRESS_ARCHIVE_HEADER, "### 2026-01-01 古い\n")
+        legacy.prepend_to_history(p, legacy.PROGRESS_ARCHIVE_HEADER, "### 2026-02-02 新しい\n")
+        text = open(p, encoding="utf-8").read()
         check(
-            "壊れた JSON は INVALID 行（traceback ではない）",
-            r.returncode == 0 and r.stdout.startswith("INVALID\t") and not r.stderr,
-            r.stdout + r.stderr,
-        )
-
-        broken = {"id": "T-001", "status": "todo", "summary": "x"}
-        write_tasks(p, [broken])
-        r = run("status.py", p)
-        lines = r.stdout.splitlines()
-        check(
-            "フィールドが欠けても落ちない",
-            r.returncode == 0 and not r.stderr,
-            r.stderr,
-        )
-        check("欠けた列は ? で埋める", lines and lines[0].split("\t")[2] == "?", lines[0] if lines else "")
-        mf = [l for l in lines if l.startswith("missing_field\t")]
-        check(
-            "missing_field 行が欠けた名前を挙げる",
-            mf and "difficulty" in mf[0] and "dependencies" in mf[0] and "passes" in mf[0],
-            mf[0] if mf else "行が無い",
-        )
-
-        write_tasks(p, [task("T-001", status="done", passes=True), task("T-002", dependencies=["T-001"])])
-        r = run("status.py", p)
-        rows = [l.split("\t") for l in r.stdout.splitlines() if l.startswith("T-")]
-        check("依存が done なら READY", rows[1][5] == "READY", rows[1][5])
-
-        write_tasks(p, [task("T-001"), task("T-002", dependencies=["T-001"])])
-        r = run("status.py", p)
-        rows = [l.split("\t") for l in r.stdout.splitlines() if l.startswith("T-")]
-        check("依存が todo なら BLOCKED", rows[1][5] == "BLOCKED:T-001", rows[1][5])
-
-        # アーカイブ済み（tasks.json に無い）依存は完了扱い。
-        write_tasks(p, [task("T-009", dependencies=["T-001"])])
-        r = run("status.py", p)
-        rows = [l.split("\t") for l in r.stdout.splitlines() if l.startswith("T-")]
-        check("存在しない依存はアーカイブ済み＝READY", rows[0][5] == "READY", rows[0][5])
-
-        write_tasks(p, [task("T-001", summary="あ" * 60)])
-        r = run("status.py", p)
-        check(
-            "全角60文字は表示幅120桁として long_summary に出る",
-            any(l.startswith("long_summary\t1\t") for l in r.stdout.splitlines()),
-        )
-
-        write_tasks(p, [task("T-001", status="done", summary="あ" * 60, passes=True)])
-        r = run("status.py", p)
-        check(
-            "done の長い summary は遡って責めない",
-            any(l.startswith("long_summary\t0\t") for l in r.stdout.splitlines()),
+            "履歴には新しいものを見出しの直後に差し込む",
+            text.startswith(legacy.PROGRESS_ARCHIVE_HEADER) and text.index("新しい") < text.index("古い"),
+            text,
         )
 
 
-# --- archive.py ---------------------------------------------------------
-
-
-def test_archive() -> None:
-    print("archive.py")
-    with tempfile.TemporaryDirectory() as d:
-        cwd = os.getcwd()
-        os.chdir(d)
-        try:
-            os.makedirs("develop")
-            p = "develop/tasks.json"
-
-            write(p, "[{")
-            r = run("archive.py", p)
-            check(
-                "読めないファイルには書き戻さない",
-                "tasks\tINVALID" in r.stdout and "書き換えずに中止" in r.stdout,
-                r.stdout,
-            )
-            check("壊れたファイルは元のまま", open(p, encoding="utf-8").read() == "[{")
-
-            dones = [task(f"T-{i:03d}", status="done", passes=True, evidence="e") for i in range(1, 11)]
-            keep = task("T-011")
-            write_tasks(p, dones + [keep])
-
-            r = run("archive.py", p, "--dry-run")
-            check("--dry-run は書かない", "DRY-RUN" in r.stdout)
-            check("--dry-run 後もファイルは元のまま", len(json.load(open(p, encoding="utf-8"))) == 11)
-
-            r = run("archive.py", p)
-            check("トリガー到達で MOVED", "tasks\tMOVED\t10件" in r.stdout, r.stdout)
-            left = json.load(open(p, encoding="utf-8"))
-            check("todo は残る", [t["id"] for t in left] == ["T-011"])
-            arch = open("docs/history/tasks.md", encoding="utf-8").read()
-            check("全 done がアーカイブに載る", all(f"## T-{i:03d}" in arch for i in range(1, 11)))
-            check("evidence も移る", "**evidence**:" in arch)
-            check("本文も移る", "## 背景" in arch)
-
-            r = run("archive.py", p)
-            check("2回目は NOOP（トリガー未達）", "NOOP" in r.stdout, r.stdout)
-        finally:
-            os.chdir(cwd)
-
-
-def test_archive_progress_order() -> None:
-    print("archive.py: progress.md の並び")
-    with tempfile.TemporaryDirectory() as d:
-        cwd = os.getcwd()
-        os.chdir(d)
-        try:
-            os.makedirs("develop")
-            p = write_tasks("develop/tasks.json", [task("T-001")])
-            body = "# 進捗\n\n## 完了したこと\n\n" + "".join(
-                f"### 2026-01-{i:02d} 作業{i}（T-{i:03d}）\n本文{i}\n\n" for i in range(13, 0, -1)
-            ) + "## 未解決\n\nなし\n"
-            write("develop/progress.md", body)
-
-            r = run("archive.py", p)
-            check("予算超過で MOVED", "progress\tMOVED" in r.stdout, r.stdout)
-            left = open("develop/progress.md", encoding="utf-8").read()
-            check("新しい5小節が残る", "2026-01-13" in left and "2026-01-09" in left)
-            check("古い小節は消える", "2026-01-08" not in left)
-            check("「未解決」節は残る", "## 未解決" in left)
-            arch = open("docs/history/progress.md", encoding="utf-8").read()
-            check("移した先に古い小節がある", "2026-01-08" in arch and "2026-01-01" in arch)
-            check(
-                "移した先も新しいものが上",
-                arch.index("2026-01-08") < arch.index("2026-01-01"),
-            )
-
-            # 移した直後にもう一度かけても点かない（残す量が閾値より小さいから。T-342）。
-            r = run("archive.py", p)
-            check("移した直後は再点火しない", "progress\tSKIP" in r.stdout, r.stdout)
-            r = run("status.py", p)
-            check(
-                "status.py も同じ判定で NO",
-                "progress\tNO\t" in r.stdout,
-                r.stdout.splitlines()[-1] if r.stdout else "",
-            )
-
-            # 逆順のファイルには触らない（触ると新しいほうを捨てる）。
-            write(
-                "develop/progress.md",
-                "# 進捗\n\n## 完了したこと\n\n"
-                + "".join(
-                    f"### 2026-02-{i:02d} 作業{i}\n本文{i}\n\n" for i in range(1, 10)
-                ),
-            )
-            before = open("develop/progress.md", encoding="utf-8").read()
-            r = run("archive.py", p)
-            check("古い順に並んでいたら ERROR", "progress\tERROR" in r.stdout, r.stdout)
-            check("ERROR のときは書き換えない", open("develop/progress.md", encoding="utf-8").read() == before)
-        finally:
-            os.chdir(cwd)
-
-
-# --- init.py ------------------------------------------------------------
+# --- init.py ----------------------------------------------------------------
 
 
 def test_init() -> None:
@@ -336,27 +120,21 @@ def test_init() -> None:
         os.chdir(d)
         try:
             r = run("init.py", "develop")
-            check("3ファイルを作る", r.stdout.count("CREATED") == 3, r.stdout)
+            check("direction.md だけを作る", r.stdout.count("CREATED") == 1 and "direction.md" in r.stdout, r.stdout)
+            check("tasks.json・progress.md は作らない", not os.path.exists("develop/tasks.json") and not os.path.exists("develop/progress.md"))
             check("CLAUDE.md が無ければ MISSING", "MISSING\tCLAUDE.md" in r.stdout, r.stdout)
-            # init.py が作る骨組みを、archive.py が節として認識できること。
-            _, sections, _ = taskfiles.split_done_section(
-                open("develop/progress.md", encoding="utf-8").read()
-            )
-            check("作った progress.md の節をアーカイブ側が見つけられる", sections is not None)
 
-            created_direction = open("develop/direction.md", encoding="utf-8").read()
+            created = open("develop/direction.md", encoding="utf-8").read()
             check(
-                "作った direction.md に「ユーザーから」「エージェントのドラフト」の2節がある",
-                "## ユーザーから" in created_direction
-                and "## エージェントのドラフト" in created_direction,
-                created_direction,
+                "作った direction.md に3節がある",
+                all(h in created for h in ("## ユーザーから", "## エージェントのドラフト", "## 積み残し")),
+                created,
             )
 
             r = run("init.py", "develop")
-            check("2回目は上書きしない", r.stdout.count("KEPT") == 3 and "CREATED" not in r.stdout)
-            check("既存 tasks.json は OK 判定", "OK: 0件" in r.stdout, r.stdout)
+            check("2回目は上書きしない", "KEPT" in r.stdout and "CREATED" not in r.stdout, r.stdout)
+            check("まっさらなら OK", "OK: 未対応の指示は無い" in r.stdout, r.stdout)
 
-            # 節が無い（この変更より前の）ファイルは後方互換で全体を「ユーザーから」とみなす。
             write("develop/direction.md", "# 未対応の指示メモ\n\nこれをやって\n")
             r = run("init.py", "develop")
             check(
@@ -365,50 +143,57 @@ def test_init() -> None:
                 r.stdout,
             )
 
-            # 新しい雛形（2節）は節ごとに行数を分けて数える。
             write(
                 "develop/direction.md",
                 "# 未対応の指示メモ\n\n## ユーザーから\nこれをやって\n\n"
-                "## エージェントのドラフト\nこれも直したい\n",
+                "## エージェントのドラフト\nこれも直したい\n\n## 積み残し\n- 後で\n",
             )
             r = run("init.py", "develop")
             check(
-                "節ごとの行数を分けて数える",
-                "ユーザーから1行" in r.stdout and "エージェントのドラフト1行" in r.stdout,
+                "節ごとの行数を分けて数え、積み残しは PENDING に数えない",
+                "ユーザーから1行" in r.stdout and "エージェントのドラフト1行" in r.stdout and "積み残し1行" in r.stdout,
                 r.stdout,
             )
 
-            write(
-                "develop/direction.md",
-                "# 未対応の指示メモ\n\n## ユーザーから\n\n## エージェントのドラフト\n",
-            )
+            write("develop/direction.md", "# 未対応の指示メモ\n\n## ユーザーから\n\n## エージェントのドラフト\n\n## 積み残し\n- 後で\n")
             r = run("init.py", "develop")
-            check("両節とも空なら OK", "OK: 未対応の指示は無い" in r.stdout, r.stdout)
+            check("積み残しだけなら OK", "OK: 未対応の指示は無い" in r.stdout, r.stdout)
 
-            write("CLAUDE.md", "# x\n\n## タスク運用\n\n- 検証コマンド: `なし`\n")
+            write("develop/direction.md", "# 未対応の指示メモ\n\n## ユーザーから\n\n## エージェントのドラフト\n")
             r = run("init.py", "develop")
-            check("整形コマンド行が無ければ MISSING_LINE", "MISSING_LINE" in r.stdout, r.stdout)
+            check("古い2節の骨組みは積み残し節の欠けを知らせる", "MISSING_SECTION: ## 積み残し" in r.stdout, r.stdout)
 
             write("CLAUDE.md", "# x\n\n## タスク運用\n\n- 検証コマンド: `なし`\n- 整形コマンド: `なし`\n")
             r = run("init.py", "develop")
-            check("2行そろえば OK", "OK\tCLAUDE.md" in r.stdout, r.stdout)
+            check("ブランチ行が無ければ MISSING_LINE", "MISSING_LINE" in r.stdout and "- ブランチ:" in r.stdout, r.stdout)
+
+            write("CLAUDE.md", "# x\n\n## タスク運用\n\n- 検証コマンド: `なし`\n- 整形コマンド: `なし`\n- ブランチ: 自分で切らない\n")
+            r = run("init.py", "develop")
+            check("ブランチの先頭語が語彙に無ければ BAD_BRANCH", "BAD_BRANCH" in r.stdout, r.stdout)
+
+            write("CLAUDE.md", "# x\n\n## タスク運用\n\n- 検証コマンド: `なし`\n- 整形コマンド: `なし`\n- ブランチ: 切らない。main に直接積む\n")
+            r = run("init.py", "develop")
+            check("3行そろい語彙に当たれば OK", "OK\tCLAUDE.md" in r.stdout, r.stdout)
 
             r = run("init.py", "--help")
             check("打ち間違いをディレクトリにしない", r.returncode == 2 and not os.path.exists("--help"))
         finally:
             os.chdir(cwd)
 
+    with tempfile.TemporaryDirectory() as d:
+        cwd = os.getcwd()
+        os.chdir(d)
+        try:
+            write("develop/tasks.json", "[]\n")
+            r = run("init.py", "develop")
+            check("旧形式なら LEGACY（終了コード5）", r.returncode == 5 and r.stdout.startswith("LEGACY\t"), r.stdout)
+            check("旧形式には骨組みを混ぜない", not os.path.exists("develop/direction.md"))
+        finally:
+            os.chdir(cwd)
+
 
 def main() -> None:
-    for t in (
-        test_load_tasks,
-        test_done_plan,
-        test_progress_sections,
-        test_status,
-        test_archive,
-        test_archive_progress_order,
-        test_init,
-    ):
+    for t in (test_load_tasks, test_progress_sections, test_init):
         t()
     print()
     if failures:

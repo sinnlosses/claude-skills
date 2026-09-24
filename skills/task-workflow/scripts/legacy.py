@@ -15,17 +15,21 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
 from dataclasses import dataclass
 
-import archive
 import ledger
 import taskfile
-import taskfiles
 
 TASK_DIR_NAME = "task"
+HISTORY_DIR = "docs/history"
+PROGRESS_ARCHIVE_HEADER = "# 過去セッションの「完了したこと」"
+# 「## 完了したこと（このセッション）」のように後ろに補足が付いた表記が実在するので前方一致で拾う。
+DONE_SECTION = "## 完了したこと"
+DATE_HEADING = re.compile(r"^### (\d{4}-\d{2}-\d{2})\b")
 UNRESOLVED_HEADING = "## 未解決"
 NOTE_HEADING = "## 注意"
 LEFTOVER_NOTICE = "移行の残り。8章の表で振り分けたら消す。\n"
@@ -35,6 +39,84 @@ RESULT_HEADING_LINE = re.compile(r"^## 結果\s*$", re.MULTILINE)
 
 def _run_git(cwd: str, args: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+
+
+# --- 旧形式の読み取り（tasks.json・progress.md の節分け） ---------------------
+
+
+def load_tasks(path: str) -> tuple[list[dict], str | None]:
+    """tasks.json を読む。読めなければ `(空リスト, 理由)` を返す（例外を投げない）。
+
+    データの不備で traceback を出すと、呼ぶ側が環境の故障（終了コード1）と取り違える。
+    理由を文字列で返して `INVALID` として出せるようにする。
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            tasks = json.load(f)
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        return [], f"JSONとして読めない（{e}）"
+    except OSError as e:
+        return [], f"読めない（{e}）"
+    if not isinstance(tasks, list):
+        return [], f"配列ではない（{type(tasks).__name__}）"
+    bad = [i for i, t in enumerate(tasks) if not isinstance(t, dict)]
+    if bad:
+        return [], f"配列の要素がオブジェクトではない（{len(bad)}件: index {bad[:5]}）"
+    return tasks, None
+
+
+@dataclass(frozen=True)
+class Section:
+    """「完了したこと」配下の `### 〜` 小節1つ。"""
+
+    date: str | None
+    text: str
+
+
+def split_done_section(text: str) -> tuple[str, list[Section] | None, str]:
+    """「完了したこと」節を (前, 小節リスト, 後) に割る。節が無ければ小節リストは None。"""
+    lines = text.splitlines(keepends=True)
+    start = next((i for i, ln in enumerate(lines) if ln.startswith(DONE_SECTION)), None)
+    if start is None:
+        return text, None, ""
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+
+    bodies: list[tuple[str | None, list[str]]] = []
+    head_end = end
+    for i in range(start + 1, end):
+        if lines[i].startswith("### "):
+            head_end = min(head_end, i)
+            m = DATE_HEADING.match(lines[i])
+            bodies.append((m.group(1) if m else None, [lines[i]]))
+        elif bodies:
+            bodies[-1][1].append(lines[i])
+
+    sections = [Section(d, "".join(b)) for d, b in bodies]
+    return "".join(lines[:head_end]), sections, "".join(lines[end:])
+
+
+def split_named_section(text: str, heading: str) -> tuple[str, str, str]:
+    """`## <heading>` の節を (前, その節, 後) に割る。無ければ真ん中が空文字。"""
+    lines = text.splitlines(keepends=True)
+    start = next((i for i, ln in enumerate(lines) if ln.startswith(heading)), None)
+    if start is None:
+        return text, "", ""
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    return "".join(lines[:start]), "".join(lines[start:end]), "".join(lines[end:])
+
+
+def prepend_to_history(path: str, header: str, body: str) -> None:
+    """履歴ファイルの見出しの直後（既存のエントリより前）に差し込む。新しいものが上に来る並びを保つ。"""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    if not os.path.exists(path):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(header + "\n")
+    with open(path, encoding="utf-8") as f:
+        lines = f.read().splitlines(keepends=True)
+    cut = next((i for i, ln in enumerate(lines) if ln.startswith("# ")), -1) + 1
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("".join(lines[:cut]).rstrip() + "\n\n" + body.rstrip() + "\n\n")
+        f.write("".join(lines[cut:]).lstrip())
 
 
 # --- タスクの変換（10.1） ----------------------------------------------------
@@ -99,13 +181,13 @@ def _count_bullets(section_text: str) -> int:
 
 
 # 前置き文の終わり＝この3つの見出しのうち、ファイル中で最初に現れるものの手前まで。
-_KNOWN_HEADING_PREFIXES = (taskfiles.DONE_SECTION, UNRESOLVED_HEADING, NOTE_HEADING)
+_KNOWN_HEADING_PREFIXES = (DONE_SECTION, UNRESOLVED_HEADING, NOTE_HEADING)
 
 
 def _preamble(text: str) -> str:
     """`text` のうち、既知の見出し（完了したこと・未解決・注意）のどれよりも前にある文章。
 
-    **移さない・捨てない**（データを失う操作にしないため）。`taskfiles.split_done_section` の
+    **移さない・捨てない**（データを失う操作にしないため）。`split_done_section` の
     `head` を使わないのは、それが「完了したこと」の見出し行自体まで含んでしまうため
     （見出しが無いときは全文を返す実装で、`## 未解決`/`## 注意` と重複しうる）。
     """
@@ -120,7 +202,7 @@ def _preamble(text: str) -> str:
 def progress_plan(text: str) -> tuple[int, str, str | None, int, int, bool]:
     """`(移す小節数, 移す本文, 残すprogress.mdの本文（Noneなら消す）, 未解決件数, 注意件数, 前置き文の有無)`。
 
-    「完了したこと」の小節は全部移す（keepは無い。archive.pyの部分アーカイブとは違い、
+    「完了したこと」の小節は全部移す（残す小節は無く、
     新しい順の検査もしない——全部移すので順は関係しない）。「未解決」「注意」の2節と
     前置き文（`_preamble`）は動かさず、先頭の1行つきで残す。3つとも空（前置き文が
     空白だけ、箇条書きが無い）なら残す本文は無し（呼び出し側が `develop/progress.md`
@@ -129,12 +211,12 @@ def progress_plan(text: str) -> tuple[int, str, str | None, int, int, bool]:
     preamble = _preamble(text)
     has_preamble = preamble.strip() != ""
 
-    _, sections, _ = taskfiles.split_done_section(text)
+    _, sections, _ = split_done_section(text)
     sections = sections or []
     moved_text = "".join(s.text for s in sections)
 
-    _, unresolved_section, _ = taskfiles.split_named_section(text, UNRESOLVED_HEADING)
-    _, note_section, _ = taskfiles.split_named_section(text, NOTE_HEADING)
+    _, unresolved_section, _ = split_named_section(text, UNRESOLVED_HEADING)
+    _, note_section, _ = split_named_section(text, NOTE_HEADING)
     unresolved_count = _count_bullets(unresolved_section)
     note_count = _count_bullets(note_section)
 
@@ -178,7 +260,7 @@ def migrate(toplevel: str, dry_run: bool) -> MigrateResult:
         detail = "develop/tasks.json が無い" + ("（既に新形式）" if os.path.exists(direction_path) else "")
         return MigrateResult(kind="NOTHING", detail=detail)
 
-    raw_tasks, err = taskfiles.load_tasks(tasks_json_path)
+    raw_tasks, err = load_tasks(tasks_json_path)
     if err is not None:
         return MigrateResult(kind="INVALID", detail=f"develop/tasks.json\t{err}")
 
@@ -229,9 +311,9 @@ def migrate(toplevel: str, dry_run: bool) -> MigrateResult:
     _run_git(toplevel, ["add", os.path.join("develop", TASK_DIR_NAME)])
 
     if moved_sections > 0:
-        archive_path = os.path.join(toplevel, taskfiles.HISTORY_DIR, "progress.md")
-        archive.prepend_section(archive_path, archive.PROGRESS_ARCHIVE_HEADER, moved_text)
-        _run_git(toplevel, ["add", os.path.join(taskfiles.HISTORY_DIR, "progress.md")])
+        archive_path = os.path.join(toplevel, HISTORY_DIR, "progress.md")
+        prepend_to_history(archive_path, PROGRESS_ARCHIVE_HEADER, moved_text)
+        _run_git(toplevel, ["add", os.path.join(HISTORY_DIR, "progress.md")])
 
     if os.path.exists(progress_path):
         if leftover_text is not None:
