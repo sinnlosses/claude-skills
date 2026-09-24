@@ -7,8 +7,10 @@
 タスクの変換（10.1）は機械的な写しで、**登録時の本文の節の検査（`taskfile.validate_new_body`）
 は受けない**（移行したファイルの本文はそのまま。正典3.3「移行したファイルは本文の節の検査を
 受けない」）。`progress.md` の扱い（10.2）は「完了したこと」の小節を全部
-`docs/history/progress.md` へ移し、「未解決」「注意」だけを残す。両方0件なら
-`develop/progress.md` 自体を消す。
+`docs/history/progress.md` へ移し、「未解決」「注意」の2節と、それより前にある前置き文
+（`# 現在の状態` のような、どの節にも属さない文章）は**消さずに残す**（前置き文はデータを
+失う操作になるので移さない・捨てない。3つとも「人が振り分けたら消す」側に置く）。
+3つとも中身が無ければ `develop/progress.md` 自体を消す。
 """
 
 from __future__ import annotations
@@ -96,14 +98,37 @@ def _count_bullets(section_text: str) -> int:
     return sum(1 for line in lines[1:] if line.strip().startswith("- "))
 
 
-def progress_plan(text: str) -> tuple[int, str, str | None, int, int]:
-    """`(移す小節数, 移す本文, 残すprogress.mdの本文（Noneなら消す）, 未解決件数, 注意件数)`。
+# 前置き文の終わり＝この3つの見出しのうち、ファイル中で最初に現れるものの手前まで。
+_KNOWN_HEADING_PREFIXES = (taskfiles.DONE_SECTION, UNRESOLVED_HEADING, NOTE_HEADING)
+
+
+def _preamble(text: str) -> str:
+    """`text` のうち、既知の見出し（完了したこと・未解決・注意）のどれよりも前にある文章。
+
+    **移さない・捨てない**（データを失う操作にしないため）。`taskfiles.split_done_section` の
+    `head` を使わないのは、それが「完了したこと」の見出し行自体まで含んでしまうため
+    （見出しが無いときは全文を返す実装で、`## 未解決`/`## 注意` と重複しうる）。
+    """
+    lines = text.splitlines(keepends=True)
+    idx = next(
+        (i for i, line in enumerate(lines) if any(line.startswith(p) for p in _KNOWN_HEADING_PREFIXES)),
+        len(lines),
+    )
+    return "".join(lines[:idx])
+
+
+def progress_plan(text: str) -> tuple[int, str, str | None, int, int, bool]:
+    """`(移す小節数, 移す本文, 残すprogress.mdの本文（Noneなら消す）, 未解決件数, 注意件数, 前置き文の有無)`。
 
     「完了したこと」の小節は全部移す（keepは無い。archive.pyの部分アーカイブとは違い、
-    新しい順の検査もしない——全部移すので順は関係しない）。「未解決」「注意」は動かさず、
-    その2節だけを先頭の1行つきで残す。両方0件（箇条書きが無い）なら残す本文は無し
-    （呼び出し側が `develop/progress.md` 自体を消す）。
+    新しい順の検査もしない——全部移すので順は関係しない）。「未解決」「注意」の2節と
+    前置き文（`_preamble`）は動かさず、先頭の1行つきで残す。3つとも空（前置き文が
+    空白だけ、箇条書きが無い）なら残す本文は無し（呼び出し側が `develop/progress.md`
+    自体を消す）。
     """
+    preamble = _preamble(text)
+    has_preamble = preamble.strip() != ""
+
     _, sections, _ = taskfiles.split_done_section(text)
     sections = sections or []
     moved_text = "".join(s.text for s in sections)
@@ -113,12 +138,18 @@ def progress_plan(text: str) -> tuple[int, str, str | None, int, int]:
     unresolved_count = _count_bullets(unresolved_section)
     note_count = _count_bullets(note_section)
 
-    if unresolved_count == 0 and note_count == 0:
+    if unresolved_count == 0 and note_count == 0 and not has_preamble:
         leftover: str | None = None
     else:
-        leftover = LEFTOVER_NOTICE + "\n" + unresolved_section + note_section
+        parts = [LEFTOVER_NOTICE, "\n"]
+        if has_preamble:
+            parts.append(preamble.rstrip("\n"))
+            parts.append("\n\n")
+        parts.append(unresolved_section)
+        parts.append(note_section)
+        leftover = "".join(parts)
 
-    return len(sections), moved_text, leftover, unresolved_count, note_count
+    return len(sections), moved_text, leftover, unresolved_count, note_count, has_preamble
 
 
 # --- migrate（5.9） ----------------------------------------------------------
@@ -131,6 +162,7 @@ class MigrateResult:
     written: tuple[str, ...] = ()
     moved_sections: int = 0
     leftover_counts: tuple[int, int] | None = None  # (未解決, 注意)。Noneならprogress.md自体を消した/触っていない
+    preamble_kept: bool = False  # 前置き文（どの節にも属さない文章）を残したか
     progress_removed: bool = False
     task_count: int = 0
 
@@ -168,12 +200,14 @@ def migrate(toplevel: str, dry_run: bool) -> MigrateResult:
     moved_text = ""
     leftover_text: str | None = None
     unresolved = note = 0
+    has_preamble = False
     if os.path.exists(progress_path):
         with open(progress_path, encoding="utf-8") as f:
             progress_text = f.read()
-        moved_sections, moved_text, leftover_text, unresolved, note = progress_plan(progress_text)
+        moved_sections, moved_text, leftover_text, unresolved, note, has_preamble = progress_plan(progress_text)
 
     leftover_counts = (unresolved, note) if leftover_text is not None else None
+    preamble_kept = leftover_text is not None and has_preamble
     progress_removed = os.path.exists(progress_path) and leftover_text is None
 
     if dry_run:
@@ -182,6 +216,7 @@ def migrate(toplevel: str, dry_run: bool) -> MigrateResult:
             written=written,
             moved_sections=moved_sections,
             leftover_counts=leftover_counts,
+            preamble_kept=preamble_kept,
             progress_removed=progress_removed,
             task_count=len(converted),
         )
@@ -220,6 +255,7 @@ def migrate(toplevel: str, dry_run: bool) -> MigrateResult:
         written=written,
         moved_sections=moved_sections,
         leftover_counts=leftover_counts,
+        preamble_kept=preamble_kept,
         progress_removed=progress_removed,
         task_count=len(converted),
     )

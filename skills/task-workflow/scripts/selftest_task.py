@@ -311,12 +311,19 @@ LEGACY_TASKS = [
 ]
 
 LEGACY_PROGRESS = (
-    "# 現在の状態\n\n(架空の前置きの説明文。移行では残らない想定)\n\n"
+    "# 現在の状態\n\n(架空の前置きの説明文)\n\n"
     "## 完了したこと（このセッション）\n\n"
     "### 2026-01-02 架空のこと2\n\n本文2\n\n"
     "### 2026-01-01 架空のこと1\n\n本文1\n\n"
     "## 未解決\n\n- 架空の未解決事項\n\n"
     "## 注意\n\n- 架空の注意1\n- 架空の注意2\n"
+)
+
+LEGACY_PROGRESS_PREAMBLE_ONLY = (
+    "# 現在の状態\n\n(架空の前置き文だけが残るケース)\n\n"
+    "## 完了したこと（このセッション）\n\n"
+    "### 2026-01-01 架空のこと\n\n本文\n\n"
+    "## 未解決\n\n## 注意\n"
 )
 
 
@@ -445,6 +452,11 @@ def test_migrate_dry_run_then_real() -> None:
             any(l.startswith("LEFTOVER\t") and "未解決 1 / 注意 2" in l for l in lines),
             r.stdout,
         )
+        check(
+            "前置き文を残したLEFTOVER行も出る",
+            "LEFTOVER\tdevelop/progress.md\t前置き文を残した" in lines,
+            r.stdout,
+        )
         check("REMOVEにtasks.jsonが出る", "REMOVE\tdevelop/tasks.json" in lines, r.stdout)
         check("末尾はPLAN\\t3", lines[-1] == "PLAN\t3", r.stdout)
         check("dry-runはファイルを作らない", not os.path.isdir(os.path.join(repo, "develop", "task")))
@@ -479,10 +491,10 @@ def test_migrate_dry_run_then_real() -> None:
         progress_path = os.path.join(repo, "develop", "progress.md")
         with open(progress_path, encoding="utf-8") as f:
             leftover = f.read()
-        check("未解決だけ残る", "架空の未解決事項" in leftover, leftover)
-        check("注意だけ残る", "架空の注意1" in leftover and "架空の注意2" in leftover, leftover)
-        check("完了したこと節は残らない", "架空のこと1" not in leftover and "架空のこと2" not in leftover, leftover)
-        check("前置きの説明文は残らない", "架空の前置きの説明文" not in leftover, leftover)
+        check("未解決が残る", "架空の未解決事項" in leftover, leftover)
+        check("注意が残る", "架空の注意1" in leftover and "架空の注意2" in leftover, leftover)
+        check("完了したこと節の本文は残らない（履歴へ移した）", "架空のこと1" not in leftover and "架空のこと2" not in leftover, leftover)
+        check("前置き文は消さずに残る（データを失わない）", "架空の前置きの説明文" in leftover, leftover)
         check("移行の残りの注記が先頭に付く", leftover.startswith("移行の残り。"), leftover)
 
         history_progress_path = os.path.join(repo, "docs", "history", "progress.md")
@@ -508,6 +520,35 @@ def test_migrate_dry_run_then_real() -> None:
         check("migrate後はstatusが読める（NEW形式になる）", r.returncode == 0, r.stdout + r.stderr)
         ids_out = {l.split("\t")[0] for l in r.stdout.splitlines() if l.startswith("T-0")}
         check("3件とも一覧に出る", ids_out == {"T-001", "T-002", "T-003"}, r.stdout)
+
+
+def test_migrate_keeps_preamble_when_sections_empty() -> None:
+    print("task.py migrate: 未解決・注意が空でも前置き文があればprogress.mdを消さない")
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = _make_legacy_repo(tmp, tasks=LEGACY_TASKS, progress=LEGACY_PROGRESS_PREAMBLE_ONLY)
+
+        r = run_task(repo, "migrate")
+        check("実行は終了コード0", r.returncode == 0, r.stdout + r.stderr)
+        lines = r.stdout.splitlines()
+        check(
+            "LEFTOVERに未解決0・注意0と出る",
+            any(l.startswith("LEFTOVER\t") and "未解決 0 / 注意 0" in l for l in lines),
+            r.stdout,
+        )
+        check(
+            "前置き文を残したLEFTOVER行が出る",
+            "LEFTOVER\tdevelop/progress.md\t前置き文を残した" in lines,
+            r.stdout,
+        )
+        check("REMOVEにprogress.mdは出ない（消さない）", "REMOVE\tdevelop/progress.md" not in lines, r.stdout)
+
+        progress_path = os.path.join(repo, "develop", "progress.md")
+        check("progress.mdは消えない", os.path.exists(progress_path))
+        with open(progress_path, encoding="utf-8") as f:
+            leftover = f.read()
+        check("前置き文がそのまま残る", "架空の前置き文だけが残るケース" in leftover, leftover)
+        check("完了したことの本文は残らない（履歴へ移した）", "架空のこと" not in leftover, leftover)
+        check("移行の残りの注記が先頭に付く", leftover.startswith("移行の残り。"), leftover)
 
 
 def test_migrate_stops_on_doing() -> None:
@@ -858,6 +899,7 @@ def main() -> None:
         test_new_missing_and_legacy,
         test_legacy_convert_task,
         test_migrate_dry_run_then_real,
+        test_migrate_keeps_preamble_when_sections_empty,
         test_migrate_stops_on_doing,
         test_migrate_dirty_worktree_stops,
         test_migrate_nothing_when_no_tasks_json,

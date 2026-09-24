@@ -587,6 +587,8 @@ def cmd_migrate(toplevel: str, dry_run: bool) -> None:
     if result.leftover_counts is not None:
         unresolved, note = result.leftover_counts
         print(f"LEFTOVER\tdevelop/progress.md\t未解決 {unresolved} / 注意 {note}")
+        if result.preamble_kept:
+            print("LEFTOVER\tdevelop/progress.md\t前置き文を残した")
     elif result.progress_removed:
         print("REMOVE\tdevelop/progress.md")
     print("REMOVE\tdevelop/tasks.json")
