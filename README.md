@@ -8,13 +8,16 @@ claude.ai 同期用に予約していて、git 管理下に混ざるのを避け
 
 ## 由来
 
-全21スキル。`skills/` にあるものが全てで、この一覧がその索引。
+全22スキル。`skills/` にあるものが全てで、この一覧がその索引。
 
 - [mattpocock/skills](https://github.com/mattpocock/skills) を日本語化したもの（10件）:
   `code-review` `codebase-design` `diagnosing-bugs` `domain-modeling` `grilling`
   `grill-with-docs` `implement` `research` `resolving-merge-conflicts` `tdd`
 - [anthropics/skills](https://github.com/anthropics/skills) を日本語化したもの（3件。Apache-2.0。
   各スキルの `LICENSE.txt` を同梱）: `frontend-design` `webapp-testing` `skill-creator`
+- [openclaw/openclaw](https://github.com/openclaw/openclaw/tree/main/.agents/skills/test-audit) を
+  日本語化したもの（1件。MIT。`LICENSE.txt` を同梱。openclaw 固有のコマンドとスキル参照は
+  プロジェクトの `CLAUDE.md` と `code-review` への参照に置き換えた）: `test-audit`
 - 自作（8件）: `architecture-proposal`（様式とディレクトリ構造の提案書を書く）、
   `maintenance-docs`（`docs/` と CLAUDE.md がスキルの記載とズレていないか点検して直す）、
   `retrospect`（`/next-task` の中で1件ごとに振り返って兆候に当たったときだけ、手で呼んだときは
