@@ -81,6 +81,9 @@ description: "develop/task/ の未着手タスクを1件選び、task コマン�
      作業せず `dropped` にすべき理由を報告する」
    - 検証コマンドを通すこと。「`develop/task/T-xxx.md` 以外の `develop/` を触らない。コミットしない
      （`git add -A` もしない）。`task` コマンドは打たない」
+   - 「タスクファイルに `## 結果` の節を書かない（`task done` が書く）」
+   - 「背景で起こしたコマンド（テスト・サーバ・watch）は、報告の前に止める」（残ると同じ作業ツリーで
+     受け入れの検証コマンドが返らなくなる）
 
    `loopable: N` のタスク（ユーザーが直接呼んだとき）は委譲せずメインで行う。着手して初めて
    ユーザーの判断が要ると分かったら、front matter を `loopable: N` に直し、`task release T-xxx`
