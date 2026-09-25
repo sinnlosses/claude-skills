@@ -970,7 +970,13 @@ def test_prune() -> None:
         git(main_path, "commit", "-q", "-m", "記録")
         ledger.try_claim(ledger.ledger_root(cwd=main_path), "T-105", main_path, "main")
 
-        r = run_task(main_path, "prune", "--dry-run")
+        r = run_task(main_path, "prune")
+        check("既定のしきい値（10件）に届かなければ NOTHING", r.returncode == 0 and r.stdout.startswith("NOTHING\t"), r.stdout + r.stderr)
+        check("しきい値未満では消さない", os.path.exists(os.path.join(main_path, "develop", "task", "T-101.md")))
+        r = run_task(main_path, "prune", "--min", "3", "--dry-run")
+        check("--min 3 でも2件なら --dry-run も NOTHING", r.returncode == 0 and r.stdout.startswith("NOTHING\t"), r.stdout + r.stderr)
+
+        r = run_task(main_path, "prune", "--min", "2", "--dry-run")
         check("--dry-run は PLAN で2件", r.returncode == 0 and r.stdout.splitlines()[-1] == "PLAN\t2", r.stdout + r.stderr)
         check(
             "対象と理由",
@@ -980,13 +986,13 @@ def test_prune() -> None:
         check("--dry-run は消さない", os.path.exists(os.path.join(main_path, "develop", "task", "T-101.md")))
 
         write(os.path.join(main_path, "scratch.txt"), "x\n")
-        r = run_task(main_path, "prune")
+        r = run_task(main_path, "prune", "--min", "2")
         check("汚れていれば DIRTY(4)", r.returncode == 4 and r.stdout.strip() == "DIRTY", r.stdout + r.stderr)
-        r = run_task(main_path, "prune", "--dry-run")
+        r = run_task(main_path, "prune", "--min", "2", "--dry-run")
         check("--dry-run は汚れていても打てる", r.returncode == 0, r.stdout + r.stderr)
         os.remove(os.path.join(main_path, "scratch.txt"))
 
-        r = run_task(main_path, "prune")
+        r = run_task(main_path, "prune", "--min", "2")
         check("PRUNED で2件", r.returncode == 0 and r.stdout.splitlines()[-1] == "PRUNED\t2", r.stdout + r.stderr)
         staged = git(main_path, "diff", "--cached", "--name-status").stdout.split()
         check(
@@ -998,7 +1004,7 @@ def test_prune() -> None:
         status = run_task(main_path, "status").stdout
         check("消した依存は解決済みのまま", any(l.startswith("T-104\ttodo") and "\tREADY\t" in l for l in status.splitlines()), status)
         check("status --check が通る", run_task(main_path, "status", "--check").returncode == 0)
-        r = run_task(main_path, "prune")
+        r = run_task(main_path, "prune", "--min", "1")
         check("2回目は NOTHING", r.returncode == 0 and r.stdout.startswith("NOTHING"), r.stdout + r.stderr)
 
         write(record, "最後に振り返ったコミット: `0000000`\n")

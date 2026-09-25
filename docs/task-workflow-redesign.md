@@ -439,7 +439,7 @@ task migrate [--dry-run]
 ### 5.10 `task prune`
 
 ```
-task prune [--dry-run]
+task prune [--dry-run] [--min N]
 ```
 
 振り返りが済んだ `done`・`dropped` のタスクファイルを `git rm` して stage する（コミットしない）。
@@ -451,8 +451,9 @@ task prune [--dry-run]
   その1行が無ければこの条件は使わない。ハッシュがリポジトリに無ければ `INVALID`（3）
 
 印のあるタスクを除くのは、`ship` が `main` の版で `done` を見て印を消すため（同じ送りでファイルが
-消えると印が残る）。出力は対象ごとに `PRUNE\tT-xxx\t<reviewed|retrospect>`、最後に `PRUNED\t<件数>`
-（`--dry-run` なら `PLAN\t<件数>` で何も消さない）。対象が無ければ `NOTHING`。作業ツリーが汚れて
+消えると印が残る）。対象が `--min`（既定10）件に届かなければ何もしない（`NOTHING`）。毎サイクル
+1件ずつ消すと、削除だけのコミットがタスクと同じ数だけ積もるため。出力は対象ごとに `PRUNE\tT-xxx\t<reviewed|retrospect>`、最後に `PRUNED\t<件数>`
+（`--dry-run` なら `PLAN\t<件数>` で何も消さない）。対象が無いか `--min` 件に届かなければ `NOTHING`。作業ツリーが汚れて
 いれば `DIRTY`（4。`--dry-run` は汚れていても打てる）。
 
 呼ぶのは `/next-task` の1サイクルで、タスクの1コミットの直後（WORKFLOW.md「1サイクル」7a）。消した

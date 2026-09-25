@@ -604,15 +604,19 @@ def _leave_feature_branch(root: str, toplevel: str, branch: str) -> str:
 RETROSPECT_LINE = re.compile(r"^最後に振り返ったコミット:\s*`([0-9a-f]{7,40})`")
 # 1件ごとの振り返りが済んだ印。`## 結果` の中のこの形の行（WORKFLOW.md「結果の書き方と知見の置き場」）。
 REVIEWED_LINE = re.compile(r"^- 振り返り:")
+# 消せるものがこの件数に届くまでは消さない。毎サイクル1件ずつ消すと削除だけのコミットが
+# タスクと同じ数だけ積もるため、まとめて1コミットにする。
+PRUNE_MIN_DEFAULT = 10
 
 
-def cmd_prune(toplevel: str, dry_run: bool) -> None:
+def cmd_prune(toplevel: str, dry_run: bool, minimum: int) -> None:
     """振り返りが済んだ done/dropped のタスクファイルを `git rm` して stage する（コミットしない）。
 
     判定は `HEAD` の版で done/dropped・台帳に印が無い・次のどちらか:
     `reviewed` = `## 結果` に `- 振り返り:` の行がある（1件ごとの振り返り済み）、
     `retrospect` = `develop/retrospective.md` の基準点の版で既に done/dropped（まとめての振り返りが
     読み終えた）。印のあるタスクを除くのは、`ship` が `main` の版で done を見て印を消すため。
+    対象が `minimum` 件に届かなければ何もしない（`NOTHING`）。
     """
     if not dry_run and not ledger.is_clean(cwd=toplevel):
         print("DIRTY")
@@ -635,6 +639,9 @@ def cmd_prune(toplevel: str, dry_run: bool) -> None:
 
     if not targets:
         print("NOTHING\t(消せるタスクファイルが無い)")
+        return
+    if len(targets) < minimum:
+        print(f"NOTHING\t(消せるのは{len(targets)}件で、{minimum}件に届くまで溜める)")
         return
     for tid, reason in targets:
         print(f"PRUNE\t{tid}\t{reason}")
@@ -763,6 +770,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_prune = sub.add_parser("prune")
     p_prune.add_argument("--dry-run", dest="dry_run", action="store_true")
+    p_prune.add_argument("--min", dest="minimum", type=int, default=PRUNE_MIN_DEFAULT)
 
     p_migrate = sub.add_parser("migrate")
     p_migrate.add_argument("--dry-run", dest="dry_run", action="store_true")
@@ -804,7 +812,7 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "ship":
         cmd_ship(toplevel)
     elif args.command == "prune":
-        cmd_prune(toplevel, args.dry_run)
+        cmd_prune(toplevel, args.dry_run, max(args.minimum, 1))
     elif args.command == "migrate":
         cmd_migrate(toplevel, args.dry_run)
 

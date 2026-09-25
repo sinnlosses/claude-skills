@@ -29,7 +29,7 @@
 
 | 場所 | 役割 |
 | --- | --- |
-| `develop/task/T-xxx.md` | タスク1件1ファイル（正典。`done`・`dropped` も同じ場所に残し、**振り返りが済んだら `task prune` で消す**（移す先は無い。本文は git の履歴から読む）） |
+| `develop/task/T-xxx.md` | タスク1件1ファイル（正典。`done`・`dropped` も同じ場所に残し、**振り返りが済んだものが10件溜まったら `task prune` でまとめて消す**（移す先は無い。本文は git の履歴から読む）） |
 | `develop/direction.md` | まだタスクになっていない指示（2節。下の「指示メモ」）。**新形式の目印**も兼ねる |
 | `develop/retrospective.md` | 手で呼ぶ `/retrospect`（まとめての振り返り）がどこまで振り返ったかの記録。1件ごとの振り返りは書かない（印は `## 結果` の `- 振り返り:` の行） |
 | `docs/history/direction.md` | 指示の履歴（タスク化した指示を日付見出しの下に移す） |
@@ -210,7 +210,8 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 6. `task done T-xxx --result-file -`（`status` と `## 結果` を書いて stage。印はまだ消さない）
 7. 作業とタスクファイル（積んだなら `develop/direction.md` も）を**1コミット**（`T-xxx: <件名>`。
    触ったファイルを個別に `git add`）
-7a. `task prune`（振り返り済みの `done`・`dropped` を `git rm` して stage）。`PRUNED` なら**別の1コミット**
+7a. `task prune`（振り返り済みの `done`・`dropped` が10件以上溜まっていれば `git rm` して stage。
+   届かなければ `NOTHING` で何もしない）。`PRUNED` なら**別の1コミット**
    （件名 `振り返り済みのタスクファイルを消す（N件）`。タスクIDを置かない——`scan.py` が件名のIDで
    割り付けるので、置くとそのタスクの材料に削除が混ざる）。いま完了にしたタスクは印があるので次の回で消える
 8. `task ship`（`main` へ送り、印を消す。7a のコミットも一緒に送る）
@@ -309,7 +310,7 @@ zsh で単語に分かれず空振りし、`;` で続けた後続のコマンド
 | `release T-xxx [--force]` | 印を消すだけ（ファイルは戻さない）。`--force` は人が取り残しを片付けるとき | `RELEASED`・`NOT_CLAIMED`・`NOT_OWNER` |
 | `done T-xxx [--dropped] --result-file <path\|->` | `status` と `## 結果` を書いて stage（コミットしない・印は残す） | `DONE`・`NOT_OWNER` |
 | `ship` | rebase → （付け替えたら）検証 → ff-only で送る → 印を消す → 作業ブランチから降りる | `SHIPPED`・`NOTHING`・`MAIN_DIRTY`・`CONFLICT`・`VERIFY_FAILED`・`RACE` |
-| `prune [--dry-run]` | `HEAD` で `done`・`dropped`・印なし、かつ振り返り済み（`## 結果` に `- 振り返り:` の行がある＝`reviewed`／`develop/retrospective.md` の基準点の版で既に `done`・`dropped`＝`retrospect`）のタスクファイルを `git rm` して stage（コミットしない）。`--dry-run` は一覧だけ（汚れていても打てる） | 対象ごとに `PRUNE\tT-xxx\t<reviewed\|retrospect>`、最後に `PRUNED\t<N>`／`PLAN\t<N>`（`--dry-run`）。対象が無ければ `NOTHING`。`DIRTY`・`INVALID`（基準点のハッシュが無い） |
+| `prune [--dry-run] [--min N]` | `HEAD` で `done`・`dropped`・印なし、かつ振り返り済み（`## 結果` に `- 振り返り:` の行がある＝`reviewed`／`develop/retrospective.md` の基準点の版で既に `done`・`dropped`＝`retrospect`）のタスクファイルを `git rm` して stage（コミットしない）。対象が `--min`（既定10）件に届かなければ何もしない。`--dry-run` は一覧だけ（汚れていても打てる） | 対象ごとに `PRUNE\tT-xxx\t<reviewed\|retrospect>`、最後に `PRUNED\t<N>`／`PLAN\t<N>`（`--dry-run`）。対象が無いか `--min` 件に届かなければ `NOTHING`。`DIRTY`・`INVALID`（基準点のハッシュが無い） |
 | `migrate [--dry-run]` | 旧形式を変換する（下の「旧形式からの移行」） | `WRITE`・`MOVE`・`LEFTOVER`・`REMOVE`・`PLAN`/`MIGRATED` |
 
 | 終了コード | 先頭語 | 意味 | スキルがすること |
