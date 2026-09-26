@@ -8,11 +8,12 @@ claude.ai 同期用に予約していて、git 管理下に混ざるのを避け
 
 ## 由来
 
-全23スキル。`skills/` にあるものが全てで、この一覧がその索引。
+全24スキル。`skills/` にあるものが全てで、この一覧がその索引。
 
-- [mattpocock/skills](https://github.com/mattpocock/skills) を日本語化したもの（10件）:
+- [mattpocock/skills](https://github.com/mattpocock/skills) を日本語化したもの（11件）:
   `code-review` `codebase-design` `diagnosing-bugs` `domain-modeling` `grilling`
-  `grill-with-docs` `implement` `research` `resolving-merge-conflicts` `tdd`
+  `grill-with-docs` `implement` `improve-codebase-architecture` `research`
+  `resolving-merge-conflicts` `tdd`
 - [anthropics/skills](https://github.com/anthropics/skills) を日本語化したもの（3件。Apache-2.0。
   各スキルの `LICENSE.txt` を同梱）: `frontend-design` `webapp-testing` `skill-creator`
 - [openclaw/openclaw](https://github.com/openclaw/openclaw/tree/main/.agents/skills/test-audit) を
