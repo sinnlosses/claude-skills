@@ -9,7 +9,7 @@
 
 | 節 | 中身 |
 | --- | --- |
-| ## ファイル配置と CLAUDE.md | 置き場（`develop/task/`・`develop/direction.md`・`docs/history/`・台帳）と、CLAUDE.md の3行と `- ブランチ:` の語彙、主ブランチの決め方 |
+| ## ファイル配置と設定ファイル（AGENTS.md → CLAUDE.md の順） | 置き場（`develop/task/`・`develop/direction.md`・`docs/history/`・台帳）と、設定ファイルの探し方・3行と `- ブランチ:` の語彙、主ブランチの決め方 |
 | ## タスクファイル | front matter の文法、本文の節、読み取りの見本（両方の読み手のテストに写す表） |
 | ## status と着手の印 | 遷移、依存の解決、取り残しの判定 |
 | ## summary（一行要約） | 一行に収める理由 |
@@ -23,7 +23,7 @@
 | ## `task` コマンドの参照 | サブコマンドと出力、終了コードの表 |
 | ## 旧形式からの移行 | `LEGACY` が出たときの案内 |
 
-## ファイル配置と CLAUDE.md
+## ファイル配置と設定ファイル（AGENTS.md → CLAUDE.md の順）
 
 置き場は**規約で固定**する（設定で変えられない）。
 
@@ -36,7 +36,14 @@
 | `docs/history/tasks.md`・`docs/history/progress.md` | 旧形式の時代の履歴。**読むだけで書き足さない** |
 | 台帳 `$(git rev-parse --path-format=absolute --git-common-dir)/task-workflow/` | 着手の印（`claim/T-xxx/owner`）・採番の錠（`lock/`）・最後の番号（`last-id`）。コミットしない。全作業ツリーで1つ |
 
-**プロジェクトごとに変わる値は3行だけで、置き場は `CLAUDE.md` の「## タスク運用」節**:
+**プロジェクトごとに変わる値は3行だけで、置き場は「## タスク運用」節を持つ設定ファイル**。
+設定ファイルは `AGENTS.md` → `CLAUDE.md` の順で探し、**節を持つ最初のファイルを設定とする**
+（`layout.find_config_file` に1箇所化。`task.py` の `read_branch_setting`・`ship.py` の
+`read_verify_command`・`init.py` の `check_claude_md`・`maintenance-docs` の `check_docs.py` の
+検査5がすべてここを読む）。**両方のファイルに節があれば `INVALID`（終了コード3）**——どちらに
+従うか機械が決められないため、黙って片方を選ばない。どちらにも節が無ければ、これまでと同じ既定
+（`- ブランチ:` は `既定`、検証コマンドは打たない）に落ちる。以下、見つかった設定ファイルの
+中身は次の形（ファイル名がどちらでも同じ）:
 
 ```markdown
 ## タスク運用
@@ -65,7 +72,8 @@ merge commit を作る運用は選べない。push はどのプロジェクト�
 **主ブランチの名前は `main` に固定しない**（`master`・`trunk` のリポジトリでも動く）。`task` は
 この順で決める（`ledger.base_branch`。1回の実行で1度だけ問い合わせて覚える）:
 
-1. CLAUDE.md「## タスク運用」の `- 主ブランチ:` 行（値は `` `master` `` のように囲む）——**任意行**で、
+1. 設定ファイル（`AGENTS.md` → `CLAUDE.md` の順）「## タスク運用」の `- 主ブランチ:` 行
+   （値は `` `master` `` のように囲む）——**任意行**で、
    保護ブランチや複数リモートの逃げ道。**3行と違って無いのが既定で、無くても `MISSING_LINE` に
    しない。** 囲まなければ最初の語を採り、括弧・句読点の前で切る
 2. `git symbolic-ref --short refs/remotes/origin/HEAD` の枝名。**見るのは `origin` だけ**

@@ -11,11 +11,11 @@
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 from dataclasses import dataclass, field
 
+import layout
 import ledger
 
 MAX_TRIES = 3
@@ -33,15 +33,17 @@ class ShipOutcome:
 
 
 def read_verify_command(toplevel: str) -> str | None:
-    """CLAUDE.md の `- 検証コマンド:` 行の最初の `` `…` `` を読む（6.3）。
+    """設定ファイル（`layout.find_config_file`。`AGENTS.md` → `CLAUDE.md` の順）の
+    `- 検証コマンド:` 行の最初の `` `…` `` を読む（6.3）。
 
-    行が無い、または値が `なし` で始まるなら `None`（打たない。`verify=none`）。
+    行が無い、または値が `なし` で始まるなら `None`（打たない。`verify=none`）。両方の
+    ファイルに節があれば `layout.ConfigConflict`（呼ぶ側の `task.py` の `main` が
+    `INVALID`・終了コード3にする）。
     """
-    path = os.path.join(toplevel, "CLAUDE.md")
-    if not os.path.exists(path):
+    found = layout.find_config_file(toplevel)
+    if found is None:
         return None
-    with open(path, encoding="utf-8") as f:
-        text = f.read()
+    _path, text = found
     m = re.search(r"^- 検証コマンド:\s*(.*)$", text, flags=re.MULTILINE)
     if m is None:
         return None

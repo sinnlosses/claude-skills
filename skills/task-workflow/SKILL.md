@@ -16,7 +16,7 @@ user-invocable: false
 
 ルール本文は [WORKFLOW.md](WORKFLOW.md)。冒頭の目次で節を1つ選んで読む（通読しない）。
 プロジェクト固有の値（検証コマンド・整形コマンド・ブランチ）は、そのプロジェクトの CLAUDE.md の
-「## タスク運用」節（WORKFLOW.md「ファイル配置と CLAUDE.md」）。
+「## タスク運用」節（WORKFLOW.md「ファイル配置と設定ファイル（AGENTS.md → CLAUDE.md の順）」）。
 
 手順は `scripts/task.py` が持つ。**モデルが手で代用しない**（台帳・採番・送り出しを手で行うと、
 取り合いの錠と自己テストで守った手順を素通りする）:

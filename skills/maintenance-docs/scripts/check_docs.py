@@ -23,8 +23,17 @@ import os
 import re
 import sys
 
-# CLAUDE.md の「## タスク運用」節で行頭が固定されている行（task-workflow の WORKFLOW.md
-# 「ファイル配置と CLAUDE.md」が正典）。
+_TASK_WORKFLOW_SCRIPTS = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "task-workflow", "scripts")
+)
+if _TASK_WORKFLOW_SCRIPTS not in sys.path:
+    sys.path.insert(0, _TASK_WORKFLOW_SCRIPTS)
+
+import layout  # noqa: E402
+
+# 設定ファイル（`AGENTS.md`／`CLAUDE.md`）の「## タスク運用」節で行頭が固定されている行
+# （task-workflow の WORKFLOW.md「ファイル配置と設定ファイル（AGENTS.md → CLAUDE.md の順）」
+# が正典。ファイルの探索そのものは `layout.find_config_file` に寄せる）。
 TASK_SECTION_KEYS = ("検証コマンド", "整形コマンド", "ブランチ")
 # 行頭がズレているのか、行そのものが無いのかを見分けるための短い手がかり。
 TASK_SECTION_STEMS = {"検証コマンド": "検証", "整形コマンド": "整形", "ブランチ": "ブランチ"}
@@ -302,10 +311,22 @@ def main() -> int:
             note(4, f"{rel} -> {link} が実在しない")
 
     # 検査5: 「## タスク運用」節の形と develop/ の揃い。
-    sec = task_section(claude_body)
+    #
+    # 節を持つファイルの探索は `layout.find_config_file`（`AGENTS.md` → `CLAUDE.md` の順。
+    # task-workflow の WORKFLOW.md「ファイル配置と設定ファイル」）に寄せる。CLAUDE.md を
+    # **ドキュメントとして**見る他の検査（4・8・10 の `claude_body`）はそのまま CLAUDE.md 限定。
+    try:
+        config_found = layout.find_config_file(root)
+        config_conflict = None
+    except layout.ConfigConflict as e:
+        config_found = None
+        config_conflict = str(e)
+    sec = task_section(config_found[1]) if config_found else []
     develop_present = [f for f in DEVELOP_FILES if os.path.exists(os.path.join(root, "develop", f))]
-    if not sec and develop_present:
-        note(5, f"develop/ はあるが CLAUDE.md に「## タスク運用」節が無い（{len(develop_present)}/3ファイル）")
+    if config_conflict is not None:
+        note(5, f"AGENTS.md と CLAUDE.md の両方に「## タスク運用」節がある（{config_conflict}）")
+    elif not sec and develop_present:
+        note(5, f"develop/ はあるが AGENTS.md/CLAUDE.md に「## タスク運用」節が無い（{len(develop_present)}/3ファイル）")
     if sec:
         for key in TASK_SECTION_KEYS:
             hit = [l for l in sec if l.startswith(f"- {key}:")]

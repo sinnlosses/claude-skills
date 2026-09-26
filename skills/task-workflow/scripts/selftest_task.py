@@ -62,14 +62,19 @@ def start_task(cwd: str, *args: str) -> subprocess.Popen:
 
 
 def make_repo(
-    tmp: str, branch: str = "既定", verify: str | None = None, base: str = "main"
+    tmp: str,
+    branch: str = "既定",
+    verify: str | None = None,
+    base: str = "main",
+    config_filename: str = "CLAUDE.md",
 ) -> tuple[str, str, str]:
     """`(本体, 作業ツリー1, 作業ツリー2)`。本体だけが主ブランチを出す。
 
-    `branch`/`verify` は CLAUDE.md「## タスク運用」の `- ブランチ:`／`- 検証コマンド:` の値
+    `branch`/`verify` は設定ファイル「## タスク運用」の `- ブランチ:`／`- 検証コマンド:` の値
     （6.1・6.3）。`verify` を省略すると行自体を書かない（`ship.read_verify_command` は
     `None` を返す＝打たない）。`base` は主ブランチの名前——リモートを持たない足場なので
     `ledger.base_branch` の順3（`main`・`master`・`trunk` のうち実在するもの）で決まる。
+    `config_filename` は設定ファイルの置き場（既定 `CLAUDE.md`。T-020: `AGENTS.md` も同じ形で読める）。
     """
     main_path = os.path.join(tmp, "base")
     os.makedirs(main_path)
@@ -81,11 +86,11 @@ def make_repo(
         "# 未対応の指示メモ\n\n## ユーザーから\n\n## エージェントのドラフト\n",
     )
     write(os.path.join(main_path, "docs", "history", "tasks.md"), "# 完了タスクのアーカイブ\n")
-    claude_md = "# x\n\n## タスク運用\n\n"
+    config_md = "# x\n\n## タスク運用\n\n"
     if verify is not None:
-        claude_md += f"- 検証コマンド: {verify}\n"
-    claude_md += f"- ブランチ: {branch}\n"
-    write(os.path.join(main_path, "CLAUDE.md"), claude_md)
+        config_md += f"- 検証コマンド: {verify}\n"
+    config_md += f"- ブランチ: {branch}\n"
+    write(os.path.join(main_path, config_filename), config_md)
     write(os.path.join(main_path, "shared.txt"), "line1\n")
     git(main_path, "add", "-A")
     git(main_path, "commit", "-q", "-m", "init")
@@ -1068,6 +1073,39 @@ def test_base_branch_resolution() -> None:
     ledger.clear_base_branch_cache()
 
 
+def test_config_file_agents_md_and_conflict() -> None:
+    print("設定ファイルの探索（T-020: AGENTS.md → CLAUDE.md の順、両方あれば INVALID）")
+    with tempfile.TemporaryDirectory() as tmp:
+        # AGENTS.md だけのリポジトリ: claim・ship まで CLAUDE.md と同じ形で通る。
+        main_path, wt1, _wt2 = make_repo(tmp, config_filename="AGENTS.md", verify="`echo verified`")
+        commit_task(main_path, taskfile.Task("T-100", "AGENTS.md だけ", "todo", "sonnet", "Y", (), BODY))
+        r = run_task(wt1, "claim", "T-100")
+        check("AGENTS.md だけでも claim できる", r.returncode == 0 and r.stdout.startswith("CLAIMED"), r.stdout + r.stderr)
+        result_path = write(os.path.join(tmp, "result.md"), "- 検証: x\n")
+        r = run_task(wt1, "done", "T-100", "--result-file", result_path)
+        check("done できる", r.returncode == 0, r.stdout + r.stderr)
+        git(wt1, "add", "-A")
+        git(wt1, "commit", "-q", "-m", "T-100: AGENTS.md だけ")
+        r = run_task(wt1, "ship")
+        check(
+            "ship も AGENTS.md の検証コマンドを読む（verify=none にならない）",
+            r.returncode == 0 and r.stdout.startswith("SHIPPED") and "verify=none" not in r.stdout,
+            r.stdout + r.stderr,
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # 両方に「## タスク運用」節があるリポジトリ: どちらが正か機械が決められないので INVALID。
+        # `- 主ブランチ:` は無くても main が実在するので順3で決まる（順1・順2が動く前に検査が要る）。
+        main_path, _wt1, _wt2 = make_repo(tmp, config_filename="AGENTS.md")
+        write(os.path.join(main_path, "CLAUDE.md"), "# y\n\n## タスク運用\n\n- ブランチ: 既定\n")
+        r = run_task(main_path, "status")
+        check(
+            "AGENTS.md と CLAUDE.md の両方に節があれば INVALID（終了コード3）",
+            r.returncode == 3 and r.stdout.startswith("INVALID\t") and "AGENTS.md" in r.stdout and "CLAUDE.md" in r.stdout,
+            r.stdout + r.stderr,
+        )
+
+
 def test_full_cycle_on_master_repo() -> None:
     print("task.py: 主ブランチが master のリポジトリで一式（status→new→claim→done→ship→prune）")
     with tempfile.TemporaryDirectory() as tmp:
@@ -1171,6 +1209,7 @@ def main() -> None:
         test_branch_setting_reads_leading_word,
         test_prune,
         test_base_branch_resolution,
+        test_config_file_agents_md_and_conflict,
         test_full_cycle_on_master_repo,
     ):
         t()

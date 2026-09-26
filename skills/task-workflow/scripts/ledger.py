@@ -16,6 +16,8 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+import layout
+
 CLAIM_DIR_NAME = "claim"
 LOCK_DIR_NAME = "lock"
 LAST_ID_FILE_NAME = "last-id"
@@ -60,25 +62,29 @@ def is_clean(cwd: str | None = None) -> bool:
 # --- 主ブランチ（`main`・`master`・`trunk` …） -----------------------------
 
 BASE_BRANCH_CANDIDATES = ("main", "master", "trunk")
-# CLAUDE.md「## タスク運用」の**任意**行。3行（検証コマンド・整形コマンド・ブランチ）とは違い、
-# 無いのが既定で、無くても `MISSING_LINE` にしない（保護ブランチや複数リモートの逃げ道）。
+# 設定ファイル（`AGENTS.md`／`CLAUDE.md`）「## タスク運用」の**任意**行。3行（検証コマンド・
+# 整形コマンド・ブランチ）とは違い、無いのが既定で、無くても `MISSING_LINE` にしない
+# （保護ブランチや複数リモートの逃げ道）。
 BASE_BRANCH_LINE = re.compile(r"^- 主ブランチ:[ \t]*(.*)$", re.MULTILINE)
 
 _base_branch_cache: dict[str, str] = {}
 
 
 def _configured_base_branch(toplevel: str) -> str | None:
-    """CLAUDE.md の `- 主ブランチ:` 行の枝名。
+    """設定ファイル（`layout.find_config_file`。`AGENTS.md` → `CLAUDE.md` の順）の
+    `- 主ブランチ:` 行の枝名。
 
     値は `` `master` `` のようにバッククォートで囲むのが推奨（囲んであればその中だけを読む）。
     囲んでいなければ最初の語を採り、`master（保護ブランチ）` のように説明が続いていても
     括弧・句読点の前で切る（`- ブランチ:` と同じく、後ろは人向けの説明として許す）。
+    両方のファイルに「## タスク運用」節があれば `layout.ConfigConflict`（呼ぶ側が `INVALID`・
+    終了コード3にする）。
     """
-    path = os.path.join(toplevel, "CLAUDE.md")
-    if not os.path.exists(path):
+    found = layout.find_config_file(toplevel)
+    if found is None:
         return None
-    with open(path, encoding="utf-8") as f:
-        m = BASE_BRANCH_LINE.search(f.read())
+    _path, text = found
+    m = BASE_BRANCH_LINE.search(text)
     if m is None:
         return None
     value = m.group(1).strip()
@@ -93,7 +99,7 @@ def base_branch(cwd: str | None = None) -> str:
 
     決め方の順:
 
-    1. CLAUDE.md の `- 主ブランチ:` 行（任意）
+    1. 設定ファイル（`AGENTS.md` → `CLAUDE.md` の順）の `- 主ブランチ:` 行（任意）
     2. `git symbolic-ref --short refs/remotes/origin/HEAD` の枝名。**`origin` だけを見る**
        （別名のリモートしか無いリポジトリは順3へ落ちる。唯一のリモートを `origin` 扱いすると、
        fork 元を指す `upstream` を主ブランチの出どころにしてしまう。逃げ道は順1の行）

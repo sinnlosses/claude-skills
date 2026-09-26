@@ -22,6 +22,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
+import layout  # noqa: E402
 import legacy  # noqa: E402
 
 failures: list[str] = []
@@ -110,7 +111,31 @@ def test_progress_sections() -> None:
         )
 
 
-# --- init.py ----------------------------------------------------------------
+# --- layout.find_config_file（T-020: AGENTS.md → CLAUDE.md の順） ----------
+
+
+def test_find_config_file() -> None:
+    print("layout.find_config_file")
+    section = "## タスク運用\n\n- 検証コマンド: `なし`\n- 整形コマンド: `なし`\n- ブランチ: 既定\n"
+
+    with tempfile.TemporaryDirectory() as d:
+        check("どちらも無ければ None", layout.find_config_file(d) is None)
+
+        write(os.path.join(d, "AGENTS.md"), f"# x\n\n{section}")
+        found = layout.find_config_file(d)
+        check(
+            "AGENTS.md だけなら AGENTS.md を設定とする",
+            found is not None and os.path.basename(found[0]) == "AGENTS.md" and "検証コマンド" in found[1],
+            str(found),
+        )
+
+        write(os.path.join(d, "CLAUDE.md"), f"# y\n\n{section}")
+        raised = False
+        try:
+            layout.find_config_file(d)
+        except layout.ConfigConflict:
+            raised = True
+        check("両方に節があれば ConfigConflict", raised)
 
 
 def test_init() -> None:
@@ -185,7 +210,7 @@ def test_init() -> None:
 
 
 def main() -> None:
-    for t in (test_load_tasks, test_progress_sections, test_init):
+    for t in (test_load_tasks, test_progress_sections, test_find_config_file, test_init):
         t()
     print()
     if failures:

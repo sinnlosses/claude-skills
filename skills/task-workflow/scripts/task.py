@@ -183,17 +183,18 @@ BRANCH_WORDS = ("既定", "作業ブランチを切る", "切らない")
 
 
 def read_branch_setting(toplevel: str) -> str:
-    """CLAUDE.md の `- ブランチ:` 行の先頭語だけを読む（6.1）。無ければ `既定`。
+    """設定ファイル（`layout.find_config_file`。`AGENTS.md` → `CLAUDE.md` の順）の
+    `- ブランチ:` 行の先頭語だけを読む（6.1）。無ければ `既定`。
 
     後ろは人向けの説明で自由なので、`切らない。主ブランチに積む` のように句読点で続いても
     先頭語で決める。語彙のどれでも始まらなければ、その値の最初の語をそのまま返す
-    （呼ぶ側が `INVALID` にする）。
+    （呼ぶ側が `INVALID` にする）。両方のファイルに節があれば `layout.ConfigConflict`
+    （呼ぶ側の `main` が `INVALID`・終了コード3にする）。
     """
-    path = os.path.join(toplevel, "CLAUDE.md")
-    if not os.path.exists(path):
+    found = layout.find_config_file(toplevel)
+    if found is None:
         return "既定"
-    with open(path, encoding="utf-8") as f:
-        text = f.read()
+    _path, text = found
     m = re.search(r"^- ブランチ:[ \t]*(.*)$", text, flags=re.MULTILINE)
     if m is None:
         return "既定"
@@ -821,7 +822,7 @@ def main(argv: list[str] | None = None) -> None:
             cmd_prune(toplevel, args.dry_run, max(args.minimum, 1))
         elif args.command == "migrate":
             cmd_migrate(toplevel, args.dry_run)
-    except ledger.NoBaseBranch as e:
+    except (ledger.NoBaseBranch, layout.ConfigConflict) as e:
         print(f"INVALID\t{e}")
         raise SystemExit(3)
 

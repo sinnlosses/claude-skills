@@ -176,7 +176,8 @@ def check_python_syntax(names: list[str]) -> None:
 
 # T-018: develop/task 等の置き場・IDの形は skills/task-workflow/scripts/layout.py に
 # 1箇所だけ書き、読む側は直書きしない（正典は task-workflow の WORKFLOW.md「ファイル配置と
-# CLAUDE.md」）。ここでは layout.py 自身は対象から外し、読む側の7ファイルだけを見る。
+# 設定ファイル（AGENTS.md → CLAUDE.md の順）」）。ここでは layout.py 自身は対象から外し、
+# 読む側の7ファイルだけを見る。
 _TASK_WORKFLOW_SCRIPTS = os.path.join(SKILLS, "task-workflow", "scripts")
 _RETROSPECT_SCRIPTS = os.path.join(SKILLS, "retrospect", "scripts")
 LAYOUT_PATH = os.path.join(_TASK_WORKFLOW_SCRIPTS, "layout.py")

@@ -48,7 +48,7 @@ Claude Code のユーザー単位スキル（`~/.claude/skills/`）のソース�
 タスク系スキルを使うプロジェクトは、`develop/direction.md` を置き（タスクは `develop/task/` に
 1件1ファイルで `task new` が作る）、検証コマンド・整形コマンド・ブランチの3行を CLAUDE.md の
 「## タスク運用」節に書く。**用意するのは `/setup-tasks`**（既にあるファイルは上書きしない）。
-置き場と節の形は `skills/task-workflow/WORKFLOW.md`「ファイル配置と CLAUDE.md」。旧形式
+置き場と節の形は `skills/task-workflow/WORKFLOW.md`「ファイル配置と設定ファイル（AGENTS.md → CLAUDE.md の順）」。旧形式
 （`develop/tasks.json`）のプロジェクトでは、タスク系のスキルが `LEGACY` で止まって
 `task migrate` を案内する（同「旧形式からの移行」）。
 
