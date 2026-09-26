@@ -1,5 +1,16 @@
 # 指示メモの履歴
 
+## 2026-09-27
+
+### ユーザーから
+
+- https://github.com/mattpocock/skills/tree/main/skills/engineering/improve-codebase-architecture を導入してください。
+
+対応表:
+
+- 「improve-codebase-architecture を導入」→ T-023（日本語化して足す）と T-024（既存の
+  アーキテクチャ系スキルとの分担を書く）
+
 ## 2026-09-26
 
 ### エージェントのドラフト（承認あり）
