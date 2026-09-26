@@ -68,7 +68,7 @@ description: "develop/task/ の未着手タスクを1件選び、task コマン�
    | `CLAIMED` | 次へ。`branch=` が作業する枝 |
    | `TAKEN`・`NOT_READY` | 先を越された・状態が変わった。手順1から別の1件を選び直す（3回続いたら止まる） |
    | `DIRTY` | 作業ツリーに未コミットの変更がある。`git status --short` を添えて終了する（捨てない） |
-   | `UNSHIPPED` | `main` に入っていない自分のコミットがある（前のサイクルが送れていない）。`git log --oneline main..HEAD` を添えて終了する |
+   | `UNSHIPPED` | 主ブランチに入っていない自分のコミットがある（前のサイクルが送れていない）。`git log --oneline <主ブランチ>..HEAD`（枝名は `main` 固定ではない。正典「ファイル配置と CLAUDE.md」）を添えて終了する |
    | `INVALID` | 理由をそのまま報告して終了する |
 
 5. **委譲する**: Agent ツールで `difficulty` と同じモデルのサブエージェントへ（メインのモデルは

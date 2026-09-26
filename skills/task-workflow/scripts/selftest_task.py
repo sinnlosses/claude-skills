@@ -15,8 +15,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import threading
-import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -63,16 +61,19 @@ def start_task(cwd: str, *args: str) -> subprocess.Popen:
     )
 
 
-def make_repo(tmp: str, branch: str = "既定", verify: str | None = None) -> tuple[str, str, str]:
-    """`(本体, 作業ツリー1, 作業ツリー2)`。本体だけが `main` を出す。
+def make_repo(
+    tmp: str, branch: str = "既定", verify: str | None = None, base: str = "main"
+) -> tuple[str, str, str]:
+    """`(本体, 作業ツリー1, 作業ツリー2)`。本体だけが主ブランチを出す。
 
     `branch`/`verify` は CLAUDE.md「## タスク運用」の `- ブランチ:`／`- 検証コマンド:` の値
     （6.1・6.3）。`verify` を省略すると行自体を書かない（`ship.read_verify_command` は
-    `None` を返す＝打たない）。
+    `None` を返す＝打たない）。`base` は主ブランチの名前——リモートを持たない足場なので
+    `ledger.base_branch` の順3（`main`・`master`・`trunk` のうち実在するもの）で決まる。
     """
-    main_path = os.path.join(tmp, "main")
+    main_path = os.path.join(tmp, "base")
     os.makedirs(main_path)
-    git(main_path, "init", "-q", "-b", "main")
+    git(main_path, "init", "-q", "-b", base)
     git(main_path, "config", "user.email", "test@example.com")
     git(main_path, "config", "user.name", "test")
     write(
@@ -91,8 +92,8 @@ def make_repo(tmp: str, branch: str = "既定", verify: str | None = None) -> tu
 
     wt1 = os.path.join(tmp, "wt1")
     wt2 = os.path.join(tmp, "wt2")
-    git(main_path, "worktree", "add", "-q", "-b", "wt1-branch", wt1, "main")
-    git(main_path, "worktree", "add", "-q", "-b", "wt2-branch", wt2, "main")
+    git(main_path, "worktree", "add", "-q", "-b", "wt1-branch", wt1, base)
+    git(main_path, "worktree", "add", "-q", "-b", "wt2-branch", wt2, base)
     return main_path, wt1, wt2
 
 
@@ -741,8 +742,8 @@ def _claim_work_and_done(wt: str, task_id: str, note: str = "") -> None:
     git(wt, "commit", "-q", "-m", f"{task_id}: 完了")
 
 
-def _no_merge_commits(repo: str) -> str:
-    return git(repo, "log", "--oneline", "--merges", "main").stdout
+def _no_merge_commits(repo: str, base: str = "main") -> str:
+    return git(repo, "log", "--oneline", "--merges", base).stdout
 
 
 def test_ship_fast_forward() -> None:
@@ -867,35 +868,38 @@ def test_ship_skips_send_on_main_worktree() -> None:
 def test_ship_race_gives_up_after_three_tries() -> None:
     print("task.py ship: 相手に先を越され続けるとRACEで終わる")
     with tempfile.TemporaryDirectory() as tmp:
-        main_path, wt1, _wt2 = make_repo(tmp, branch="切らない", verify="`sleep 0.4`")
+        # 相手役は**検証コマンドそのもの**にする。rebase の直後・送る直前に必ず本体が1コミット
+        # 進むので `--ff-only` は毎回落ちる。（別スレッドから一定間隔で commit する形は、
+        # 機械の混み具合で窓を外すと送れてしまい、落ち方が日によって変わった。）
+        racer = os.path.join(tmp, "racer.sh")
+        main_path, wt1, _wt2 = make_repo(tmp, branch="切らない", verify=f"`sh {racer}`")
+        write(
+            racer,
+            "set -e\n"
+            f'count="{os.path.join(tmp, "race-count")}"\n'
+            'i=$(cat "$count" 2>/dev/null || echo 0)\n'
+            "i=$((i + 1))\n"
+            'echo "$i" > "$count"\n'
+            f'cd "{main_path}"\n'
+            'printf x > "race-$i.txt"\n'
+            'git add "race-$i.txt"\n'
+            'git commit -q -m "race $i"\n',
+        )
         commit_task(main_path, taskfile.Task("T-100", "競争", "todo", "sonnet", "Y", (), BODY))
 
         run_task(wt1, "claim", "T-100")
         _claim_work_and_done(wt1, "T-100")
+        # 1回めから rebase が起きるように、送る前に本体を1つ進めておく（検証は付け替えた回だけ走る）。
+        write(os.path.join(main_path, "head-start.txt"), "x")
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "本体が先に1つ進む")
 
-        stop = threading.Event()
-
-        def racer() -> None:
-            i = 0
-            while not stop.is_set():
-                i += 1
-                try:
-                    write(os.path.join(main_path, f"race-{i}.txt"), "x")
-                    git(main_path, "add", "-A")
-                    git(main_path, "commit", "-q", "-m", f"race {i}")
-                except RuntimeError:
-                    pass  # 本体のref/index取り合いは無視して次の周へ（テストの脇役）
-                time.sleep(0.1)
-
-        racer_thread = threading.Thread(target=racer, daemon=True)
-        racer_thread.start()
-        try:
-            r = run_task(wt1, "ship")
-        finally:
-            stop.set()
-            racer_thread.join(timeout=5)
+        r = run_task(wt1, "ship")
 
         check("RACEで終了コード9", r.returncode == 9 and r.stdout.strip() == "RACE\t3", r.stdout + r.stderr)
+        with open(os.path.join(tmp, "race-count"), encoding="utf-8") as f:
+            tries = f.read().strip()
+        check("3回とも rebase → 検証 → 送るを試した", tries == "3", tries)
         check(
             "3回試したあとも作業ツリーはきれい（rebaseは完了、送るのだけ失敗）",
             git(wt1, "status", "--porcelain").stdout.strip() == "",
@@ -1013,6 +1017,133 @@ def test_prune() -> None:
         check("基準点が無いコミットなら INVALID(3)", r.returncode == 3 and r.stdout.startswith("INVALID\t"), r.stdout + r.stderr)
 
 
+# --- 主ブランチ（`main` 固定をやめた分） -------------------------------------
+
+
+def test_base_branch_resolution() -> None:
+    print("ledger.base_branch: CLAUDE.md の行 → origin/HEAD → main/master/trunk → NoBaseBranch")
+    with tempfile.TemporaryDirectory() as tmp:
+        ledger.clear_base_branch_cache()
+        master_repo, _wt1, _wt2 = make_repo(tmp, base="master")
+        check("順3: master しか無ければ master", ledger.base_branch(cwd=master_repo) == "master")
+
+        # 順1（CLAUDE.md の任意行）が順2・順3より先。
+        git(master_repo, "branch", "main")
+        ledger.clear_base_branch_cache()
+        check("main も出来たら順3では main が先", ledger.base_branch(cwd=master_repo) == "main")
+        claude_md = os.path.join(master_repo, "CLAUDE.md")
+        with open(claude_md, encoding="utf-8") as f:
+            body = f.read()
+        write(claude_md, body.replace("- ブランチ:", "- 主ブランチ: `master`（保護ブランチ）\n- ブランチ:"))
+        ledger.clear_base_branch_cache()
+        check("順1: `- 主ブランチ:` 行が最優先（バッククォートも落ちる）", ledger.base_branch(cwd=master_repo) == "master")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # 順2: origin/HEAD の枝名。候補の順（main が先）より優先する。
+        ledger.clear_base_branch_cache()
+        repo, _wt1, _wt2 = make_repo(tmp, base="main")
+        git(repo, "branch", "trunk")
+        git(repo, "remote", "add", "origin", repo)
+        git(repo, "update-ref", "refs/remotes/origin/trunk", "trunk")
+        git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
+        ledger.clear_base_branch_cache()
+        check("順2: origin/HEAD が指す枝を採る", ledger.base_branch(cwd=repo) == "trunk")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # 順4: 候補の枝が無ければ黙って main を作らず INVALID（終了コード3）。
+        ledger.clear_base_branch_cache()
+        repo, _wt1, _wt2 = make_repo(tmp, base="dev")
+        raised = False
+        try:
+            ledger.base_branch(cwd=repo)
+        except ledger.NoBaseBranch:
+            raised = True
+        check("順4: 決まらなければ NoBaseBranch", raised)
+        r = run_task(repo, "status")
+        check(
+            "task.py は INVALID（終了コード3）で止まる",
+            r.returncode == 3 and r.stdout.startswith("INVALID\t"),
+            r.stdout + r.stderr,
+        )
+    ledger.clear_base_branch_cache()
+
+
+def test_full_cycle_on_master_repo() -> None:
+    print("task.py: 主ブランチが master のリポジトリで一式（status→new→claim→done→ship→prune）")
+    with tempfile.TemporaryDirectory() as tmp:
+        base_path, wt1, wt2 = make_repo(tmp, branch="既定", verify="`echo verified`", base="master")
+        commit_task(base_path, taskfile.Task("T-100", "master で一式", "todo", "sonnet", "Y", (), BODY))
+
+        status = run_task(wt1, "status")
+        check(
+            "status が master の版のタスクを READY で見せる",
+            status.returncode == 0 and any(l.startswith("T-100\ttodo") and "\tREADY\t" in l for l in status.stdout.splitlines()),
+            status.stdout + status.stderr,
+        )
+
+        r = run_task(wt1, "new", "--summary", "master で採番", "--difficulty", "haiku", "--loopable", "Y", "--body-file", body_file(wt1))
+        check("new が採番できる（master の履歴を読む）", r.returncode == 0 and r.stdout.startswith("CREATED\tT-101\t"), r.stdout + r.stderr)
+        os.remove(os.path.join(wt1, "develop", "task", "T-101.md"))
+        os.remove(os.path.join(wt1, "body.md"))
+
+        r = run_task(wt1, "claim", "T-100")
+        check("claim が master から feature 枝を切る", r.returncode == 0 and "branch=feature/T-100" in r.stdout, r.stdout + r.stderr)
+        check("いまの枝は feature/T-100", ledger.current_branch(cwd=wt1) == "feature/T-100")
+
+        _claim_work_and_done(wt1, "T-100")
+        r = run_task(wt1, "ship")
+        check("ship が master へ送る", r.returncode == 0 and r.stdout.startswith("SHIPPED\t"), r.stdout + r.stderr)
+        check("戻り先は claim 時点の枝", "branch=wt1-branch" in r.stdout, r.stdout)
+        check("feature 枝は消える", git(base_path, "branch", "--list", "feature/T-100").stdout.strip() == "", r.stdout)
+        shipped = git(base_path, "show", "master:develop/task/T-100.md").stdout
+        check("master のタスクファイルが done になる", "status: done" in shipped, shipped)
+        check("master に merge commit が無い", _no_merge_commits(base_path, "master").strip() == "")
+
+        # master が先に進んでいる側から送ると、付け替えて検証してから送る。
+        commit_task(base_path, taskfile.Task("T-102", "付け替え", "todo", "sonnet", "Y", (), BODY))
+        run_task(wt2, "claim", "T-102")
+        _claim_work_and_done(wt2, "T-102", note="2")
+        write(os.path.join(base_path, "unrelated.txt"), "x")
+        git(base_path, "add", "-A")
+        git(base_path, "commit", "-q", "-m", "master だけの変更")
+        r = run_task(wt2, "ship")
+        check(
+            "rebase してから送り、付け替えた回だけ検証が走る",
+            r.returncode == 0 and "rebased=yes" in r.stdout and "verify=ran" in r.stdout,
+            r.stdout + r.stderr,
+        )
+        log = git(base_path, "log", "--oneline", "master").stdout
+        check("両方の変更が master に乗る", "master だけの変更" in log and "T-102: 完了" in log, log)
+
+        # prune も master の版で見る。
+        reviewed = BODY + "\n## 結果\n\n- 検証: x\n- 振り返り: 兆候なし\n"
+        commit_task(base_path, taskfile.Task("T-104", "振り返り済み", "done", "sonnet", "Y", (), reviewed))
+        r = run_task(base_path, "prune", "--min", "1")
+        check("prune が1件消して stage する", r.returncode == 0 and r.stdout.splitlines()[-1] == "PRUNED\t1", r.stdout + r.stderr)
+        git(base_path, "commit", "-q", "-m", "振り返り済みのタスクファイルを消す（1件）")
+        check("status --check が通る", run_task(base_path, "status", "--check").returncode == 0)
+        check("master に merge commit が無い", _no_merge_commits(base_path, "master").strip() == "")
+
+    # 本体（master を出している作業ツリー）で枝を切らずに起こしたときは送る段が無い。
+    with tempfile.TemporaryDirectory() as tmp:
+        base_path, _wt1, _wt2 = make_repo(tmp, branch="切らない", base="master")
+        commit_task(base_path, taskfile.Task("T-100", "本体で完結", "todo", "sonnet", "Y", (), BODY))
+        run_task(base_path, "claim", "T-100")
+        _claim_work_and_done(base_path, "T-100")
+        r = run_task(base_path, "ship")
+        check(
+            "SHIPPED master（送る段なし）で返る",
+            r.returncode == 0 and r.stdout.startswith("SHIPPED\tmaster\t(送る段なし)") and "released=T-100" in r.stdout,
+            r.stdout + r.stderr,
+        )
+        r = run_task(_wt1, "ship")
+        check(
+            "送るものが無い側は NOTHING（枝名を埋め込む）",
+            r.returncode == 0 and r.stdout.strip() == "NOTHING\t(master に無いコミットが無い)",
+            r.stdout + r.stderr,
+        )
+
+
 def main() -> None:
     for t in (
         test_taskfile_parse,
@@ -1039,6 +1170,8 @@ def main() -> None:
         test_ship_default_branch_leaves_feature_branch,
         test_branch_setting_reads_leading_word,
         test_prune,
+        test_base_branch_resolution,
+        test_full_cycle_on_master_repo,
     ):
         t()
     print()

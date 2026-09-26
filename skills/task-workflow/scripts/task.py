@@ -61,38 +61,40 @@ def _run_git(toplevel: str, args: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=toplevel, capture_output=True, text=True)
 
 
-def _list_main_task_filenames(toplevel: str) -> list[str]:
-    r = _run_git(toplevel, ["ls-tree", "--name-only", "-r", "main", "--", "develop/task"])
+def _list_base_task_filenames(toplevel: str, base: str) -> list[str]:
+    r = _run_git(toplevel, ["ls-tree", "--name-only", "-r", base, "--", "develop/task"])
     if r.returncode != 0:
         return []
     return [os.path.basename(p) for p in r.stdout.splitlines() if p.endswith(".md")]
 
 
-def _read_main_task_text(toplevel: str, filename: str) -> str | None:
-    r = _run_git(toplevel, ["show", f"main:develop/task/{filename}"])
+def _read_base_task_text(toplevel: str, base: str, filename: str) -> str | None:
+    r = _run_git(toplevel, ["show", f"{base}:develop/task/{filename}"])
     return r.stdout if r.returncode == 0 else None
 
 
-def _history_ids_at_main(toplevel: str) -> set[str]:
-    r = _run_git(toplevel, ["show", "main:docs/history/tasks.md"])
+def _history_ids_at_base(toplevel: str) -> set[str]:
+    base = ledger.base_branch(toplevel)
+    r = _run_git(toplevel, ["show", f"{base}:docs/history/tasks.md"])
     if r.returncode != 0:
         return set()
     return {m.group(1) for m in re.finditer(r"^## (T-\d{3,})\b", r.stdout, flags=re.MULTILINE)}
 
 
-# --- タスクの読み取り（main を正とし、作業ツリーだけの分は local として足す） ---
+# --- タスクの読み取り（主ブランチを正とし、作業ツリーだけの分は local として足す） ---
 
 
 def load_tasks(
     toplevel: str,
 ) -> tuple[dict[str, taskfile.Task], dict[str, str], list[str]]:
-    """`(id→Task, id→INVALID理由, ローカルにしか無いID)` を返す（5.3: main を正とする）。"""
+    """`(id→Task, id→INVALID理由, ローカルにしか無いID)` を返す（5.3: 主ブランチを正とする）。"""
     tasks: dict[str, taskfile.Task] = {}
     invalid: dict[str, str] = {}
 
-    for filename in _list_main_task_filenames(toplevel):
+    base = ledger.base_branch(toplevel)
+    for filename in _list_base_task_filenames(toplevel, base):
         stem = os.path.splitext(filename)[0]
-        text = _read_main_task_text(toplevel, filename)
+        text = _read_base_task_text(toplevel, base, filename)
         if text is None:
             continue
         parsed, err = taskfile.parse(text)
@@ -105,7 +107,7 @@ def load_tasks(
     local_only: list[str] = []
     for stem in taskfile.local_task_ids(task_dir):
         if stem in tasks or stem in invalid:
-            continue  # main にもある ID は main を正とする
+            continue  # 主ブランチにもある ID は主ブランチを正とする
         parsed, err = taskfile.read_task_file(taskfile.task_path(task_dir, stem))
         if err is not None or parsed is None:
             invalid[stem] = err or "読めない"
@@ -159,7 +161,7 @@ def format_elapsed(seconds: float) -> str:
 def classify_claim(
     root: str,
     task_id: str,
-    main_task: taskfile.Task | None,
+    base_task: taskfile.Task | None,
     worktrees: list[ledger.Worktree],
 ) -> tuple[str, str]:
     """4.3の判定。`(表示語, 詳細)` を返す。表示語は `CLAIMED` か `STALE:*`。"""
@@ -169,7 +171,7 @@ def classify_claim(
         age = time.time() - os.stat(d).st_mtime
         return ("STALE:no-owner", "") if age > 60 else ("CLAIMED", "書き込み中")
     worktree = owner.get("worktree", "?")
-    if main_task is not None and main_task.status in ("done", "dropped"):
+    if base_task is not None and base_task.status in ("done", "dropped"):
         return "STALE:shipped", worktree
     if not any(w.path == worktree for w in worktrees):
         return "STALE:gone", worktree
@@ -184,7 +186,7 @@ BRANCH_WORDS = ("既定", "作業ブランチを切る", "切らない")
 def read_branch_setting(toplevel: str) -> str:
     """CLAUDE.md の `- ブランチ:` 行の先頭語だけを読む（6.1）。無ければ `既定`。
 
-    後ろは人向けの説明で自由なので、`切らない。main に積む` のように句読点で続いても
+    後ろは人向けの説明で自由なので、`切らない。主ブランチに積む` のように句読点で続いても
     先頭語で決める。語彙のどれでも始まらなければ、その値の最初の語をそのまま返す
     （呼ぶ側が `INVALID` にする）。
     """
@@ -342,7 +344,7 @@ def cmd_new(toplevel: str, args: argparse.Namespace) -> None:
         candidate_ids = (
             list(tasks) + [i for i in invalid if taskfile.ID_PATTERN.match(i)]
             + list(taskfile.history_ids(history_path))
-            + list(_history_ids_at_main(toplevel))
+            + list(_history_ids_at_base(toplevel))
         )
         candidates = [0] + [taskfile.id_number(i) for i in candidate_ids]
         last_id = ledger.read_last_id(root)
@@ -384,15 +386,16 @@ def cmd_claim(toplevel: str, task_id: str) -> None:
         print("DIRTY")
         raise SystemExit(4)
 
+    base = ledger.base_branch(toplevel)
     branch = ledger.current_branch(cwd=toplevel)
-    if branch != "main":
-        ahead = _run_git(toplevel, ["rev-list", "--count", "main..HEAD"])
+    if branch != base:
+        ahead = _run_git(toplevel, ["rev-list", "--count", f"{base}..HEAD"])
         if ahead.returncode == 0 and ahead.stdout.strip() not in ("0", ""):
             print(f"UNSHIPPED\t{ahead.stdout.strip()}")
             raise SystemExit(4)
-        r = _run_git(toplevel, ["merge", "--ff-only", "main"])
+        r = _run_git(toplevel, ["merge", "--ff-only", base])
         if r.returncode != 0:
-            print(f"INVALID\tmain へ追い付けない（{r.stderr.strip()}）")
+            print(f"INVALID\t{base} へ追い付けない（{r.stderr.strip()}）")
             raise SystemExit(3)
 
     tasks, invalid, _ = load_tasks(toplevel)
@@ -423,7 +426,7 @@ def cmd_claim(toplevel: str, task_id: str) -> None:
 
     if branch_setting in ("既定", "作業ブランチを切る"):
         feature_branch = f"feature/{task_id}"
-        r = _run_git(toplevel, ["checkout", "-b", feature_branch, "main"])
+        r = _run_git(toplevel, ["checkout", "-b", feature_branch, base])
         if r.returncode != 0:
             print(f"CLAIMED\t{task_id}\tdevelop/task/{task_id}.md\tbranch=(切れない: {r.stderr.strip()})")
             return
@@ -491,8 +494,8 @@ def cmd_done(toplevel: str, task_id: str, dropped: bool, result_path: str) -> No
 
 
 def _release_own_claims_when_shipped(root: str, toplevel: str) -> list[str]:
-    """4.4・5.8手順7: 自分の作業ツリーの印のうち、`main`（HEAD）で done/dropped に
-    なったものを消す。`main` を正として読む（`load_tasks` は git show 経由なので、
+    """4.4・5.8手順7: 自分の作業ツリーの印のうち、主ブランチ（HEAD）で done/dropped に
+    なったものを消す。主ブランチを正として読む（`load_tasks` は git show 経由なので、
     直前に送った変更もここで反映済みのものとして見える）。"""
     tasks, _invalid, _local_only = load_tasks(toplevel)
     released: list[str] = []
@@ -513,30 +516,31 @@ def cmd_ship(toplevel: str) -> None:
         raise SystemExit(4)
 
     root = ledger.ledger_root(cwd=toplevel)
+    base = ledger.base_branch(toplevel)
     branch = ledger.current_branch(cwd=toplevel)
 
-    if branch == "main":
-        # 4.4: main を出している作業ツリーで起こしたときは送る段が無い。
+    if branch == base:
+        # 4.4: 主ブランチを出している作業ツリーで起こしたときは送る段が無い。
         released = _release_own_claims_when_shipped(root, toplevel)
-        print(f"SHIPPED\tmain\t(送る段なし)\treleased={','.join(released) or '-'}")
+        print(f"SHIPPED\t{base}\t(送る段なし)\treleased={','.join(released) or '-'}")
         return
 
-    ahead = _run_git(toplevel, ["rev-list", "--count", "main..HEAD"])
+    ahead = _run_git(toplevel, ["rev-list", "--count", f"{base}..HEAD"])
     ahead_count = int(ahead.stdout.strip()) if ahead.returncode == 0 and ahead.stdout.strip().isdigit() else 0
     if ahead_count == 0:
         _release_own_claims_when_shipped(root, toplevel)
-        print("NOTHING\t(main に無いコミットが無い)")
+        print(f"NOTHING\t({base} に無いコミットが無い)")
         return
 
     worktrees = ledger.list_worktrees(cwd=toplevel)
-    main_worktree = ship.find_main_worktree(worktrees, toplevel)
-    if main_worktree is not None and not ledger.is_clean(cwd=main_worktree.path):
-        print(f"MAIN_DIRTY\t{main_worktree.path}")
+    base_worktree = ship.find_base_worktree(worktrees, toplevel, base)
+    if base_worktree is not None and not ledger.is_clean(cwd=base_worktree.path):
+        print(f"MAIN_DIRTY\t{base_worktree.path}")
         raise SystemExit(4)
 
-    old_main = _run_git(toplevel, ["rev-parse", "main"]).stdout.strip()
+    old_base = _run_git(toplevel, ["rev-parse", base]).stdout.strip()
     verify_command = ship.read_verify_command(toplevel)
-    outcome = ship.attempt(toplevel, main_worktree, verify_command)
+    outcome = ship.attempt(toplevel, base_worktree, verify_command, base)
 
     if outcome.kind == "CONFLICT":
         print("CONFLICT\t" + (",".join(outcome.conflict_files) or "?"))
@@ -556,9 +560,9 @@ def cmd_ship(toplevel: str) -> None:
         branch_note = _leave_feature_branch(root, toplevel, branch)
 
     released = _release_own_claims_when_shipped(root, toplevel)
-    new_main = _run_git(toplevel, ["rev-parse", "main"]).stdout.strip()
+    new_base = _run_git(toplevel, ["rev-parse", base]).stdout.strip()
     print(
-        f"SHIPPED\t{old_main}..{new_main}\trebased={'yes' if outcome.rebased else 'no'}"
+        f"SHIPPED\t{old_base}..{new_base}\trebased={'yes' if outcome.rebased else 'no'}"
         f"\tverify={outcome.verify_state}\ttries={outcome.tries}\treleased={','.join(released) or '-'}"
         f"\t{branch_note}"
     )
@@ -570,26 +574,27 @@ FEATURE_BRANCH = re.compile(r"feature/(T-\d{3,})")
 def _leave_feature_branch(root: str, toplevel: str, branch: str) -> str:
     """送り終えた `feature/T-xxx` から降りて枝を消す（6.2手順7）。出力の `branch=…` 欄を返す。
 
-    戻り先は `claim` した時点の枝（印の owner の `branch=`）→ `main` の順に試す。`main` を
-    別の作業ツリー（本体）が出していると `checkout main` は通らないので、作業ツリー固有の枝が
-    あればそこへ戻して `main` まで追い付かせる。どちらにも移れなければ `main` の位置で
-    detached HEAD にする（枝を黙って残さない。detached のままでも次の `claim` は `main` から切る）。
+    戻り先は `claim` した時点の枝（印の owner の `branch=`）→ 主ブランチの順に試す。主ブランチを
+    別の作業ツリー（本体）が出していると `checkout` は通らないので、作業ツリー固有の枝が
+    あればそこへ戻して主ブランチまで追い付かせる。どちらにも移れなければ主ブランチの位置で
+    detached HEAD にする（枝を黙って残さない。detached のままでも次の `claim` は主ブランチから切る）。
     消せなかったときは `kept=<枝>` を添えて知らせる。
     """
+    base = ledger.base_branch(toplevel)
     m = FEATURE_BRANCH.fullmatch(branch)
     owner = ledger.read_owner(ledger.claim_dir(root, m.group(1))) if m else None
     back = (owner or {}).get("branch")
-    targets = [b for b in dict.fromkeys([back, "main"]) if b and b not in (branch, "HEAD")]
+    targets = [b for b in dict.fromkeys([back, base]) if b and b not in (branch, "HEAD")]
 
     landed = None
     for target in targets:
         if _run_git(toplevel, ["checkout", "-q", target]).returncode == 0:
-            if target != "main":
-                _run_git(toplevel, ["merge", "--ff-only", "-q", "main"])
+            if target != base:
+                _run_git(toplevel, ["merge", "--ff-only", "-q", base])
             landed = target
             break
     if landed is None:
-        if _run_git(toplevel, ["checkout", "-q", "--detach", "main"]).returncode != 0:
+        if _run_git(toplevel, ["checkout", "-q", "--detach", base]).returncode != 0:
             return f"branch={branch}\tkept={branch}"
         landed = "detached"
 
@@ -615,7 +620,7 @@ def cmd_prune(toplevel: str, dry_run: bool, minimum: int) -> None:
     判定は `HEAD` の版で done/dropped・台帳に印が無い・次のどちらか:
     `reviewed` = `## 結果` に `- 振り返り:` の行がある（1件ごとの振り返り済み）、
     `retrospect` = `develop/retrospective.md` の基準点の版で既に done/dropped（まとめての振り返りが
-    読み終えた）。印のあるタスクを除くのは、`ship` が `main` の版で done を見て印を消すため。
+    読み終えた）。印のあるタスクを除くのは、`ship` が主ブランチの版で done を見て印を消すため。
     対象が `minimum` 件に届かなければ何もしない（`NOTHING`）。
     """
     if not dry_run and not ledger.is_clean(cwd=toplevel):
@@ -799,22 +804,27 @@ def main(argv: list[str] | None = None) -> None:
             print("MISSING")
             raise SystemExit(6)
 
-    if args.command == "status":
-        cmd_status(toplevel, args.show_all, args.check)
-    elif args.command == "new":
-        cmd_new(toplevel, args)
-    elif args.command == "claim":
-        cmd_claim(toplevel, args.task_id)
-    elif args.command == "release":
-        cmd_release(toplevel, args.task_id, args.force)
-    elif args.command == "done":
-        cmd_done(toplevel, args.task_id, args.dropped, args.result_file)
-    elif args.command == "ship":
-        cmd_ship(toplevel)
-    elif args.command == "prune":
-        cmd_prune(toplevel, args.dry_run, max(args.minimum, 1))
-    elif args.command == "migrate":
-        cmd_migrate(toplevel, args.dry_run)
+    # 主ブランチは要る道でだけ問い合わせる（`ledger.base_branch`。決まらなければ INVALID）。
+    try:
+        if args.command == "status":
+            cmd_status(toplevel, args.show_all, args.check)
+        elif args.command == "new":
+            cmd_new(toplevel, args)
+        elif args.command == "claim":
+            cmd_claim(toplevel, args.task_id)
+        elif args.command == "release":
+            cmd_release(toplevel, args.task_id, args.force)
+        elif args.command == "done":
+            cmd_done(toplevel, args.task_id, args.dropped, args.result_file)
+        elif args.command == "ship":
+            cmd_ship(toplevel)
+        elif args.command == "prune":
+            cmd_prune(toplevel, args.dry_run, max(args.minimum, 1))
+        elif args.command == "migrate":
+            cmd_migrate(toplevel, args.dry_run)
+    except ledger.NoBaseBranch as e:
+        print(f"INVALID\t{e}")
+        raise SystemExit(3)
 
 
 if __name__ == "__main__":

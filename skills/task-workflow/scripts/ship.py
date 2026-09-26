@@ -52,9 +52,11 @@ def read_verify_command(toplevel: str) -> str | None:
     return cmd_m.group(1) if cmd_m else None
 
 
-def find_main_worktree(worktrees: list[ledger.Worktree], own_path: str) -> ledger.Worktree | None:
-    """`main` を出している別の作業ツリー（本体）を探す（6.2手順4）。自分自身は数えない。"""
-    return next((w for w in worktrees if w.branch == "main" and w.path != own_path), None)
+def find_base_worktree(
+    worktrees: list[ledger.Worktree], own_path: str, base: str
+) -> ledger.Worktree | None:
+    """主ブランチを出している別の作業ツリー（本体）を探す（6.2手順4）。自分自身は数えない。"""
+    return next((w for w in worktrees if w.branch == base and w.path != own_path), None)
 
 
 def _run(cwd: str, args: list[str]) -> subprocess.CompletedProcess:
@@ -63,22 +65,24 @@ def _run(cwd: str, args: list[str]) -> subprocess.CompletedProcess:
 
 def attempt(
     toplevel: str,
-    main_worktree: ledger.Worktree | None,
+    base_worktree: ledger.Worktree | None,
     verify_command: str | None,
+    base: str,
 ) -> ShipOutcome:
     """最大 `MAX_TRIES` 回、rebase → 検証（付け替えた回だけ）→ 送る、を繰り返す（6.2手順5・6）。
 
-    送る先は `main_worktree` があれば `git -C <本体> merge --ff-only <HEAD のコミット>`、無ければ
-    比較付きの `git update-ref`。失敗（相手に先を越された）は次の回の rebase からやり直す。
+    `base` は主ブランチの名前（`ledger.base_branch`）。送る先は `base_worktree` があれば
+    `git -C <本体> merge --ff-only <HEAD のコミット>`、無ければ比較付きの `git update-ref`。
+    失敗（相手に先を越された）は次の回の rebase からやり直す。
     """
     rebased_any = False
     verify_state = "none" if verify_command is None else "skipped"
 
     for tries in range(1, MAX_TRIES + 1):
         rebased_this_round = False
-        is_ancestor = _run(toplevel, ["merge-base", "--is-ancestor", "main", "HEAD"]).returncode == 0
+        is_ancestor = _run(toplevel, ["merge-base", "--is-ancestor", base, "HEAD"]).returncode == 0
         if not is_ancestor:
-            r = _run(toplevel, ["rebase", "main"])
+            r = _run(toplevel, ["rebase", base])
             if r.returncode != 0:
                 conflicts = _run(toplevel, ["diff", "--name-only", "--diff-filter=U"]).stdout.splitlines()
                 _run(toplevel, ["rebase", "--abort"])
@@ -102,11 +106,13 @@ def attempt(
 
         # 枝の名前ではなくコミットで送る（detached HEAD の `HEAD` は本体の側では本体自身を指す）。
         head = _run(toplevel, ["rev-parse", "HEAD"]).stdout.strip()
-        if main_worktree is not None:
-            sent = _run(main_worktree.path, ["merge", "--ff-only", head]).returncode == 0
+        if base_worktree is not None:
+            sent = _run(base_worktree.path, ["merge", "--ff-only", head]).returncode == 0
         else:
-            seen_main = _run(toplevel, ["rev-parse", "main"]).stdout.strip()
-            sent = _run(toplevel, ["update-ref", "refs/heads/main", head, seen_main]).returncode == 0
+            # 見たときの位置と突き合わせる更新（同じ1つの枝名で `rev-parse` と `update-ref` を
+            # 打つので、他の作業ツリーに先を越されたときの検知は枝名が変わっても同じ）。
+            seen = _run(toplevel, ["rev-parse", base]).stdout.strip()
+            sent = _run(toplevel, ["update-ref", f"refs/heads/{base}", head, seen]).returncode == 0
 
         if sent:
             return ShipOutcome(kind="SENT", rebased=rebased_any, verify_state=verify_state, tries=tries)

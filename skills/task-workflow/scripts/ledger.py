@@ -2,13 +2,14 @@
 
 正典は `docs/task-workflow-redesign.md` の4.2〜4.3。台帳はクローンに1つ
 （`git rev-parse --path-format=absolute --git-common-dir` の下）で、コミットしないので
-`main` を動かさない。取り合いの判定は `mkdir` の成否だけで決める（不可分な操作なので、
+主ブランチを動かさない。取り合いの判定は `mkdir` の成否だけで決める（不可分な操作なので、
 2プロセスが同時に呼んでも一方だけが成功する）。
 """
 
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -22,6 +23,10 @@ LAST_ID_FILE_NAME = "last-id"
 
 class GitCommandError(RuntimeError):
     """git を呼んで非0で終わった。環境の故障として扱う（データの不備ではない）。"""
+
+
+class NoBaseBranch(RuntimeError):
+    """主ブランチが決まらなかった。データの不備（呼ぶ側が `INVALID`・終了コード3 にする）。"""
 
 
 def _git(args: list[str], cwd: str | None = None) -> str:
@@ -50,6 +55,96 @@ def current_branch(cwd: str | None = None) -> str:
 
 def is_clean(cwd: str | None = None) -> bool:
     return _git(["status", "--porcelain"], cwd) == ""
+
+
+# --- 主ブランチ（`main`・`master`・`trunk` …） -----------------------------
+
+BASE_BRANCH_CANDIDATES = ("main", "master", "trunk")
+# CLAUDE.md「## タスク運用」の**任意**行。3行（検証コマンド・整形コマンド・ブランチ）とは違い、
+# 無いのが既定で、無くても `MISSING_LINE` にしない（保護ブランチや複数リモートの逃げ道）。
+BASE_BRANCH_LINE = re.compile(r"^- 主ブランチ:[ \t]*(.*)$", re.MULTILINE)
+
+_base_branch_cache: dict[str, str] = {}
+
+
+def _configured_base_branch(toplevel: str) -> str | None:
+    """CLAUDE.md の `- 主ブランチ:` 行の枝名。
+
+    値は `` `master` `` のようにバッククォートで囲むのが推奨（囲んであればその中だけを読む）。
+    囲んでいなければ最初の語を採り、`master（保護ブランチ）` のように説明が続いていても
+    括弧・句読点の前で切る（`- ブランチ:` と同じく、後ろは人向けの説明として許す）。
+    """
+    path = os.path.join(toplevel, "CLAUDE.md")
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        m = BASE_BRANCH_LINE.search(f.read())
+    if m is None:
+        return None
+    value = m.group(1).strip()
+    quoted = re.search(r"`([^`]+)`", value)
+    word = quoted.group(1).strip() if quoted else (value.split() or [""])[0]
+    word = re.split(r"[（(、。]", word)[0].strip("`").strip()
+    return word or None
+
+
+def base_branch(cwd: str | None = None) -> str:
+    """このリポジトリの主ブランチ名（`main` に固定しない）。
+
+    決め方の順:
+
+    1. CLAUDE.md の `- 主ブランチ:` 行（任意）
+    2. `git symbolic-ref --short refs/remotes/origin/HEAD` の枝名。**`origin` だけを見る**
+       （別名のリモートしか無いリポジトリは順3へ落ちる。唯一のリモートを `origin` 扱いすると、
+       fork 元を指す `upstream` を主ブランチの出どころにしてしまう。逃げ道は順1の行）
+    3. `main`・`master`・`trunk` のうち `rev-parse --verify` で実在するもの（この順）
+    4. どれも無ければ `NoBaseBranch`。**黙って `main` を作らない**
+
+    1プロセスで1回だけ git に問い合わせて覚える（`task status` は1回の実行で何度も要る）。
+    """
+    # 呼ぶ側はふつう toplevel を渡すので、覚えていればそのまま返す（git を呼ばない）。
+    if cwd is not None and cwd in _base_branch_cache:
+        return _base_branch_cache[cwd]
+    toplevel = git_toplevel(cwd)
+    cached = _base_branch_cache.get(toplevel)
+    if cached is not None:
+        return cached
+
+    found = _configured_base_branch(toplevel)
+    if found is None:
+        r = subprocess.run(
+            ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+            cwd=toplevel,
+            capture_output=True,
+            text=True,
+        )
+        head = r.stdout.strip()
+        if r.returncode == 0 and head.startswith("origin/"):
+            found = head[len("origin/") :]
+    if found is None:
+        for name in BASE_BRANCH_CANDIDATES:
+            r = subprocess.run(
+                ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{name}"],
+                cwd=toplevel,
+                capture_output=True,
+                text=True,
+            )
+            if r.returncode == 0:
+                found = name
+                break
+    if found is None:
+        raise NoBaseBranch(
+            "主ブランチが決まらない（CLAUDE.md の `- 主ブランチ:` 行も、origin/HEAD も、"
+            f"{'・'.join(BASE_BRANCH_CANDIDATES)} の枝も無い）"
+        )
+
+    _base_branch_cache[toplevel] = found
+    return found
+
+
+def clear_base_branch_cache() -> None:
+    """覚えた主ブランチ名を捨てる（同じプロセスで別のリポジトリを作り替えるテスト用）。"""
+    _base_branch_cache.clear()
 
 
 @dataclass(frozen=True)
