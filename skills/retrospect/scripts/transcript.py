@@ -1,7 +1,8 @@
 """サブエージェントのトランスクリプトを見つけ、そこから**数だけ**を取り出す。
 
 Claude Code は作業ディレクトリのパスの英数字以外を `-` に潰した名前で
-`~/.claude/projects/<slug>/<セッション>/subagents/<エージェント>.jsonl` に置く。
+`<設定ディレクトリ>/projects/<slug>/<セッション>/subagents/<エージェント>.jsonl` に置く
+（設定ディレクトリは `CLAUDE_CONFIG_DIR` が設定されていればそこ、無ければ `~/.claude`）。
 
 **会話の中身をここから外へ出さない。** 返すのはツール名・ファイル名・コマンドの先頭2語・
 件数・時刻だけ（CLAUDE.md「会話内容の扱い」）。本文を返す関数をここに足さない。
@@ -31,13 +32,15 @@ def subagent_dirs(root: str) -> list[str]:
 
 
 def project_dir(root: str) -> str | None:
-    """`~/.claude/projects/` の下のこのリポジトリのディレクトリ。
+    """`<設定ディレクトリ>/projects/` の下のこのリポジトリのディレクトリ。
 
-    潰し方は版によって変わりうるので、**計算した名前で当ててから、外れたら総当たりで
-    照合する**（見つからなければ None を返して先へ進む）。
+    設定ディレクトリは `CLAUDE_CONFIG_DIR` → `~/.claude` の順に見て、`projects/` が
+    実在する最初の1つだけを使う（どちらにも無ければ None）。その中では、潰し方は版によって
+    変わりうるので、**計算した名前で当ててから、外れたら総当たりで照合する**（見つからなければ
+    None を返して先へ進む）。
     """
-    projects = os.path.join(os.path.expanduser("~"), ".claude", "projects")
-    if not os.path.isdir(projects):
+    projects = _projects_dir()
+    if projects is None:
         return None
     want = _slug(os.path.abspath(root))
     direct = os.path.join(projects, want)
@@ -47,6 +50,24 @@ def project_dir(root: str) -> str | None:
         if _slug(entry) == want and os.path.isdir(os.path.join(projects, entry)):
             return os.path.join(projects, entry)
     return None
+
+
+def _projects_dir() -> str | None:
+    """`CLAUDE_CONFIG_DIR` → `~/.claude` の順で `projects/` が実在する先を1つ返す。"""
+    for config_dir in _config_dir_candidates():
+        projects = os.path.join(config_dir, "projects")
+        if os.path.isdir(projects):
+            return projects
+    return None
+
+
+def _config_dir_candidates() -> list[str]:
+    candidates = []
+    env = os.environ.get("CLAUDE_CONFIG_DIR")
+    if env:
+        candidates.append(os.path.expanduser(env))
+    candidates.append(os.path.join(os.path.expanduser("~"), ".claude"))
+    return candidates
 
 
 def _slug(path: str) -> str:

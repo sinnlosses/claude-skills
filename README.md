@@ -1,10 +1,12 @@
 # claude-skills
 
 Claude Code のユーザー単位スキル（`~/.claude/skills/`）のソース。各スキルは `skills/<name>/` に
-置き、`./install.sh` で `~/.claude/skills/<name>` へシンボリックリンクを張る
+置き、`./install.sh` で `<張る先>/<name>` へシンボリックリンクを張る
 （実ディレクトリや他所を指すリンクがあれば触らず警告し、消したスキルの残骸は掃除する）。
-ここを直接 `~/.claude/skills` にしないのは、Claude Code が `~/.claude/skills/synced/` を
-claude.ai 同期用に予約していて、git 管理下に混ざるのを避けるため。
+張る先は `--dest DIR` → `CLAUDE_CONFIG_DIR`（設定されていればその下の `skills/`）→
+`$HOME/.claude/skills` の順で決まる。引数にスキル名を渡すと対象を絞れる（絞ったときは
+残骸の掃除は走らない）。ここを直接 `~/.claude/skills` にしないのは、Claude Code が
+`~/.claude/skills/synced/` を claude.ai 同期用に予約していて、git 管理下に混ざるのを避けるため。
 
 ## 由来
 
