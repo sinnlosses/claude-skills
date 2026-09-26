@@ -174,6 +174,116 @@ def check_python_syntax(names: list[str]) -> None:
                     fail(f"{os.path.relpath(p, ROOT)}: 構文エラー（{e}）")
 
 
+# T-018: develop/task 等の置き場・IDの形は skills/task-workflow/scripts/layout.py に
+# 1箇所だけ書き、読む側は直書きしない（正典は task-workflow の WORKFLOW.md「ファイル配置と
+# CLAUDE.md」）。ここでは layout.py 自身は対象から外し、読む側の7ファイルだけを見る。
+_TASK_WORKFLOW_SCRIPTS = os.path.join(SKILLS, "task-workflow", "scripts")
+_RETROSPECT_SCRIPTS = os.path.join(SKILLS, "retrospect", "scripts")
+LAYOUT_PATH = os.path.join(_TASK_WORKFLOW_SCRIPTS, "layout.py")
+LAYOUT_CONSUMERS = (
+    os.path.join(_TASK_WORKFLOW_SCRIPTS, "task.py"),
+    os.path.join(_TASK_WORKFLOW_SCRIPTS, "taskfile.py"),
+    os.path.join(_TASK_WORKFLOW_SCRIPTS, "init.py"),
+    os.path.join(_TASK_WORKFLOW_SCRIPTS, "legacy.py"),
+    os.path.join(_RETROSPECT_SCRIPTS, "material.py"),
+    os.path.join(_RETROSPECT_SCRIPTS, "scan.py"),
+    os.path.join(_RETROSPECT_SCRIPTS, "transcript.py"),
+)
+
+# layout.py が持つ値そのもの（値は1文字も変えない。ここは「他のファイルに戻っていないか」の検査）。
+_LAYOUT_PATHS = {
+    "develop/task",
+    "develop/direction.md",
+    "develop/retrospective.md",
+    "docs/history/tasks.md",
+}
+_LAYOUT_STRINGS = _LAYOUT_PATHS | {
+    "## ユーザーから",
+    "## エージェントのドラフト",
+    "feature/",
+    r"T-\d{3,}",
+    r"^T-\d{3,}$",
+    r"\bT-\d{3,}\b",
+    r"feature/(T-\d{3,})",
+    r"^## (T-\d{3,})\b",
+}
+
+
+def _docstring_constant_ids(tree: ast.AST) -> set[int]:
+    """モジュール／クラス／関数の docstring として使われている `Constant` ノードの `id()` の集合。
+
+    人向けの説明文で `develop/task/T-xxx.md` のようにパスへ触れるのは直書きの問題ではないので、
+    リテラルの検査から外す（対象は実際に使われる値だけ）。
+    """
+    ids: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            body = getattr(node, "body", [])
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                ids.add(id(body[0].value))
+    return ids
+
+
+def _is_os_path_join(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "join"
+        and isinstance(node.func.value, ast.Attribute)
+        and node.func.value.attr == "path"
+        and isinstance(node.func.value.value, ast.Name)
+        and node.func.value.value.id == "os"
+    )
+
+
+def _trailing_literal_segments(args: list[ast.expr]) -> list[str]:
+    """`os.path.join(x, "develop", "task")` の末尾から連続する文字列リテラルだけを集める。"""
+    segments: list[str] = []
+    for arg in reversed(args):
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            segments.insert(0, arg.value)
+        else:
+            break
+    return segments
+
+
+def check_task_workflow_layout() -> None:
+    """`layout.py` の値が読む側のファイルに直書きで戻っていないか（T-018）。"""
+    if not os.path.exists(LAYOUT_PATH):
+        fail("skills/task-workflow/scripts/layout.py が無い")
+        return
+    for path in LAYOUT_CONSUMERS:
+        rel = os.path.relpath(path, ROOT)
+        if not os.path.exists(path):
+            fail(f"{rel} が無い")
+            continue
+        text = read(path)
+        if not re.search(r"^import layout\b", text, flags=re.MULTILINE):
+            fail(f"{rel}: `import layout` が無い（layout.py の値を読んでいない）")
+            continue
+        tree = ast.parse(text)
+        docstring_ids = _docstring_constant_ids(tree)
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and id(node) not in docstring_ids
+                and node.value in _LAYOUT_STRINGS
+            ):
+                fail(f"{rel}:{node.lineno}: layout.py にある値 {node.value!r} を直書きしている")
+            if _is_os_path_join(node):
+                segments = _trailing_literal_segments(node.args)
+                joined = ["/".join(segments[i:]) for i in range(len(segments))]
+                hit = next((j for j in joined if j in _LAYOUT_PATHS), None)
+                if hit is not None:
+                    fail(f"{rel}:{node.lineno}: os.path.join が {hit!r} を直書きしている")
+
+
 def main() -> None:
     names = skill_names()
     check_frontmatter(names)
@@ -182,6 +292,7 @@ def main() -> None:
     check_cross_references(names)
     check_docs_index(names)
     check_python_syntax(names)
+    check_task_workflow_layout()
 
     if problems:
         for p in problems:

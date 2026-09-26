@@ -26,12 +26,11 @@ import sys
 import time
 import unicodedata
 
+import layout
 import ledger
 import legacy
 import ship
 import taskfile
-
-TASK_DIR_NAME = "task"
 
 
 # --- 形式の判定（5.2） -----------------------------------------------------
@@ -39,8 +38,8 @@ TASK_DIR_NAME = "task"
 
 def detect_format(toplevel: str) -> tuple[str, str | None]:
     tasks_json = os.path.join(toplevel, "develop", "tasks.json")
-    task_dir = os.path.join(toplevel, "develop", TASK_DIR_NAME)
-    direction = os.path.join(toplevel, "develop", "direction.md")
+    task_dir = os.path.join(toplevel, layout.TASK_DIR)
+    direction = os.path.join(toplevel, layout.DIRECTION_PATH)
     has_tasks_json = os.path.exists(tasks_json)
     has_task_files = os.path.isdir(task_dir) and any(
         n.endswith(".md") for n in os.listdir(task_dir)
@@ -62,23 +61,23 @@ def _run_git(toplevel: str, args: list[str]) -> subprocess.CompletedProcess:
 
 
 def _list_base_task_filenames(toplevel: str, base: str) -> list[str]:
-    r = _run_git(toplevel, ["ls-tree", "--name-only", "-r", base, "--", "develop/task"])
+    r = _run_git(toplevel, ["ls-tree", "--name-only", "-r", base, "--", layout.TASK_DIR])
     if r.returncode != 0:
         return []
     return [os.path.basename(p) for p in r.stdout.splitlines() if p.endswith(".md")]
 
 
 def _read_base_task_text(toplevel: str, base: str, filename: str) -> str | None:
-    r = _run_git(toplevel, ["show", f"{base}:develop/task/{filename}"])
+    r = _run_git(toplevel, ["show", f"{base}:{layout.TASK_DIR}/{filename}"])
     return r.stdout if r.returncode == 0 else None
 
 
 def _history_ids_at_base(toplevel: str) -> set[str]:
     base = ledger.base_branch(toplevel)
-    r = _run_git(toplevel, ["show", f"{base}:docs/history/tasks.md"])
+    r = _run_git(toplevel, ["show", f"{base}:{layout.HISTORY_TASKS_PATH}"])
     if r.returncode != 0:
         return set()
-    return {m.group(1) for m in re.finditer(r"^## (T-\d{3,})\b", r.stdout, flags=re.MULTILINE)}
+    return {m.group(1) for m in layout.HISTORY_HEADING_PATTERN.finditer(r.stdout)}
 
 
 # --- タスクの読み取り（主ブランチを正とし、作業ツリーだけの分は local として足す） ---
@@ -103,7 +102,7 @@ def load_tasks(
             continue
         tasks[parsed.id] = parsed
 
-    task_dir = os.path.join(toplevel, "develop", TASK_DIR_NAME)
+    task_dir = os.path.join(toplevel, layout.TASK_DIR)
     local_only: list[str] = []
     for stem in taskfile.local_task_ids(task_dir):
         if stem in tasks or stem in invalid:
@@ -227,13 +226,13 @@ def cmd_status(toplevel: str, show_all: bool, check: bool) -> None:
     tasks, invalid, local_only = load_tasks(toplevel)
     claims = set(ledger.list_claims(root))
     worktrees = ledger.list_worktrees(cwd=toplevel)
-    history_path = os.path.join(toplevel, "docs", "history", "tasks.md")
+    history_path = os.path.join(toplevel, layout.HISTORY_TASKS_PATH)
     history = taskfile.history_ids(history_path)
 
     if check:
         problems = [f"{stem}:{reason}" for stem, reason in invalid.items()]
         problems += [
-            f"{tid}:タスクファイルと docs/history/tasks.md の両方にある" for tid in tasks if tid in history
+            f"{tid}:タスクファイルと {layout.HISTORY_TASKS_PATH} の両方にある" for tid in tasks if tid in history
         ]
         if problems:
             print("INVALID\t" + "; ".join(problems))
@@ -340,7 +339,7 @@ def cmd_new(toplevel: str, args: argparse.Namespace) -> None:
         tasks, invalid, _ = load_tasks(toplevel)
 
         status = "hold" if args.hold else "todo"
-        history_path = os.path.join(toplevel, "docs", "history", "tasks.md")
+        history_path = os.path.join(toplevel, layout.HISTORY_TASKS_PATH)
         candidate_ids = (
             list(tasks) + [i for i in invalid if taskfile.ID_PATTERN.match(i)]
             + list(taskfile.history_ids(history_path))
@@ -353,7 +352,7 @@ def cmd_new(toplevel: str, args: argparse.Namespace) -> None:
         number = max(candidates) + 1
         task_id = taskfile.format_id(number)
 
-        task_dir = os.path.join(toplevel, "develop", TASK_DIR_NAME)
+        task_dir = os.path.join(toplevel, layout.TASK_DIR)
         os.makedirs(task_dir, exist_ok=True)
         path = taskfile.task_path(task_dir, task_id)
         rendered = taskfile.render(
@@ -364,7 +363,7 @@ def cmd_new(toplevel: str, args: argparse.Namespace) -> None:
             f.write(rendered)
 
         ledger.write_last_id(root, number)
-        print(f"CREATED\t{task_id}\tdevelop/task/{task_id}.md")
+        print(f"CREATED\t{task_id}\t{layout.TASK_DIR}/{task_id}.md")
     finally:
         ledger.release_lock(root)
 
@@ -425,14 +424,14 @@ def cmd_claim(toplevel: str, task_id: str) -> None:
         raise SystemExit(4)
 
     if branch_setting in ("既定", "作業ブランチを切る"):
-        feature_branch = f"feature/{task_id}"
+        feature_branch = f"{layout.FEATURE_BRANCH_PREFIX}{task_id}"
         r = _run_git(toplevel, ["checkout", "-b", feature_branch, base])
         if r.returncode != 0:
-            print(f"CLAIMED\t{task_id}\tdevelop/task/{task_id}.md\tbranch=(切れない: {r.stderr.strip()})")
+            print(f"CLAIMED\t{task_id}\t{layout.TASK_DIR}/{task_id}.md\tbranch=(切れない: {r.stderr.strip()})")
             return
-        print(f"CLAIMED\t{task_id}\tdevelop/task/{task_id}.md\tbranch={feature_branch}")
+        print(f"CLAIMED\t{task_id}\t{layout.TASK_DIR}/{task_id}.md\tbranch={feature_branch}")
     else:
-        print(f"CLAIMED\t{task_id}\tdevelop/task/{task_id}.md\tbranch={branch_after_sync}")
+        print(f"CLAIMED\t{task_id}\t{layout.TASK_DIR}/{task_id}.md\tbranch={branch_after_sync}")
 
 
 # --- release（5.6） ---------------------------------------------------------
@@ -465,7 +464,7 @@ def cmd_done(toplevel: str, task_id: str, dropped: bool, result_path: str) -> No
         print(f"NOT_OWNER\t{task_id}")
         raise SystemExit(4)
 
-    task_dir = os.path.join(toplevel, "develop", TASK_DIR_NAME)
+    task_dir = os.path.join(toplevel, layout.TASK_DIR)
     path = taskfile.task_path(task_dir, task_id)
     task, err = taskfile.read_task_file(path)
     if err is not None or task is None:
@@ -485,7 +484,7 @@ def cmd_done(toplevel: str, task_id: str, dropped: bool, result_path: str) -> No
     with open(path, "w", encoding="utf-8") as f:
         f.write(rendered)
 
-    relpath = os.path.join("develop", TASK_DIR_NAME, f"{task_id}.md")
+    relpath = os.path.join(layout.TASK_DIR, f"{task_id}.md")
     _run_git(toplevel, ["add", relpath])
     print(f"DONE\t{task_id}\t{relpath}\tstaged")
 
@@ -568,7 +567,7 @@ def cmd_ship(toplevel: str) -> None:
     )
 
 
-FEATURE_BRANCH = re.compile(r"feature/(T-\d{3,})")
+FEATURE_BRANCH = layout.FEATURE_BRANCH_PATTERN
 
 
 def _leave_feature_branch(root: str, toplevel: str, branch: str) -> str:
@@ -653,7 +652,7 @@ def cmd_prune(toplevel: str, dry_run: bool, minimum: int) -> None:
     if dry_run:
         print(f"PLAN\t{len(targets)}")
         return
-    paths = [f"develop/{TASK_DIR_NAME}/{tid}.md" for tid, _ in targets]
+    paths = [f"{layout.TASK_DIR}/{tid}.md" for tid, _ in targets]
     r = _run_git(toplevel, ["rm", "-q", "--", *paths])
     if r.returncode != 0:
         raise ledger.GitCommandError(f"git rm が失敗した: {r.stderr.strip()}")
@@ -662,7 +661,7 @@ def cmd_prune(toplevel: str, dry_run: bool, minimum: int) -> None:
 
 def _retrospect_base(toplevel: str) -> tuple[str | None, str | None]:
     """`(基準点のハッシュ, INVALIDの理由)`。記録ファイルや1行が無ければ基準点なし（`reviewed` だけで判定）。"""
-    path = os.path.join(toplevel, "develop", "retrospective.md")
+    path = os.path.join(toplevel, layout.RETROSPECTIVE_PATH)
     if not os.path.exists(path):
         return None, None
     with open(path, encoding="utf-8") as f:
@@ -671,12 +670,12 @@ def _retrospect_base(toplevel: str) -> tuple[str | None, str | None]:
         return None, None
     since = m.group(1)
     if _run_git(toplevel, ["cat-file", "-e", f"{since}^{{commit}}"]).returncode != 0:
-        return None, f"develop/retrospective.md の基準点 {since} がこのリポジトリに無い"
+        return None, f"{layout.RETROSPECTIVE_PATH} の基準点 {since} がこのリポジトリに無い"
     return since, None
 
 
 def _tasks_at(toplevel: str, rev: str) -> dict[str, taskfile.Task]:
-    r = _run_git(toplevel, ["ls-tree", "--name-only", rev, f"develop/{TASK_DIR_NAME}/"])
+    r = _run_git(toplevel, ["ls-tree", "--name-only", rev, f"{layout.TASK_DIR}/"])
     tasks: dict[str, taskfile.Task] = {}
     for path in r.stdout.splitlines() if r.returncode == 0 else []:
         stem = os.path.splitext(os.path.basename(path))[0]
@@ -690,7 +689,7 @@ def _tasks_at(toplevel: str, rev: str) -> dict[str, taskfile.Task]:
 
 
 def _status_at(toplevel: str, rev: str, task_id: str) -> str | None:
-    shown = _run_git(toplevel, ["show", f"{rev}:develop/{TASK_DIR_NAME}/{task_id}.md"])
+    shown = _run_git(toplevel, ["show", f"{rev}:{layout.TASK_DIR}/{task_id}.md"])
     if shown.returncode != 0:
         return None
     parsed, err = taskfile.parse(shown.stdout)

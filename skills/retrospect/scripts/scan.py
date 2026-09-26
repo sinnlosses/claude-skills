@@ -22,11 +22,18 @@ import re
 import subprocess
 import sys
 
-import transcript
+_TASK_WORKFLOW_SCRIPTS = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "task-workflow", "scripts")
+)
+if _TASK_WORKFLOW_SCRIPTS not in sys.path:
+    sys.path.insert(0, _TASK_WORKFLOW_SCRIPTS)
+
+import layout  # noqa: E402
+import transcript  # noqa: E402
 
 # develop/retrospective.md の先頭付近にあるこの形の行だけが、機械の読む値。
 HASH_LINE = re.compile(r"^最後に振り返ったコミット:\s*`([0-9a-f]{7,40})`")
-TASK_ID = re.compile(r"\bT-\d{3,}\b")
+TASK_ID = layout.ID_SEARCH_PATTERN
 # 1件ごとの振り返りが済んだ印。`## 結果` の中のこの形の行（task-workflow の WORKFLOW.md
 # 「結果の書き方と知見の置き場」）。
 REVIEWED_LINE = re.compile(r"^- 振り返り:")
@@ -34,7 +41,7 @@ REVIEWED_LINE = re.compile(r"^- 振り返り:")
 
 def main() -> None:
     root, since = parse_args(sys.argv[1:])
-    record = os.path.join(root, "develop", "retrospective.md")
+    record = os.path.join(root, layout.RETROSPECTIVE_PATH)
 
     if since is None:
         if not os.path.exists(record):
@@ -127,7 +134,7 @@ def has_review_line(root: str, rev: str, task_id: str) -> bool:
 
     いまの `HEAD` ではなくそのコミットの版を読むので、あとでファイルを消したタスクでも判定できる。
     """
-    text, _ = git_out(root, "show", f"{rev}:develop/task/{task_id}.md")
+    text, _ = git_out(root, "show", f"{rev}:{layout.TASK_DIR}/{task_id}.md")
     in_result = False
     for line in (text or "").splitlines():
         if line.startswith("## "):

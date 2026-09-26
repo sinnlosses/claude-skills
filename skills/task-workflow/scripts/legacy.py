@@ -22,9 +22,9 @@ import subprocess
 from dataclasses import dataclass
 
 import ledger
+import layout
 import taskfile
 
-TASK_DIR_NAME = "task"
 HISTORY_DIR = "docs/history"
 PROGRESS_ARCHIVE_HEADER = "# 過去セッションの「完了したこと」"
 # 「## 完了したこと（このセッション）」のように後ろに補足が付いた表記が実在するので前方一致で拾う。
@@ -256,7 +256,7 @@ def migrate(toplevel: str, dry_run: bool) -> MigrateResult:
 
     tasks_json_path = os.path.join(toplevel, "develop", "tasks.json")
     if not os.path.exists(tasks_json_path):
-        direction_path = os.path.join(toplevel, "develop", "direction.md")
+        direction_path = os.path.join(toplevel, layout.DIRECTION_PATH)
         detail = "develop/tasks.json が無い" + ("（既に新形式）" if os.path.exists(direction_path) else "")
         return MigrateResult(kind="NOTHING", detail=detail)
 
@@ -275,7 +275,7 @@ def migrate(toplevel: str, dry_run: bool) -> MigrateResult:
             return MigrateResult(kind="INVALID", detail=f"{raw.get('id', '?')}\t{conv_err}")
         converted.append(task)  # type: ignore[arg-type]
 
-    written = tuple(f"develop/{TASK_DIR_NAME}/{t.id}.md" for t in converted)
+    written = tuple(f"{layout.TASK_DIR}/{t.id}.md" for t in converted)
 
     progress_path = os.path.join(toplevel, "develop", "progress.md")
     moved_sections = 0
@@ -303,12 +303,12 @@ def migrate(toplevel: str, dry_run: bool) -> MigrateResult:
             task_count=len(converted),
         )
 
-    task_dir = os.path.join(toplevel, "develop", TASK_DIR_NAME)
+    task_dir = os.path.join(toplevel, layout.TASK_DIR)
     os.makedirs(task_dir, exist_ok=True)
     for t in converted:
         with open(taskfile.task_path(task_dir, t.id), "w", encoding="utf-8") as f:
             f.write(taskfile.render(t))
-    _run_git(toplevel, ["add", os.path.join("develop", TASK_DIR_NAME)])
+    _run_git(toplevel, ["add", layout.TASK_DIR])
 
     if moved_sections > 0:
         archive_path = os.path.join(toplevel, HISTORY_DIR, "progress.md")
@@ -326,7 +326,7 @@ def migrate(toplevel: str, dry_run: bool) -> MigrateResult:
     _run_git(toplevel, ["rm", "-q", "develop/tasks.json"])
 
     root = ledger.ledger_root(cwd=toplevel)
-    history_ids = taskfile.history_ids(os.path.join(toplevel, "docs", "history", "tasks.md"))
+    history_ids = taskfile.history_ids(os.path.join(toplevel, layout.HISTORY_TASKS_PATH))
     max_id = max(
         [0] + [taskfile.id_number(t.id) for t in converted] + [taskfile.id_number(h) for h in history_ids]
     )

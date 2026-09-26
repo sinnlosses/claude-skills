@@ -29,14 +29,21 @@ import re
 import subprocess
 import sys
 
-import transcript
+_TASK_WORKFLOW_SCRIPTS = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "task-workflow", "scripts")
+)
+if _TASK_WORKFLOW_SCRIPTS not in sys.path:
+    sys.path.insert(0, _TASK_WORKFLOW_SCRIPTS)
+
+import layout  # noqa: E402
+import transcript  # noqa: E402
 
 DEFAULT_DIFF_BYTES = 40000
 
 
 def main() -> None:
     root, task_id, want_diff, diff_bytes, signals_only = parse_args(sys.argv[1:])
-    if not re.fullmatch(r"T-\d{3,}", task_id):
+    if not layout.ID_PATTERN.fullmatch(task_id):
         print(f"INVALID\t{task_id}\tタスクIDは T- + 3桁以上")
         return
 
@@ -75,7 +82,7 @@ def print_task(root: str, task_id: str) -> bool:
     振り返り後にファイルを消したタスクは `HEAD` に無いので、最後に存在した版
     （`last_existing_ref`）を代わりに読む。
     """
-    rel = f"develop/task/{task_id}.md"
+    rel = f"{layout.TASK_DIR}/{task_id}.md"
     text, _ = git_out(root, "show", f"HEAD:{rel}")
     if text is not None:
         print(f"出典\t{rel}（HEAD）")
@@ -110,10 +117,10 @@ def print_task(root: str, task_id: str) -> bool:
                 print(t.get("task", ""))
                 return False
 
-    archive = os.path.join(root, "docs", "history", "tasks.md")
+    archive = os.path.join(root, layout.HISTORY_TASKS_PATH)
     body = find_archived_task(archive, task_id)
     if body is None:
-        print(f"-\t{task_id} が develop/task/ にも tasks.json にもアーカイブにも無い")
+        print(f"-\t{task_id} が {layout.TASK_DIR}/ にも tasks.json にもアーカイブにも無い")
         return False
     print(f"出典\t{archive}")
     print()
@@ -128,7 +135,7 @@ def print_task_file_diff(root: str, task_id: str) -> None:
     書く節なので、登録時の版には無い）。`HEAD` に無いタスクは、最後に存在した版
     （`last_existing_ref`）までの差にする。
     """
-    rel = f"develop/task/{task_id}.md"
+    rel = f"{layout.TASK_DIR}/{task_id}.md"
     added, err = git_out(root, "log", "--diff-filter=A", "--format=%h", "--", rel)
     first = (added or "").split()
     if not first:
@@ -178,10 +185,9 @@ def find_archived_task(path: str, task_id: str) -> str | None:
             lines = f.read().splitlines()
     except OSError:
         return None
-    head = re.compile(r"^## (T-\d{3,})\b")
     start = None
     for i, ln in enumerate(lines):
-        m = head.match(ln)
+        m = layout.HISTORY_HEADING_PATTERN.match(ln)
         if not m:
             continue
         if m.group(1) == task_id:

@@ -23,11 +23,12 @@ import os
 import re
 import sys
 
-DIRECTION = "# 未対応の指示メモ\n\n## ユーザーから\n\n## エージェントのドラフト\n"
+import layout
 
-# direction.md の2節（正典「指示メモ」）。前方一致で探す。
-SECTION_USER = "## ユーザーから"
-SECTION_DRAFT = "## エージェントのドラフト"
+# direction.md の2節（正典「指示メモ」）。前方一致で探す。値は layout.py の正典を読む。
+SECTION_USER = layout.SECTION_USER
+SECTION_DRAFT = layout.SECTION_DRAFT
+DIRECTION = f"# 未対応の指示メモ\n\n{SECTION_USER}\n\n{SECTION_DRAFT}\n"
 
 # CLAUDE.md 側の正典（正典「ファイル配置と CLAUDE.md」）。スキルと task.py はこの節を読む。
 CLAUDE_MD = "CLAUDE.md"
@@ -51,7 +52,7 @@ def main() -> None:
         raise SystemExit(5)
 
     os.makedirs(root, exist_ok=True)
-    create(os.path.join(root, "direction.md"), DIRECTION, check_direction)
+    create(os.path.join(root, os.path.basename(layout.DIRECTION_PATH)), DIRECTION, check_direction)
     print(check_claude_md(CLAUDE_MD))
 
 

@@ -13,10 +13,11 @@ YAML にしない理由・見出しの意味は正典を参照（同ファイル
 from __future__ import annotations
 
 import os
-import re
 from dataclasses import dataclass
 
-ID_PATTERN = re.compile(r"^T-\d{3,}$")
+import layout
+
+ID_PATTERN = layout.ID_PATTERN
 STATUS_VALUES = ("todo", "hold", "done", "dropped")
 DIFFICULTY_VALUES = ("haiku", "sonnet", "opus")
 LOOPABLE_VALUES = ("Y", "N")
@@ -199,7 +200,4 @@ def history_ids(history_tasks_path: str) -> set[str]:
         return set()
     with open(history_tasks_path, encoding="utf-8") as f:
         text = f.read()
-    return {
-        m.group(1)
-        for m in re.finditer(r"^## (T-\d{3,})\b", text, flags=re.MULTILINE)
-    }
+    return {m.group(1) for m in layout.HISTORY_HEADING_PATTERN.finditer(text)}

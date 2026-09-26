@@ -13,9 +13,18 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from collections import Counter
 
-TASK_ID = re.compile(r"\bT-\d{3,}\b")
+_TASK_WORKFLOW_SCRIPTS = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "task-workflow", "scripts")
+)
+if _TASK_WORKFLOW_SCRIPTS not in sys.path:
+    sys.path.insert(0, _TASK_WORKFLOW_SCRIPTS)
+
+import layout  # noqa: E402
+
+TASK_ID = layout.ID_SEARCH_PATTERN
 
 
 def subagent_dirs(root: str) -> list[str]:
