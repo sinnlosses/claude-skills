@@ -334,6 +334,7 @@ zsh で単語に分かれず空振りし、`;` で続けた後続のコマンド
 | `ship` | rebase → （付け替えたら）検証 → ff-only で送る → 印を消す → 作業ブランチから降りる | `SHIPPED`・`NOTHING`・`MAIN_DIRTY`・`CONFLICT`・`VERIFY_FAILED`・`RACE` |
 | `prune [--dry-run] [--min N]` | `HEAD` で `done`・`dropped`・印なし、かつ振り返り済み（`## 結果` に `- 振り返り:` の行がある＝`reviewed`／`develop/retrospective.md` の基準点の版で既に `done`・`dropped`＝`retrospect`）のタスクファイルを `git rm` して stage（コミットしない）。対象が `--min`（既定10）件に届かなければ何もしない。`--dry-run` は一覧だけ（汚れていても打てる） | 対象ごとに `PRUNE\tT-xxx\t<reviewed\|retrospect>`、最後に `PRUNED\t<N>`／`PLAN\t<N>`（`--dry-run`）。対象が無いか `--min` 件に届かなければ `NOTHING`。`DIRTY`・`INVALID`（基準点のハッシュが無い） |
 | `migrate [--dry-run]` | 旧形式を変換する（下の「旧形式からの移行」） | `WRITE`・`MOVE`・`LEFTOVER`・`REMOVE`・`PLAN`/`MIGRATED` |
+| `config-doctor` | このリポジトリが今の読み取りに合っているかを点検する（**読むだけ。`--fix` は無い**）。主ブランチが何で決まったか・設定ファイルがどちらか・「## タスク運用」の3行・旧形式の残り、の4検査を必ず1行ずつ出す | `base_branch`・`config_file`・`claude_md_lines`・`legacy` の4行。各行の2語目が `OK`／`MISSING`／`MISSING_LINE`／`BAD_BRANCH`／`NO_SECTION`／`FOUND`／`INVALID` |
 
 | 終了コード | 先頭語 | 意味 | スキルがすること |
 | --- | --- | --- | --- |
@@ -349,6 +350,9 @@ zsh で単語に分かれず空振りし、`;` で続けた後続のコマンド
 | 9 | `RACE` | `--ff-only` が3回続けて落ちた | 人に預ける |
 
 `/loop` は 1・3〜9 のどれで止まっても「続行不要」の合図として扱う。
+
+**`config-doctor` だけは終了コード1の意味が違う**（「直すものがある」。環境の故障ではない）。4検査の最悪値を返し、`INVALID` があれば3、直すものがあれば1、全部OKで0。点検のコマンドなので、1で止まっても報告するだけでよい。
+
 
 ## 旧形式からの移行
 

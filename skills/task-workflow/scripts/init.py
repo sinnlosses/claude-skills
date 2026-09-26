@@ -68,16 +68,20 @@ def create(path: str, body: str, check) -> None:
     print(f"CREATED\t{path}")
 
 
-def check_claude_md() -> str:
+def check_claude_md(root: str = ".") -> str:
     """「## タスク運用」節と3行が在るか、`- ブランチ:` の先頭語が語彙に当たるかを見る。書き換えはしない。
 
     設定ファイルは `layout.find_config_file`（`AGENTS.md` → `CLAUDE.md` の順）で決める。
     両方に節があれば `INVALID`（`SystemExit` はしない。他の返り値と同じ「印字するだけ」の形）。
     どちらにも節が無ければ、実在する最初のファイル（無ければ `CLAUDE.md`）を指して報告する
     （従来どおり `MISSING`／`NO_SECTION` を区別する）。
+
+    `root` は既定でカレントディレクトリ（`init.py` 自身の呼び方）。`task config-doctor`
+    （T-021）はリポジトリの根の絶対パスを渡す（toplevel を渡す呼び方に対応するための引数で、
+    判定そのものは変えない）。
     """
     try:
-        found = layout.find_config_file(".")
+        found = layout.find_config_file(root)
     except layout.ConfigConflict as e:
         return f"INVALID\t{'/'.join(layout.CONFIG_FILENAMES)}\t{e}"
     if found is not None:
@@ -93,7 +97,7 @@ def check_claude_md() -> str:
             return f"BAD_BRANCH\t{path}\t（- ブランチ: の先頭語 {word!r} が {' / '.join(BRANCH_WORDS)} のどれでもない）"
         return f"OK\t{path}\t（{CLAUDE_SECTION} 節あり）"
 
-    existing = next((n for n in layout.CONFIG_FILENAMES if os.path.exists(n)), None)
+    existing = next((n for n in layout.CONFIG_FILENAMES if os.path.exists(os.path.join(root, n))), None)
     if existing is None:
         return f"MISSING\t{CLAUDE_MD}\t（「{CLAUDE_SECTION}」節ごと作る）"
     # 実測した3プロジェクトとも、検証コマンド自体は CLAUDE.md の別の節に書いてあった。

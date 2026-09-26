@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """1件1ファイル＋台帳の形のタスク運用を操作する入口コマンド。
 
-使い方: task.py <status|new|claim|release|done|ship|prune|migrate> ...
+使い方: task.py <status|new|claim|release|done|ship|prune|migrate|config-doctor> ...
 
 正典は `docs/task-workflow-redesign.md`（5章が `task` コマンド、4章が状態と台帳、
 3章がタスクファイル、6章が送り出し、5.9・10章が `migrate`）。スキルからは
@@ -26,6 +26,7 @@ import sys
 import time
 import unicodedata
 
+import init
 import layout
 import ledger
 import legacy
@@ -740,6 +741,77 @@ def cmd_migrate(toplevel: str, dry_run: bool) -> None:
     print(f"{'PLAN' if dry_run else 'MIGRATED'}\t{result.task_count}")
 
 
+# --- config-doctor（T-021） --------------------------------------------------
+
+
+def cmd_config_doctor(toplevel: str) -> None:
+    """設定と形式のズレの点検（読むだけ・`--fix` は無い）。検査1つに1行、タブ区切りで出す
+    （`task status` と同じ形。人向けの段落は出さない）。判定は書き起こさず、既存の部品
+    （`ledger.base_branch`・`layout.find_config_file`・`init.check_claude_md`・旧形式の残りの
+    直接の検出）を呼ぶだけ（正典 WORKFLOW.md「ファイル配置と設定ファイル（AGENTS.md →
+    CLAUDE.md の順）」・T-013・T-020）。
+
+    4行を必ず出す（途中の検査が INVALID でも残りの検査は続ける。呼び出し側が全体像を
+    1回の実行で見られるようにする）。終了コードは 0（全部OK）／1（直すものがある）／
+    3（INVALID）——最悪のものを返す。`main` の `ledger.NoBaseBranch`・`layout.ConfigConflict`
+    の受け皿（呼び出し側で即 `INVALID` にする仕組み）は使わない。ここで捕まえて次の検査に進む。
+    """
+    exit_code = 0
+
+    # 検査1: 主ブランチが何で決まったか（T-013 の順1〜3。順4＝決まらない＝INVALID）。
+    try:
+        base = ledger.base_branch(toplevel)
+        order = ledger.base_branch_order(toplevel)
+        print(f"base_branch\tOK\t{base}\t順{order}")
+    except (ledger.NoBaseBranch, layout.ConfigConflict) as e:
+        print(f"base_branch\tINVALID\t{e}")
+        exit_code = 3
+
+    # 検査2: 設定ファイルが AGENTS.md か CLAUDE.md か、両方に節があって INVALID か（T-020）。
+    try:
+        found = layout.find_config_file(toplevel)
+    except layout.ConfigConflict as e:
+        print(f"config_file\tINVALID\t{e}")
+        exit_code = 3
+    else:
+        if found is None:
+            existing = next(
+                (n for n in layout.CONFIG_FILENAMES if os.path.exists(os.path.join(toplevel, n))), None
+            )
+            print(f"config_file\tMISSING\t{existing or layout.CONFIG_FILENAMES[-1]}")
+            exit_code = max(exit_code, 1)
+        else:
+            path, _text = found
+            print(f"config_file\tOK\t{os.path.relpath(path, toplevel)}")
+
+    # 検査3: 「## タスク運用」の3行の在否と `- ブランチ:` の先頭語が語彙に当たるか
+    # （`init.check_claude_md` そのもの。新しく判定を書き起こさない）。
+    kind, _, rest = init.check_claude_md(toplevel).partition("\t")
+    rest = rest.replace(toplevel + os.sep, "")  # 絶対パスの根を削り、check_file と表記を揃える
+    print(f"claude_md_lines\t{kind}" + (f"\t{rest}" if rest else ""))
+    if kind == "INVALID":
+        exit_code = 3
+    elif kind != "OK":
+        exit_code = max(exit_code, 1)
+
+    # 検査4: 旧形式の残り（develop/tasks.json・develop/progress.md）があるか。
+    tasks_json = os.path.exists(os.path.join(toplevel, "develop", "tasks.json"))
+    progress_md = os.path.exists(os.path.join(toplevel, "develop", "progress.md"))
+    if tasks_json or progress_md:
+        leftover = ", ".join(
+            p
+            for p, present in (("develop/tasks.json", tasks_json), ("develop/progress.md", progress_md))
+            if present
+        )
+        print(f"legacy\tFOUND\t{leftover}\ttask migrate --dry-run")
+        exit_code = max(exit_code, 1)
+    else:
+        print("legacy\tOK")
+
+    if exit_code:
+        raise SystemExit(exit_code)
+
+
 # --- 入口 -------------------------------------------------------------------
 
 
@@ -780,6 +852,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_migrate = sub.add_parser("migrate")
     p_migrate.add_argument("--dry-run", dest="dry_run", action="store_true")
 
+    sub.add_parser("config-doctor")
+
     return parser
 
 
@@ -792,7 +866,7 @@ def main(argv: list[str] | None = None) -> None:
         print(str(e), file=sys.stderr)
         raise SystemExit(1)
 
-    if args.command != "migrate":
+    if args.command not in ("migrate", "config-doctor"):
         kind, detail = detect_format(toplevel)
         if kind == "INVALID":
             print(f"INVALID\t{detail}")
@@ -822,6 +896,8 @@ def main(argv: list[str] | None = None) -> None:
             cmd_prune(toplevel, args.dry_run, max(args.minimum, 1))
         elif args.command == "migrate":
             cmd_migrate(toplevel, args.dry_run)
+        elif args.command == "config-doctor":
+            cmd_config_doctor(toplevel)
     except (ledger.NoBaseBranch, layout.ConfigConflict) as e:
         print(f"INVALID\t{e}")
         raise SystemExit(3)

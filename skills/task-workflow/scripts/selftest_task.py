@@ -1106,6 +1106,87 @@ def test_config_file_agents_md_and_conflict() -> None:
         )
 
 
+def _make_config_doctor_repo(tmp: str, name: str) -> str:
+    """`task config-doctor`（T-021）のフィクスチャ用の最小リポジトリ。
+
+    `make_repo` は「## タスク運用」の3行のうち `- 整形コマンド:` を書かない（他のテストが
+    `read_verify_command`／`read_branch_setting` しか見ないため）ので、`claude_md_lines`
+    検査が必ず `MISSING_LINE` になってしまう。ここでは3行そろった CLAUDE.md を直接書く。
+    """
+    repo = os.path.join(tmp, name)
+    os.makedirs(repo)
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "config", "user.email", "test@example.com")
+    git(repo, "config", "user.name", "test")
+    write(
+        os.path.join(repo, "develop", "direction.md"),
+        "# 未対応の指示メモ\n\n## ユーザーから\n\n## エージェントのドラフト\n",
+    )
+    write(os.path.join(repo, "docs", "history", "tasks.md"), "# 完了タスクのアーカイブ\n")
+    write(
+        os.path.join(repo, "CLAUDE.md"),
+        "# x\n\n## タスク運用\n\n- 検証コマンド: なし\n- 整形コマンド: なし\n- ブランチ: 既定\n",
+    )
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "init")
+    return repo
+
+
+def test_config_doctor() -> None:
+    print("task.py config-doctor（T-021: 設定と形式のズレの点検。読むだけ）")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = _make_config_doctor_repo(tmp, "ok")
+        r = run_task(repo, "config-doctor")
+        lines = r.stdout.splitlines()
+        check(
+            "OKのリポジトリは終了コード0で4検査ともOK",
+            r.returncode == 0
+            and any(l.startswith("base_branch\tOK\tmain\t順3") for l in lines)
+            and any(l.startswith("config_file\tOK\tCLAUDE.md") for l in lines)
+            and any(l.startswith("claude_md_lines\tOK") for l in lines)
+            and "legacy\tOK" in lines,
+            r.stdout + r.stderr,
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # 旧形式の残り（develop/tasks.json・develop/progress.md）だけがあるケース。
+        # 他の3検査はOKでも、残りがあれば全体は「直すものがある」＝終了コード1。
+        repo = _make_config_doctor_repo(tmp, "leftover")
+        write(os.path.join(repo, "develop", "tasks.json"), "[]\n")
+        write(os.path.join(repo, "develop", "progress.md"), "## 未解決\n\n- x\n")
+        r = run_task(repo, "config-doctor")
+        lines = r.stdout.splitlines()
+        check(
+            "旧形式の残りがあれば終了コード1で案内する",
+            r.returncode == 1
+            and any(
+                l.startswith("legacy\tFOUND\t") and "develop/tasks.json" in l and "develop/progress.md" in l
+                and l.endswith("task migrate --dry-run")
+                for l in lines
+            )
+            and any(l.startswith("base_branch\tOK") for l in lines)
+            and any(l.startswith("claude_md_lines\tOK") for l in lines),
+            r.stdout + r.stderr,
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # AGENTS.md と CLAUDE.md の両方に「## タスク運用」節があるケース。
+        repo = _make_config_doctor_repo(tmp, "conflict")
+        write(os.path.join(repo, "AGENTS.md"), "# a\n\n## タスク運用\n\n- ブランチ: 既定\n")
+        r = run_task(repo, "config-doctor")
+        lines = r.stdout.splitlines()
+        check(
+            "両方に節があれば終了コード3で全検査がINVALIDと言う",
+            r.returncode == 3
+            and any(l.startswith("base_branch\tINVALID\t") for l in lines)
+            and any(l.startswith("config_file\tINVALID\t") for l in lines)
+            and any(l.startswith("claude_md_lines\tINVALID\t") for l in lines)
+            and "legacy\tOK" in lines,
+            r.stdout + r.stderr,
+        )
+
+
 def test_full_cycle_on_master_repo() -> None:
     print("task.py: 主ブランチが master のリポジトリで一式（status→new→claim→done→ship→prune）")
     with tempfile.TemporaryDirectory() as tmp:
@@ -1210,6 +1291,7 @@ def main() -> None:
         test_prune,
         test_base_branch_resolution,
         test_config_file_agents_md_and_conflict,
+        test_config_doctor,
         test_full_cycle_on_master_repo,
     ):
         t()

@@ -67,7 +67,7 @@ BASE_BRANCH_CANDIDATES = ("main", "master", "trunk")
 # （保護ブランチや複数リモートの逃げ道）。
 BASE_BRANCH_LINE = re.compile(r"^- 主ブランチ:[ \t]*(.*)$", re.MULTILINE)
 
-_base_branch_cache: dict[str, str] = {}
+_base_branch_cache: dict[str, tuple[str, int]] = {}
 
 
 def _configured_base_branch(toplevel: str) -> str | None:
@@ -94,8 +94,9 @@ def _configured_base_branch(toplevel: str) -> str | None:
     return word or None
 
 
-def base_branch(cwd: str | None = None) -> str:
-    """このリポジトリの主ブランチ名（`main` に固定しない）。
+def _resolve_base_branch(cwd: str | None) -> tuple[str, int]:
+    """`(主ブランチ名, 決まった順)` を1回だけ git に問い合わせて決める（`base_branch`・
+    `base_branch_order` の共有部分。呼ぶ側を増やしても判定は1箇所のまま）。
 
     決め方の順:
 
@@ -117,7 +118,9 @@ def base_branch(cwd: str | None = None) -> str:
         return cached
 
     found = _configured_base_branch(toplevel)
+    order = 1
     if found is None:
+        order = 2
         r = subprocess.run(
             ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
             cwd=toplevel,
@@ -128,6 +131,7 @@ def base_branch(cwd: str | None = None) -> str:
         if r.returncode == 0 and head.startswith("origin/"):
             found = head[len("origin/") :]
     if found is None:
+        order = 3
         for name in BASE_BRANCH_CANDIDATES:
             r = subprocess.run(
                 ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{name}"],
@@ -144,8 +148,18 @@ def base_branch(cwd: str | None = None) -> str:
             f"{'・'.join(BASE_BRANCH_CANDIDATES)} の枝も無い）"
         )
 
-    _base_branch_cache[toplevel] = found
-    return found
+    _base_branch_cache[toplevel] = (found, order)
+    return found, order
+
+
+def base_branch(cwd: str | None = None) -> str:
+    """このリポジトリの主ブランチ名（`main` に固定しない）。決め方の順は `_resolve_base_branch`。"""
+    return _resolve_base_branch(cwd)[0]
+
+
+def base_branch_order(cwd: str | None = None) -> int:
+    """主ブランチが決まった順（1〜3。`_resolve_base_branch` の docstring）。`task config-doctor` 向け。"""
+    return _resolve_base_branch(cwd)[1]
 
 
 def clear_base_branch_cache() -> None:
