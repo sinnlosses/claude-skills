@@ -57,3 +57,17 @@
   - 出し先: `skills/task-workflow/WORKFLOW.md`「`task` コマンドの参照」の冒頭か
     `skills/plan-tasks/SKILL.md` の完了条件の書き方に、「サブコマンドを足すときは参照表と
     終了コードの表も同じコミットで直す」を1行足すタスク
+- **helm-yadokari と tsukumo の `docs/workflow.md` に残っている `develop/workflow.json` の値の表を消す**（振り返り: T-022）
+  - 根拠: 旧 `develop/progress.md` の「注意」に残っていた生きた項目。3リポジトリとも同じ残骸があり、
+    Git-Bulk-Maestro だけ承認を得て削除済みで、残る2つは範囲外として手つかず。T-022 は他リポジトリを
+    触らない決定だったため、`develop/progress.md` を消すときの移し先がこのドラフトしか無かった
+  - 出し先: helm-yadokari と tsukumo の `docs/workflow.md` から当該の表を消すタスク
+    （それぞれのリポジトリで行うので、claude-skills 側のタスクにはしない。ユーザーの承認が要る）
+- **一時的な注意の移し先が無いときの逃げ道を正典の「知見の置き場」に書く**（振り返り: T-022）
+  - 根拠: T-022 は `develop/progress.md` の生きた注意2件を移す作業で、1件目（長く効く前提）は
+    `WORKFLOW.md` に置けたが、2件目（他リポジトリの未処理）は「関係するタスクの `## 注意`」しか
+    行き先が無く、いま完了するタスク自身に書くと `task prune` で消える。委譲先はそれを承知で
+    次善として自分の `## 注意` に置き、受け入れでメインがドラフトへ移した
+  - 出し先: `skills/task-workflow/WORKFLOW.md`「結果の書き方と知見の置き場」の表に
+    「行き先のタスクが無い一時的な注意は `develop/direction.md` の `## エージェントのドラフト` へ」
+    の1行を足すタスク

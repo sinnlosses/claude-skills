@@ -8,6 +8,6 @@ Claude Code のユーザー単位スキルのソース。構成と導入は [REA
 - 整形コマンド: なし
 - ブランチ: 既定
 
-`develop/tasks.json`・`develop/progress.md`・`develop/direction.md` で管理する。
+`develop/task/` の1件1ファイルと `develop/direction.md` で管理する。
 指示は `develop/direction.md` に溜め、`/plan-tasks` でタスク化して `/next-task` で進める。
 ルールの正典は [skills/task-workflow/WORKFLOW.md](skills/task-workflow/WORKFLOW.md)。
