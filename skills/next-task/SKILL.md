@@ -18,6 +18,10 @@ description: "develop/task/ の未着手タスクを1件選び、task コマン�
 
 ## 手順
 
+0. **依存を確かめる**: `${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py` が無ければ、
+   `task-workflow` スキルが張られていないとして `MISSING` を報告して終了する（`install.sh` で
+   `task-workflow` も一緒に張るよう案内する。以下の `task` はこの `task.py` を指す）。
+
 1. **見渡す**: `task status`。終了コードで分かれる:
 
    | 終了コード | すること |

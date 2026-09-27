@@ -9,6 +9,11 @@ description: "タスク運用に要る develop/direction.md（## ユーザーか
 
 ## 手順
 
+0. **依存を確かめる**: `${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py` が無ければ、
+   `task-workflow` スキルが張られていないとして `MISSING` を報告して終了する（`install.sh` で
+   `task-workflow` も一緒に張るよう案内する。以下の手順で打つ `task-workflow` の各スクリプトは
+   これが前提）。
+
 1. **作る**。骨組みは決まりきっているので手で書かない（見出し以外の行が混ざると `/plan-tasks` が
    「未対応の指示がある」と誤判定する）:
 

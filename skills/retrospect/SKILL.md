@@ -27,6 +27,12 @@ description: "実行し終えたタスクを振り返り、次に効く改善だ
 
 ## 手順（まとめて振り返る。手で呼ぶ）
 
+### 0. 依存を確かめる
+
+`${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py` が無ければ、`task-workflow` スキルが
+張られていないとして `MISSING` を報告して終了する（`install.sh` で `task-workflow` も一緒に
+張るよう案内する。以下の `task.py`・`scan.py`・`material.py` の呼び出しはこれが前提）。
+
 ### 1. 範囲を決める
 
 先に形式を確かめる:

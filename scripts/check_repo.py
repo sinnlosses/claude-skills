@@ -136,6 +136,20 @@ def check_cross_references(names: list[str]) -> None:
                     fail(f"{os.path.relpath(md, ROOT)}: `{ref}` スキルは実在しない")
 
 
+def check_requires(names: list[str]) -> None:
+    """各スキルの `REQUIRES`（依存する兄弟スキル名を1行ずつ）が実在するスキルを指しているか。"""
+    for n in names:
+        path = os.path.join(SKILLS, n, "REQUIRES")
+        if not os.path.exists(path):
+            continue
+        for dep in read(path).splitlines():
+            dep = dep.strip()
+            if not dep:
+                continue
+            if dep not in names:
+                fail(f"{n}/REQUIRES: 依存先 `{dep}` は実在しない")
+
+
 def check_docs_index(names: list[str]) -> None:
     """`docs/` に書くスキルが、索引 `docs/README.md` に1行足す指示を持っているか。
 
@@ -291,6 +305,7 @@ def main() -> None:
     check_readme_index(names)
     check_script_paths(names)
     check_cross_references(names)
+    check_requires(names)
     check_docs_index(names)
     check_python_syntax(names)
     check_task_workflow_layout()

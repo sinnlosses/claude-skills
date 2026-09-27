@@ -17,6 +17,10 @@ python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py status
 
 ## 表示のしかた
 
+0. **依存を確かめる**: `${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py` が無ければ、
+   `task-workflow` スキルが張られていないとして `MISSING` を報告して終了する（`install.sh` で
+   `task-workflow` も一緒に張るよう案内する。以下の `task status` はこの `task.py` を指す）。
+
 1. 終了コードが0でなければ表を出さずに終わる: 5（`LEGACY`）は「旧形式（`develop/tasks.json`）。
    正典「旧形式からの移行」の手順で `task migrate --dry-run` から移す」、6（`MISSING`）は「タスク運用を
    始めていない（`/setup-tasks`）」、3 は `INVALID` の理由、1 はエラー出力をそのまま添える。

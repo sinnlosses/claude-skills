@@ -20,6 +20,10 @@ description: "develop/direction.md に書かれたユーザーからの指示（
 
 ## 手順
 
+0. **依存を確かめる**: `${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py` が無ければ、
+   `task-workflow` スキルが張られていないとして `MISSING` を報告して終了する（`install.sh` で
+   `task-workflow` も一緒に張るよう案内する。以下の `task` はこの `task.py` を指す）。
+
 1. **読む**: `task status` で既存の一覧を見る（本文は読まない。重なりそうな1件があるときだけ
    `develop/task/T-xxx.md` を開く）。終了コード5（`LEGACY`）なら「旧形式。正典「旧形式からの移行」の
    手順で `task migrate --dry-run` から移す（スキルは移さない）」と案内して終了、6（`MISSING`）なら
