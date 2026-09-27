@@ -69,6 +69,11 @@ def test_parse_and_tally() -> None:
     occ = tally.tally(rows)
     check("同じ札は複数回に分けて数える", len(occ["揺れ"]) == 2, str(occ))
     check("見出しのタスクIDがそのまま付く", occ["揺れ"][0] == ["T-100", "T-200"], str(occ))
+    rows = tally.parse(
+        "# 見出しD（振り返り: T-500）\n\n- 札: 黄 揺れ（2回目）\n\n"
+        "## 見出しE（振り返り: T-600）\n\n- 札: 赤 制約違反（1回目）\n"
+    )
+    check("見出しの深さを問わず、後ろの（N回目）は札に含めない", rows == [("揺れ", ["T-500"]), ("制約違反", ["T-600"])], str(rows))
     check("1トークンの旧い記述は数えない", "揺れ" in occ and len(occ["揺れ"]) == 2 and "T-050" not in [t for g in occ["揺れ"] for t in g], str(occ))
 
 
