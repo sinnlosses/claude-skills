@@ -3,7 +3,8 @@
 #
 # 1. install.sh の構文
 # 2. task-workflow のスクリプトの自己テスト
-# 3. リポジトリ全体の整合（frontmatter・README の索引・参照先の実在）
+# 3. retrospect のスクリプトの自己テスト
+# 4. リポジトリ全体の整合（frontmatter・README の索引・参照先の実在）
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 
@@ -21,6 +22,10 @@ python3 "$here/skills/task-workflow/scripts/selftest_task.py"
 echo
 echo "== task-workflow: task コマンド（Beads 方式。bd が無ければ飛ばす）の自己テスト =="
 python3 "$here/skills/task-workflow/scripts/selftest_beads.py"
+
+echo
+echo "== retrospect scripts の自己テスト =="
+python3 "$here/skills/retrospect/scripts/selftest.py"
 
 echo
 echo "== リポジトリの整合 =="
