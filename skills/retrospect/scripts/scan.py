@@ -11,6 +11,8 @@ diff も本文も出さない。**どこまで振り返ったか**と**何が未
 あれば `reviewed` に回し、`tasks`（まとめての振り返りの対象）から外す。Beads 方式
 （task-workflow の WORKFLOW.md「Beads 方式」）では `## 結果` は閉じるときの comment にあるので、
 コミットの版ではなく Beads の comment を読む。
+ただし件名が `Revert "` で始まるコミットを持つタスクは、振り返りのあとに人に戻されたので
+`reverted` に出し、`tasks` に戻す。
 
 **データの不備で traceback を出さない。** 呼び出し側のスキルは「`MISSING`・`EMPTY`・
 `INVALID`・TSV のいずれでもない出力」を「`python3` が使えない」の合図として扱うので、
@@ -40,6 +42,8 @@ TASK_ID = layout.ID_SEARCH_PATTERN
 # 1件ごとの振り返りが済んだ印。`## 結果` の中のこの形の行（task-workflow の WORKFLOW.md
 # 「結果の書き方と知見の置き場」）。
 REVIEWED_LINE = re.compile(r"^- 振り返り:")
+# 人の差し戻しの機械の跡。git revert の既定の件名（`Revert "T-XXX: ..."`）だけを見る。
+REVERT_SUBJECT = re.compile(r'^Revert "')
 
 
 def main() -> None:
@@ -78,6 +82,7 @@ def main() -> None:
     print(f"range\t{since}..{head}")
     tasks: list[str] = []
     reviewed: list[str] = []
+    reverted: list[str] = []
     unmapped = 0
     for ln in commits:
         h, date, subject = ln.split("\t", 2)
@@ -87,6 +92,8 @@ def main() -> None:
                 tasks.append(i)
             if i not in reviewed and has_review_line(root, h, i):
                 reviewed.append(i)
+            if i not in reverted and REVERT_SUBJECT.match(subject):
+                reverted.append(i)
         if not ids:
             unmapped += 1
         files, ins, dele = diffstat(root, h)
@@ -94,9 +101,12 @@ def main() -> None:
 
     print("---")
     print(f"commits\t{len(commits)}")
-    todo = [t for t in tasks if t not in reviewed]
+    # 戻されたタスクは、1件ごとの振り返りのあとに起きたことなので振り返り済みでも対象に戻す。
+    todo = [t for t in tasks if t not in reviewed or t in reverted]
+    done = [t for t in reviewed if t not in reverted]
     print(f"tasks\t{','.join(todo) or '-'}")
-    print(f"reviewed\t{','.join(reviewed) or '-'}\t(1件ごとに振り返り済み。材料を集め直さない)")
+    print(f"reviewed\t{','.join(done) or '-'}\t(1件ごとに振り返り済み。材料を集め直さない)")
+    print(f"reverted\t{','.join(reverted) or '-'}\t(Revert の件名で戻された。人の差し戻しの跡)")
     print(f"unmapped\t{unmapped}\t(タスクIDの無いコミット。振り返りの対象から外してよい)")
     print(f"transcripts\t{len(transcript.subagent_dirs(root))}\t(見つかったトランスクリプトの置き場)")
 
