@@ -24,7 +24,7 @@ import legacy  # noqa: E402
 import taskfile  # noqa: E402
 
 TASK_PY = os.path.join(HERE, "task.py")
-BODY = "## 目的\nx\n\n## 完了条件\nx\n\n## 背景\nx\n"
+BODY = "## 目的・背景\nx\n\n## 決まっていること（蒸し返さない）\n\n## 解くべき論点\nなし\n\n## やること\n\n## 完了条件\nx\n\n## 注意\n\n## 参考情報\n"
 
 failures: list[str] = []
 
@@ -159,17 +159,29 @@ def test_taskfile_parse() -> None:
     task2, err2 = taskfile.parse(taskfile.render(task))
     check("render→parseで往復する", err2 is None and task2 == task)
 
-    check("目的・完了条件・背景が無い本文は拒む", taskfile.validate_new_body("## 目的\nx\n") is not None)
+    check("正しい登録時の本文はOK（空・「なし」の欄を含む）", taskfile.validate_new_body(BODY) is None)
+    check("枠の見出しが欠けた本文は拒む", taskfile.validate_new_body("## 目的・背景\nx\n") is not None)
     check(
-        "登録時にやること/結果を含む本文は拒む", taskfile.validate_new_body(BODY + "\n## やること\nx\n") is not None
+        "枠の見出しの順が違う本文は拒む",
+        taskfile.validate_new_body(BODY.replace("## 注意\n\n## 参考情報\n", "## 参考情報\n\n## 注意\n")) is not None,
     )
-    check("正しい登録時の本文はOK", taskfile.validate_new_body(BODY) is None)
+    check("枠の外の見出しは拒む", taskfile.validate_new_body(BODY + "\n## 背景\nx\n") is not None)
+    check("見出しより前の文は拒む", taskfile.validate_new_body("前置き\n\n" + BODY) is not None)
     check(
-        "本文で禁止節の名前に言及しただけなら通る（見出しではない）",
-        taskfile.validate_new_body(BODY + "\n`## 結果`セクションは作業後に追加します\n") is None,
+        "目的・背景が「なし」なら拒む",
+        taskfile.validate_new_body(BODY.replace("## 目的・背景\nx\n", "## 目的・背景\nなし\n")) is not None,
+    )
+    check("完了条件が空なら拒む", taskfile.validate_new_body(BODY.replace("## 完了条件\nx\n", "## 完了条件\n")) is not None)
+    filled_plan = BODY.replace("## やること\n", "## やること\n1. 書く\n")
+    check("登録時にやることを書いた本文は拒む", taskfile.validate_new_body(filled_plan) is not None)
+    check("着手後の本文（やることあり）は validate_body を通る", taskfile.validate_body(filled_plan) is None)
+    check(
+        "本文で結果の名前に言及しただけなら通る（見出しではない）",
+        taskfile.validate_new_body(BODY.replace("## 参考情報\n", "## 参考情報\n`## 結果`セクションは作業後に追加します\n"))
+        is None,
     )
     check(
-        "本文に禁止節の見出しがあると拒まれる",
+        "本文に結果の見出しがあると拒まれる",
         taskfile.validate_new_body(BODY + "\n## 結果\n結果の内容\n") is not None,
     )
 
@@ -679,10 +691,10 @@ def test_new_avoids_history_ids() -> None:
 
 def test_taskfile_set_result_section() -> None:
     print("taskfile.set_result_section")
-    body = "## 目的\nx\n\n## 完了条件\nx\n\n## 背景\nx\n"
+    body = BODY
     out = taskfile.set_result_section(body, "結果その1")
     check("結果が無ければ末尾に足す", out.endswith("## 結果\n\n結果その1\n"), out)
-    check("元の節は残る", "## 目的" in out and "## 背景" in out, out)
+    check("元の節は残る", "## 目的・背景" in out and "## 参考情報" in out, out)
 
     out2 = taskfile.set_result_section(out, "結果その2（差し替え）")
     check(

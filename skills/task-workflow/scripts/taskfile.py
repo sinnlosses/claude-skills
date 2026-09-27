@@ -22,9 +22,23 @@ STATUS_VALUES = ("todo", "hold", "done", "dropped")
 DIFFICULTY_VALUES = ("haiku", "sonnet", "opus")
 LOOPABLE_VALUES = ("Y", "N")
 
-# 登録時（`task new`）に必須の節と、登録時には書けない節（3.3）。
-REQUIRED_NEW_SECTIONS = ("## 目的", "## 完了条件", "## 背景")
-FORBIDDEN_NEW_SECTIONS = ("## やること", "## 結果")
+# 本文の枠（WORKFLOW.md「タスクファイル」）。7つの見出しを必ずこの順で置き、要らない欄は空か「なし」にする。
+PURPOSE_HEADING = "## 目的・背景"
+PLAN_HEADING = "## やること"
+ACCEPTANCE_HEADING = "## 完了条件"
+CAUTION_HEADING = "## 注意"
+SECTION_HEADINGS = (
+    PURPOSE_HEADING,
+    "## 決まっていること（蒸し返さない）",
+    "## 解くべき論点",
+    PLAN_HEADING,
+    ACCEPTANCE_HEADING,
+    CAUTION_HEADING,
+    "## 参考情報",
+)
+# 空・「なし」にできない欄。
+FILLED_SECTIONS = (PURPOSE_HEADING, ACCEPTANCE_HEADING)
+EMPTY_MARK = "なし"
 
 RESULT_HEADING = "## 結果"  # done/dropped で必須（3.3）。常に本文の最後に置く。
 
@@ -107,7 +121,7 @@ def render(task: Task) -> str:
     """`parse` の逆。front matter を6行ちょうどで書く。
 
     本文は「閉じる `---` の次に空行1行、末尾は改行1つ」に揃える。Markdown の整形ツール
-    （oxfmt・prettier）は見出しの前に空行を求めるので、`## 目的` から始まる本文をそのまま
+    （oxfmt・prettier）は見出しの前に空行を求めるので、`## 目的・背景` から始まる本文をそのまま
     連結すると、登録した直後のファイルが整形の検査で落ちる。
     """
     body = task.body.strip("\n")
@@ -142,17 +156,52 @@ def read_task_file(path: str) -> tuple[Task | None, str | None]:
 
 
 def validate_new_body(body: str) -> str | None:
-    """`task new` の本文検査（3.3）。問題が無ければ `None`。"""
-    missing = [s for s in REQUIRED_NEW_SECTIONS if s not in body]
-    if missing:
-        return "本文に必須の節が無い: " + "、".join(missing)
-    # 禁止節は**見出しの行として**現れたときだけ拒む（本文の説明文で節名に言及するのは許す）。
-    # 行末の空白で擦り抜けないように落としてから比べる。
-    body_lines = [l.rstrip() for l in body.split("\n")]
-    present = [s for s in FORBIDDEN_NEW_SECTIONS if s in body_lines]
-    if present:
-        return "本文に登録時にはまだ書けない節がある（着手直後に書く節）: " + "、".join(present)
+    """`task new`・`task adopt` の本文検査。枠の検査に加え、`## やること` は空か「なし」に限る
+    （登録時に書いた手順は着手までに古くなる）。問題が無ければ `None`。"""
+    error = validate_body(body)
+    if error is not None:
+        return error
+    if not _is_blank(dict(_frame_sections(body)[1]).get(PLAN_HEADING, "")):
+        return f"{PLAN_HEADING} は着手直後に書く（登録時は空か「{EMPTY_MARK}」）"
     return None
+
+
+def validate_body(body: str) -> str | None:
+    """本文が枠（`SECTION_HEADINGS` をこの順に1つずつ）に沿っているか。`## 結果` は枠の外で拒む。
+
+    見出しは行頭の `## ` だけを数える（本文の説明文で節名に言及するのは許す）。
+    """
+    preamble, sections = _frame_sections(body)
+    if preamble.strip():
+        return "本文の最初の見出しより前に文がある"
+    headings = tuple(h for h, _ in sections)
+    if RESULT_HEADING in headings:
+        return f"{RESULT_HEADING} は task done が書く（本文に入れない）"
+    if headings != SECTION_HEADINGS:
+        return "本文の見出しが枠と違う（この順に1つずつ置く）: " + "、".join(SECTION_HEADINGS)
+    contents = dict(sections)
+    blank = [h for h in FILLED_SECTIONS if _is_blank(contents[h])]
+    if blank:
+        return f"空・「{EMPTY_MARK}」にできない節: " + "、".join(blank)
+    return None
+
+
+def _frame_sections(body: str) -> tuple[str, list[tuple[str, str]]]:
+    """`(見出しより前, [(見出しの行, 中身), ...])`。行末の空白は見出しから落とす。"""
+    preamble: list[str] = []
+    sections: list[tuple[str, list[str]]] = []
+    for line in body.split("\n"):
+        if line.startswith("## "):
+            sections.append((line.rstrip(), []))
+        elif sections:
+            sections[-1][1].append(line)
+        else:
+            preamble.append(line)
+    return "\n".join(preamble), [(h, "\n".join(c).strip()) for h, c in sections]
+
+
+def _is_blank(content: str) -> bool:
+    return content.strip() in ("", EMPTY_MARK)
 
 
 def set_result_section(body: str, content: str) -> str:

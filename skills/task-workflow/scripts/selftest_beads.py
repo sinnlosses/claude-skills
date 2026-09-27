@@ -29,12 +29,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import beads  # noqa: E402
+import taskfile  # noqa: E402
 
 TASK_PY = os.path.join(HERE, "task.py")
 INIT_PY = os.path.join(HERE, "init.py")
 SCAN_PY = os.path.join(HERE, "..", "..", "retrospect", "scripts", "scan.py")
 MATERIAL_PY = os.path.join(HERE, "..", "..", "retrospect", "scripts", "material.py")
-BODY = "## 目的\nx\n\n## 完了条件\n- 通る\n\n## 背景\ny\n\n## 注意\nz\n"
+BODY = ("## 目的・背景\nx\n\n## 決まっていること（蒸し返さない）\n\n## 解くべき論点\nなし\n\n## やること\n\n"
+        "## 完了条件\n- 通る\n\n## 注意\nz\n\n## 参考情報\n")
 
 failures: list[str] = []
 BASE_ENV = os.environ.copy()
@@ -220,8 +222,8 @@ def test_new_status_and_numbering() -> None:
                      "--body-file", "-", stdin=BODY)
         check("Beads に無い依存は終了コード2", r.returncode == 2, r.stdout + r.stderr)
         r = run_task(wt1, "new", "--summary", "x", "--difficulty", "haiku", "--loopable", "Y",
-                     "--body-file", "-", stdin=BODY + "\n## やること\n1\n")
-        check("## やること を含む本文は終了コード2", r.returncode == 2, r.stdout + r.stderr)
+                     "--body-file", "-", stdin=BODY.replace("## やること\n", "## やること\n1\n"))
+        check("## やること を書いた本文は終了コード2", r.returncode == 2, r.stdout + r.stderr)
 
         r = run_task(wt2, "status")
         t = rows(r.stdout)
@@ -296,14 +298,16 @@ def test_cycle_done_ship_and_dropped() -> None:
         r = run_task(wt1, "claim", a)
         check("既定の枝の設定なら feature/T-xxx を切る", r.stdout.strip().endswith(f"branch=feature/{a}"), r.stdout)
         shown = run_task(wt1, "show", a).stdout
-        body = shown.split("---\n", 2)[2].replace("## 注意", "## やること\n\n1. 書く\n\n## 注意")
+        body = shown.split("---\n", 2)[2].replace("## やること\n", "## やること\n\n1. 書く\n")
         r = run_task(wt1, "edit", a, "--body-file", "-", stdin=body)
         check("edit が本文を受ける", r.returncode == 0 and r.stdout.startswith("EDITED"), r.stdout + r.stderr)
         issue = beads.show(main_path, beads.to_bd_id(a))
         check("## やること は notes へ", issue is not None and issue.raw.get("notes") == "1. 書く", str(issue and issue.raw))
         shown = run_task(wt1, "show", a).stdout
-        check("show は ## やること を ## 注意 の前へ戻す", shown.index("## やること") < shown.index("## 注意")
-              and shown.index("## 完了条件") < shown.index("## 背景"), shown)
+        heads = [l for l in shown.split("\n") if l.startswith("## ")]
+        check("show は枠の7節をこの順に出す", heads == list(taskfile.SECTION_HEADINGS), shown)
+        r = run_task(wt1, "edit", a, "--body-file", "-", stdin=body.replace("## 参考情報\n", ""))
+        check("edit は枠の欠けた本文を拒む（終了コード2）", r.returncode == 2, r.stdout + r.stderr)
         r = run_task(wt1, "edit", a, "--body-file", "-", stdin=body + "\n## 結果\n\nx\n")
         check("edit は ## 結果 を拒む（終了コード2）", r.returncode == 2, r.stdout + r.stderr)
 
@@ -344,7 +348,7 @@ def test_cycle_done_ship_and_dropped() -> None:
               or f"reviewed\t{c},{a}" in scan.stdout, scan.stdout + scan.stderr)
         mat = subprocess.run([sys.executable, MATERIAL_PY, ".", a], cwd=main_path, capture_output=True, text=True, env=env())
         check("material.py は Beads の本文と版の差を出す", f"出典\tBeads {beads.to_bd_id(a)}" in mat.stdout
-              and "+## やること" in mat.stdout, mat.stdout + mat.stderr)
+              and "+1. 書く" in mat.stdout, mat.stdout + mat.stderr)
 
 
 def test_stale_markers() -> None:

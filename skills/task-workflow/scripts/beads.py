@@ -51,10 +51,8 @@ CLAIM_BRANCH_KEY = "task_branch"
 RESULT_HEADING = taskfile.RESULT_HEADING
 
 # 本文の節のうち、`description` 以外へ入るもの。
-ACCEPTANCE_HEADING = "## 完了条件"
-NOTES_HEADING = "## やること"
-PURPOSE_HEADING = "## 目的"
-CAUTION_HEADING = "## 注意"
+ACCEPTANCE_HEADING = taskfile.ACCEPTANCE_HEADING
+NOTES_HEADING = taskfile.PLAN_HEADING
 
 
 class BeadsError(RuntimeError):
@@ -273,19 +271,15 @@ def split_body(body: str) -> BodyParts:
 
 
 def compose_body(description: str, acceptance: str, notes: str, result: str | None) -> str:
-    """`split_body` の逆。節の並びは WORKFLOW.md「タスクファイル」の表のとおりに戻す。
-
-    `## 完了条件` は `## 目的` の直後（無ければ先頭）、`## やること` は `## 注意` の直前（無ければ
-    末尾）、`## 結果` は最後。
+    """`split_body` の逆。枠の7節（`taskfile.SECTION_HEADINGS`）を中身が空でもこの順に必ず出し、
+    枠の外の見出しはそのあと、`## 結果` は最後。
     """
     preamble, sections = _sections(description or "")
-    blocks: list[tuple[str, str]] = [(h, c.strip("\n")) for h, c in sections]
-    if acceptance.strip():
-        at = next((i + 1 for i, (h, _) in enumerate(blocks) if h == PURPOSE_HEADING), 0)
-        blocks.insert(at, (ACCEPTANCE_HEADING, acceptance.strip("\n")))
-    if notes.strip():
-        at = next((i for i, (h, _) in enumerate(blocks) if h == CAUTION_HEADING), len(blocks))
-        blocks.insert(at, (NOTES_HEADING, notes.strip("\n")))
+    contents = {h: c.strip("\n") for h, c in sections}
+    contents[ACCEPTANCE_HEADING] = acceptance.strip("\n")
+    contents[NOTES_HEADING] = notes.strip("\n")
+    blocks = [(h, contents.get(h, "")) for h in taskfile.SECTION_HEADINGS]
+    blocks += [(h, c.strip("\n")) for h, c in sections if h not in taskfile.SECTION_HEADINGS]
     if result is not None and result.strip():
         blocks.append((RESULT_HEADING, result.strip("\n")))
     parts = [preamble.strip("\n")] if preamble.strip() else []

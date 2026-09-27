@@ -190,7 +190,7 @@ def last_existing_ref(root: str, rel: str) -> str | None:
 def find_archived_task(path: str, task_id: str) -> str | None:
     """`## T-XXX ...` から次の `## T-XXX ...` までを切り出す。
 
-    本文の中にも `## 背景` のような見出しが入っているので、区切りは
+    本文の中にも `## 目的・背景` のような見出しが入っているので、区切りは
     **タスクIDを持つ見出しだけ**で見る。
     """
     try:

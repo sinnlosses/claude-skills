@@ -1274,10 +1274,12 @@ def cmd_beads_edit(toplevel: str, args: argparse.Namespace) -> None:
     cmd = ["update", bd_id]
     stdin = None
     if args.body_file:
-        parts = beads.split_body(read_body(args.body_file))
-        if parts.result is not None:
-            print("usage: ## 結果 は task done が書く（本文に入れない）", file=sys.stderr)
+        body = read_body(args.body_file)
+        error = taskfile.validate_body(body)
+        if error is not None:
+            print(f"usage: {error}", file=sys.stderr)
             raise SystemExit(2)
+        parts = beads.split_body(body)
         cmd += ["--body-file", "-", "--acceptance", parts.acceptance, "--notes", parts.notes]
         stdin = parts.description
     if args.summary:
