@@ -12,8 +12,8 @@ python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py status
 ```
 
 行の列は `id / status / difficulty / loopable / dependencies / 着手可否 / 印 / summary`。`---` の後ろに
-`counts`・`ready`（READY 件数）・`todo_loopable`・`stale`・`invalid`、
-残っていれば `legacy_progress`。
+`counts`・`ready`（READY 件数）・`todo_loopable`・`stale`・`invalid`、Beads 方式（正典「Beads 方式」）なら
+`triage`（とトラッカーが `jira` なら `jira_close`）、残っていれば `legacy_progress`。
 
 ## 表示のしかた
 
@@ -42,6 +42,7 @@ python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py status
    | `BLOCKED:T-124` | `T-124 待ち` |
    | `CLAIMED` | `作業中（<印の列>）` |
    | `HOLD` | `判断待ち` |
+   | `TRIAGE` | `振り分け待ち`（Beads 方式。トラッカーから取り込んだもの） |
    | 印の列が `local` | 状態の後ろに `（未送り）` |
    | `loopable` が `Y` / `N` | `可` / `要判断` |
 
@@ -55,6 +56,8 @@ python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py status
    - `invalid` が1件以上: 「読めないタスクファイル: T-xxx」
    - `long_summary` に当たるもの（80桁を超える `summary`）: 「`summary` が長すぎる: T-xxx」
    - `legacy_progress`: 「移行の残り: `develop/progress.md`（未解決 n / 注意 m）。振り分けたら消す」
+   - `triage` が1件以上: 「振り分け待ち: <ID>（`/plan-tasks` で `task adopt` する）」
+   - `jira_close` が1件以上: 「Jira で閉じてほしいもの: T-xxx（閉じたら `task jira-closed T-xxx`）」
 
 ## オススメの提示
 
@@ -77,4 +80,4 @@ python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py status
 ## 出さないもの
 
 タスク本文と `## 結果`、2件目以降の実行計画、推薦したタスクの進め方（本文を読んでいないので中身の
-話はできない）。特定のタスクを読みたいと言われたら `develop/task/T-xxx.md` を1つ開く（このスキルの範囲外）。
+話はできない）。特定のタスクを読みたいと言われたら `develop/task/T-xxx.md` を1つ開く（Beads 方式では `task show T-xxx`。このスキルの範囲外）。

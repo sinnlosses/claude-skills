@@ -24,6 +24,7 @@ import os
 import re
 import sys
 
+import beads
 import layout
 
 # direction.md の2節（正典「指示メモ」）。前方一致で探す。値は layout.py の正典を読む。
@@ -56,6 +57,44 @@ def main() -> None:
     os.makedirs(root, exist_ok=True)
     create(os.path.join(root, os.path.basename(layout.DIRECTION_PATH)), DIRECTION, check_direction)
     print(check_claude_md())
+    code = prepare_beads(".")
+    if code:
+        raise SystemExit(code)
+
+
+def prepare_beads(root: str) -> int:
+    """設定が Beads 方式（`- タスクの置き場: beads`）なら `.beads` を用意する。終了コードを返す。
+
+    `bd init --stealth` は `.git/info/exclude` で `.beads` を外し、コミットも `AGENTS.md`・
+    `CLAUDE.md` への書き足しもしない（`--stealth` なしでは両方をして自動でコミットする）。
+    `.beads` は主ブランチを出している作業ツリーの根に置くので、別の作業ツリーからは作らない。
+    ファイル方式（行が無い）なら何もしない。
+    """
+    try:
+        value = layout.read_setting_value(root, layout.STORE_KEY)
+    except layout.ConfigConflict:
+        return 0
+    if value is None or layout.setting_word(value) != layout.STORE_BEADS:
+        return 0
+    target = beads.beads_dir(root)
+    if os.path.isdir(target):
+        print(f"KEPT\t{target}")
+    else:
+        toplevel = os.path.realpath(os.path.abspath(root))
+        if os.path.realpath(os.path.dirname(target)) != toplevel:
+            print(f"NOT_MAIN_WORKTREE\t{os.path.dirname(target)}\t（.beads はそこで作る）")
+            return 4
+        r = beads.run(root, ["init", "--stealth", "-p", beads.PREFIX, "--non-interactive", "--skip-hooks", "--quiet"])
+        if r.returncode != 0:
+            print(f"FAILED\tbd init\t{(r.stderr or r.stdout).strip()}")
+            return 1
+        print(f"CREATED\t{target}\t(bd init --stealth -p {beads.PREFIX})")
+    current = beads.run(root, ["config", "get", "status.custom"]).stdout.strip()
+    if beads.HOLD_STATUS + ":" not in current:
+        merged = ",".join(x for x in (current if "(not set)" not in current else "", beads.CUSTOM_STATUSES) if x)
+        beads.run_ok(root, ["config", "set", "status.custom", merged])
+        print(f"CONFIG\tstatus.custom={merged}")
+    return 0
 
 
 def create(path: str, body: str, check) -> None:

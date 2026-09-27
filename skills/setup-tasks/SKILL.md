@@ -27,7 +27,9 @@ description: "タスク運用に要る develop/direction.md（## ユーザーか
    | `CREATED` | `develop/direction.md` を骨組みで作った |
    | `KEPT` + `OK:` | 既にあり、筋が通っている。触っていない |
    | `KEPT` + `PENDING:` | セットアップとしては完了。未タスク化の指示が残っているので `/plan-tasks` が先と報告する |
-   | 最終行 `MISSING`/`NO_SECTION`/`MISSING_LINE`/`BAD_BRANCH`/`OK` | CLAUDE.md の点検結果。手順2で使う |
+   | `MISSING`/`NO_SECTION`/`MISSING_LINE`/`BAD_BRANCH`/`OK` の行 | CLAUDE.md の点検結果。手順2で使う |
+   | `CREATED\t<…/.beads>`・`KEPT\t<…/.beads>`・`CONFIG\tstatus.custom=…` | 節が Beads 方式（`- タスクの置き場: beads`）なので `.beads` を用意した（`bd init --stealth -p t`）・既にあった・独自の状態 `pending` を足した |
+   | `NOT_MAIN_WORKTREE`（終了コード4） | `.beads` は主ブランチを出している作業ツリー（本体）の根に置く。パスの作業ツリーで打ち直すよう案内する |
 
    `develop/task/` は最初の `task new` が作る（空のディレクトリは git に載らない。新形式の目印は
    `develop/direction.md`）。`docs/history/` も掘らない。
@@ -62,8 +64,17 @@ description: "タスク運用に要る develop/direction.md（## ユーザーか
    | `BAD_BRANCH` | `- ブランチ:` の先頭語が語彙に無い（`task` が `INVALID` で止まる）。どの語にするかユーザーに聞いてから直す |
    | `OK` | 触らない |
 
+   **Beads 方式にする**（ユーザーが Beads を使うと決めたときだけ。既定はファイル方式で、行を足さない）:
+   節に `- タスクの置き場: beads` と、トラッカーを使うなら `- トラッカー: github`（と
+   `- GitHub Project: `<owner>/<番号>``）か `- トラッカー: jira` を足し（正典「Beads 方式」の設定の表）、
+   手順1の `init.py` を本体で打ち直して `.beads` を作る。**`bd init` を手で打たない**（`--stealth` なしだと
+   `AGENTS.md`・`CLAUDE.md` に書き足して自動でコミットする）。`github` なら `gh auth login`（`project`
+   スコープ）と `bd config set github.repository <owner>/<repo>`、`jira` なら `bd jira` の設定を
+   ユーザーに頼む（認証情報をスキルが書かない）。既存の `develop/task/` から移すのは別の作業（人が決める）
+
 3. **通しで確かめる**: `python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py status`。
    まっさらなら `---` と末尾の集計行だけが出る（終了コード0）。`MISSING` なら手順1が効いていない。
+   Beads 方式なら `task config-doctor` の `store`・`beads`・`tracker` の行も `OK` を確かめる。
 
 4. **コミットする**（件名にタスクIDは付けない。push はしない）。作業ツリーの枝に居るなら
    `python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py ship` で `main` へ送る。

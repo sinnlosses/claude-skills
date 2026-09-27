@@ -61,6 +61,59 @@ def has_task_section(text: str) -> bool:
     return any(line.startswith(TASK_SECTION_HEADING) for line in text.splitlines())
 
 
+def read_setting_value(root: str, key: str) -> str | None:
+    """設定ファイルの「## タスク運用」節にある `- <key>:` 行の値（前後の空白を落とす）。
+
+    行が無ければ `None`。見るのは節の中だけ（別の節の同名の箇条書きを拾わない）。両方の
+    ファイルに節があれば `ConfigConflict`。
+    """
+    found = find_config_file(root)
+    if found is None:
+        return None
+    _path, text = found
+    in_section = False
+    prefix = f"- {key}:"
+    for line in text.splitlines():
+        if line.startswith("## "):
+            in_section = line.startswith(TASK_SECTION_HEADING)
+            continue
+        if in_section and line.startswith(prefix):
+            return line[len(prefix) :].strip()
+    return None
+
+
+def setting_word(value: str) -> str:
+    """設定の値の先頭語。`` `x` `` で囲めば中身、囲まなければ最初の語を括弧・句読点の前で切る。"""
+    quoted = re.search(r"`([^`]+)`", value)
+    word = quoted.group(1).strip() if quoted else (value.split() or [""])[0]
+    return re.split(r"[（(、。]", word)[0].strip("`").strip()
+
+
+# Beads 方式の任意行（正典「Beads 方式」）。どれも無いのが既定で、無ければファイル方式のまま。
+STORE_KEY = "タスクの置き場"
+STORE_FILES = "develop/task"
+STORE_BEADS = "beads"
+TRACKER_KEY = "トラッカー"
+TRACKER_VALUES = ("なし", "github", "jira")
+GITHUB_PROJECT_KEY = "GitHub Project"
+BACKUP_KEY = "バックアップ"
+
+
+class StoreSettingError(RuntimeError):
+    """`- タスクの置き場:` 行が読めない（呼ぶ側が `INVALID`・終了コード3にする）。"""
+
+
+def read_store(root: str) -> str:
+    """設定ファイルの `- タスクの置き場:` 行の先頭語。無ければファイル方式（`develop/task`）。"""
+    value = read_setting_value(root, STORE_KEY)
+    if value is None:
+        return STORE_FILES
+    word = setting_word(value)
+    if word not in (STORE_FILES, STORE_BEADS):
+        raise StoreSettingError(f"- {STORE_KEY}: の値 {word!r} を機械が読めない（{STORE_FILES} / {STORE_BEADS}）")
+    return word
+
+
 def find_config_file(root: str) -> tuple[str, str] | None:
     """`## タスク運用` 節を持つファイルを `AGENTS.md` → `CLAUDE.md` の順で探す（1箇所化）。
 

@@ -63,7 +63,7 @@ TSVの列は `hash / 日付 / タスクID / ファイル数 / 増減 / 件名`�
 `reviewed`・`unmapped`（タスクIDの無いコミット）・`transcripts` が出る。
 
 **振り返る単位はタスク**なので、`tasks` に並んだIDを対象にする。`reviewed` は1件ごとの振り返りが
-済んだタスク（そのコミットの版の `## 結果` に `- 振り返り:` がある）で、`tasks` から外してある。
+済んだタスク（そのコミットの版の `## 結果` に `- 振り返り:` がある。Beads 方式では `## 結果` の comment）で、`tasks` から外してある。
 材料を集め直さず、手順3で「複数のタスクで同じ手作業が出ている」を見るときに件名と diffstat だけ使う。`unmapped` のコミット
 （アーカイブ・typo直し・依存更新）は数だけ見て、中身が気になるものがあるときだけ拾う。
 
@@ -80,7 +80,9 @@ TSVの列は `hash / 日付 / タスクID / ファイル数 / 増減 / 件名`�
 python3 ${CLAUDE_SKILL_DIR}/scripts/material.py . T-XXX --diff
 ```
 
-出るのは4つ。**タスク本文と `## 結果`**（`develop/task/T-xxx.md` の `HEAD` の版。`task prune` で消したものは最後にあった版。旧形式の
+出るのは4つ（Beads 方式のプロジェクトでは、タスク本文と `## 結果` は Beads の課題と comment から、
+登録から完了までの差分は `bd history` の最初と最後の版から出る。`task-workflow` の WORKFLOW.md
+「Beads 方式」）。**タスク本文と `## 結果`**（`develop/task/T-xxx.md` の `HEAD` の版。`task prune` で消したものは最後にあった版。旧形式の
 時代のタスクは `develop/tasks.json` か `docs/history/tasks.md` の本文と evidence）、**登録から完了までの
 タスクファイルの差分**（登録時の節といまの節、着手時に書き足した `## やること`・`## 注意`。旧タスクは
 代わりに `progress.md` の小節）、**コミットと diff**、**手数**（ツール呼び出し数・エラー数・同じ

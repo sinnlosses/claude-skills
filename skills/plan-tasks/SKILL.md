@@ -16,7 +16,8 @@ description: "develop/direction.md に書かれたユーザーからの指示（
 
 !`sed -n '/^## タスク運用/,/^## /p' CLAUDE.md 2>/dev/null | grep . || echo '（「## タスク運用」節が無い。CLAUDE.md の他の節に書かれた検証コマンドを探す。無ければ /setup-tasks で節を用意する）'`
 
-`## 完了条件` に書く**検証コマンド**はこの節の値。`なし` なら完了条件は検証可能な言葉だけで書く。
+節に `- タスクの置き場: beads` があれば **Beads 方式**（正典「Beads 方式」）で、下の「Beads 方式では」の
+注記に読み替える。`## 完了条件` に書く**検証コマンド**はこの節の値。`なし` なら完了条件は検証可能な言葉だけで書く。
 
 ## 手順
 
@@ -25,7 +26,7 @@ description: "develop/direction.md に書かれたユーザーからの指示（
    `task-workflow` も一緒に張るよう案内する。以下の `task` はこの `task.py` を指す）。
 
 1. **読む**: `task status` で既存の一覧を見る（本文は読まない。重なりそうな1件があるときだけ
-   `develop/task/T-xxx.md` を開く）。終了コード5（`LEGACY`）なら「旧形式。正典「旧形式からの移行」の
+   `develop/task/T-xxx.md` を開く。Beads 方式では `task show T-xxx`）。終了コード5（`LEGACY`）なら「旧形式。正典「旧形式からの移行」の
    手順で `task migrate --dry-run` から移す（スキルは移さない）」と案内して終了、6（`MISSING`）なら
    タスク運用を始めてよいかユーザーに確かめてから `/setup-tasks`、1・3 は理由を報告して終了する。
 
@@ -36,6 +37,7 @@ description: "develop/direction.md に書かれたユーザーからの指示（
    | `## ユーザーから`（節見出しの無い古いファイルは全体） | そのまま手順2へ |
    | `## エージェントのドラフト` | 項目をユーザーに見せ、**承認を得たものだけ**手順2へ。無人のときは見ない |
    | 会話の明示の指示（「これタスクにして」「それでいいよ」） | `develop/direction.md` を経由せず手順2へ。無人のときは使わない |
+   | Beads 方式の `triage` 行（トラッカーから取り込んだ振り分け前の課題） | `task show <ID>` で読み、`## 完了条件`・`difficulty`・`loopable` を書き起こしてユーザーに見せ、承認を得たものだけ `task adopt` する（手順5）。無人のときは見ない |
    | どれも無い | 未対応の指示は無いと報告して終了する |
 
 2. **確かめる**: 各項目について**いまの `main` のコードとドキュメントを読んで裏を取る**。すでに
@@ -47,7 +49,7 @@ description: "develop/direction.md に書かれたユーザーからの指示（
    合わせて直す」を足す。揃えるときは実装の広がり（消す口・プロトコルの変更・触る機能の数）を見て
    後段の `difficulty` も見直す、も同じ完了条件に入れる。** 1タスクは1コミットで説明が付く大きさに。既存タスクと重なるなら
    新しく作らず、その本文の `## 背景` か `## 注意` に足す（`develop/task/T-xxx.md` を直して手順7で
-   一緒にコミットする）。
+   一緒にコミットする。Beads 方式では `task show` の本文に足して `task edit T-xxx --body-file -`）。
 
 4. **書く**: `summary` は1行（収まらなければ大きすぎるので手順3へ戻る。正典「summary」）。
    `loopable` を `N` にしたくなったら、その場でユーザーに聞く（正典「loopable」の表。聞いて解けたら
@@ -75,7 +77,11 @@ description: "develop/direction.md に書かれたユーザーからの指示（
    | --- | --- |
    | `CREATED` | 次の1件へ |
    | `LOCKED` | 採番の錠が取れない。行に `rmdir` が添えてあれば古い錠なので、その旨を報告して止まる（壊さない） |
-   | 終了コード2 | 本文の節の欠け・禁止の節。直して打ち直す |
+   | 終了コード2 | 本文の節の欠け・禁止の節。Beads 方式では Beads に無い `--deps` も（解決済みなら外す）。直して打ち直す |
+   | 続く行の `TRACKER\tFAILED` | 登録は済んでいる。報告に添え、最後に `task sync` を1回打ち直す |
+
+   Beads 方式の振り分け前の課題は `task new` ではなく
+   `task adopt <ID> --difficulty … --loopable … --body-file -`（`ADOPTED` の3列目が振られた ID）。
 
 6. **指示メモを移す**: `docs/history/direction.md` の先頭に日付見出し（`## YYYY-MM-DD`）で、
    正典「指示メモ」の3点だけを書く（無ければ `# 指示の履歴` の1行で作る）。`## ユーザーから` は
@@ -85,7 +91,8 @@ description: "develop/direction.md に書かれたユーザーからの指示（
 7. **コミットして送る**: `git add` する前に整形コマンドを打つ（`タスク運用`節が `なし` なら不要。
    手順6で書き換えた `develop/direction.md` と `docs/history/direction.md` はそのままだと
    整形コマンドの検査に引っかかりうる）。打ったら、登録したタスクファイル・`develop/direction.md`・
-   `docs/history/direction.md`（と直した既存タスク）を**個別に** `git add` して1コミット（件名に
+   `docs/history/direction.md`（と直した既存タスク）を**個別に** `git add` して1コミット
+   （Beads 方式ではタスクファイルが無いので、`develop/direction.md` と `docs/history/direction.md` だけ）（件名に
    タスクIDを付けない。例「指示をタスクにする（T-531〜T-533）」）→ `task ship`。`SHIPPED` 以外の
    扱いは `next-task` スキルの手順8の表と同じ（止まって預ける）。push はしない。
 

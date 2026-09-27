@@ -44,6 +44,9 @@ Claude Code のユーザー単位スキル（`~/.claude/skills/`）のソース�
   `scripts/import_edges.py`、`maintenance-docs` の `scripts/check_docs.py`、
   `task-workflow` の `scripts/` も Python（標準ライブラリのみ）。
   SKILL.md を読むだけなら不要で、実際にスクリプトを走らせるときにだけ要る
+- タスク系スキルを **Beads 方式**（`- タスクの置き場: beads`）で使うプロジェクトは `bd`（Beads）と
+  Dolt、トラッカーが `github` なら `gh` も要る（`skills/task-workflow/WORKFLOW.md`「Beads 方式」）。
+  既定のファイル方式では要らない
 
 ## プロジェクト側に要るもの
 
@@ -52,7 +55,8 @@ Claude Code のユーザー単位スキル（`~/.claude/skills/`）のソース�
 「## タスク運用」節に書く。**用意するのは `/setup-tasks`**（既にあるファイルは上書きしない）。
 置き場と節の形は `skills/task-workflow/WORKFLOW.md`「ファイル配置と設定ファイル（AGENTS.md → CLAUDE.md の順）」。旧形式
 （`develop/tasks.json`）のプロジェクトでは、タスク系のスキルが `LEGACY` で止まって
-`task migrate` を案内する（同「旧形式からの移行」）。
+`task migrate` を案内する（同「旧形式からの移行」）。「## タスク運用」節に
+`- タスクの置き場: beads` を足したプロジェクトは、錠と本文・履歴を Beads に置く（同「Beads 方式」）。
 
 `docs/` 系は逆に、**新規プロジェクトでは何も作らない**（遅延作成。最初に書くべき内容ができた
 スキルが、そのとき作る）。育つ順序と置き場は次の「## docs/ の育て方」。
@@ -90,7 +94,8 @@ Claude Code のユーザー単位スキル（`~/.claude/skills/`）のソース�
 
 1. `install.sh` の構文、2. `skills/task-workflow/scripts/` の自己テスト
 （`selftest.py` が旧形式の読み取りと `init.py`、`selftest_task.py` が `task` コマンドを一時リポジトリと
-作業ツリー2本で通す）、3. リポジトリの整合
+作業ツリー2本で通す。`selftest_beads.py` は Beads 方式を本物の `bd` と偽の `gh`・トラッカー同期で通し、
+`bd` が無ければ飛ばす）、3. リポジトリの整合
 （`scripts/check_repo.py`。frontmatter の `name` とディレクトリ名の一致、この README の
 由来一覧と `skills/` の一致、`${CLAUDE_SKILL_DIR}` で書かれた参照先の実在、スキル名の
 相互参照の実在、`docs/` に書くスキル（`architecture-proposal` `domain-modeling` `research`。

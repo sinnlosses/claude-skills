@@ -19,5 +19,9 @@ echo "== task-workflow: task コマンド（develop/task/ + 台帳）の自己�
 python3 "$here/skills/task-workflow/scripts/selftest_task.py"
 
 echo
+echo "== task-workflow: task コマンド（Beads 方式。bd が無ければ飛ばす）の自己テスト =="
+python3 "$here/skills/task-workflow/scripts/selftest_beads.py"
+
+echo
 echo "== リポジトリの整合 =="
 python3 "$here/scripts/check_repo.py"

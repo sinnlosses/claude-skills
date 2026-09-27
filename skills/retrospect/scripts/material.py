@@ -7,10 +7,12 @@
 兆候に当たったかを数だけで見るのに使う。本文と diff はメインが受け入れで読み終えている）。
 
 - **タスク**: `develop/task/T-XXX.md`（`HEAD` の版。front matter と本文、`## 結果`）。
-  無ければ旧形式の `develop/tasks.json`、それも無ければ `docs/history/tasks.md` から本文と evidence
+  無ければ旧形式の `develop/tasks.json`、それも無ければ `docs/history/tasks.md` から本文と evidence。
+  Beads 方式（task-workflow の WORKFLOW.md「Beads 方式」）では Beads の課題（`task show` と同じ形）
 - **登録から完了までの差分**: `develop/task/T-XXX.md` を足したコミットの版と `HEAD` の版の差
   （着手時に書き足した `## やること`・`## 注意` の量が出る）。旧タスクは代わりに
-  `develop/progress.md`・`docs/history/progress.md` の該当の小節
+  `develop/progress.md`・`docs/history/progress.md` の該当の小節。Beads 方式では `bd history` の
+  最初の版と最後の版の差
 - **コミット**: 件名とファイルごとの増減（`--diff` を付けたときだけ中身も）
 - **手数**: サブエージェントのトランスクリプトから取った**数だけ**
 
@@ -23,6 +25,7 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import re
@@ -35,6 +38,7 @@ _TASK_WORKFLOW_SCRIPTS = os.path.normpath(
 if _TASK_WORKFLOW_SCRIPTS not in sys.path:
     sys.path.insert(0, _TASK_WORKFLOW_SCRIPTS)
 
+import beads  # noqa: E402
 import layout  # noqa: E402
 import transcript  # noqa: E402
 
@@ -52,10 +56,19 @@ def main() -> None:
         print_signals(root, task_id)
         return
 
-    section("タスク")
-    is_file_task = print_task(root, task_id)
+    if is_beads(root):
+        section("タスク")
+        print_beads_task(root, task_id)
+        section("登録から完了までの差分（Beads の版）")
+        print_beads_history(root, task_id)
+        is_file_task = None
+    else:
+        section("タスク")
+        is_file_task = print_task(root, task_id)
 
-    if is_file_task:
+    if is_file_task is None:
+        pass
+    elif is_file_task:
         section("登録から完了までの差分（タスクファイル）")
         print_task_file_diff(root, task_id)
     else:
@@ -195,6 +208,65 @@ def find_archived_task(path: str, task_id: str) -> str | None:
         elif start is not None:
             return "\n".join(lines[start:i]).rstrip()
     return "\n".join(lines[start:]).rstrip() if start is not None else None
+
+
+# ---- Beads 方式 ---------------------------------------------------------------
+
+
+def is_beads(root: str) -> bool:
+    try:
+        return layout.read_store(root) == layout.STORE_BEADS
+    except (layout.ConfigConflict, layout.StoreSettingError):
+        return False
+
+
+def print_beads_task(root: str, task_id: str) -> None:
+    bd_id = beads.to_bd_id(task_id)
+    try:
+        issue = beads.show(root, bd_id)
+        result = beads.last_result(beads.comments(root, bd_id)) if issue is not None else None
+    except beads.BeadsError as e:
+        print(f"-\t{e}")
+        return
+    if issue is None:
+        print(f"-\t{task_id} が Beads に無い")
+        return
+    task, err = beads.to_task(issue)
+    if task is None:
+        print(f"-\t{task_id} を読めない（{err or '振り分け前'}）")
+        return
+    print(f"出典\tBeads {bd_id}")
+    print()
+    print(beads.render_task(task, issue, result).rstrip())
+
+
+def print_beads_history(root: str, task_id: str) -> None:
+    """登録した版（`bd history` の最初）と最後の版の本文の差。"""
+    try:
+        snaps = beads.history(root, beads.to_bd_id(task_id))
+    except beads.BeadsError as e:
+        print(f"-\t{e}")
+        return
+    if not snaps:
+        print(f"-\t{task_id} の版が無い")
+        return
+
+    def text_of(snap: dict) -> str:
+        return beads.compose_body(
+            str(snap.get("description") or ""),
+            str(snap.get("acceptance_criteria") or ""),
+            str(snap.get("notes") or ""),
+            None,
+        )
+
+    first, last = text_of(snaps[0]), text_of(snaps[-1])
+    print(f"版\t{len(snaps)}")
+    for label, text in (("登録時の節", first), ("いまの節", last)):
+        heads = [ln for ln in text.splitlines() if ln.startswith("## ")]
+        print(f"{label}\t" + (", ".join(h[3:] for h in heads) or "-"))
+    diff = difflib.unified_diff(first.splitlines(), last.splitlines(), "登録時", "いま", lineterm="")
+    print()
+    print("\n".join(diff) or "（差分なし）")
 
 
 # ---- progress.md --------------------------------------------------------------

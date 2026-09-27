@@ -8,7 +8,9 @@ diff も本文も出さない。**どこまで振り返ったか**と**何が未
 
 `/next-task` の中で1件ごとに振り返ったタスクは、`## 結果` に `- 振り返り:` の行を持つ
 （retrospect の SKILL.md「1件だけ振り返る」）。範囲内のそのタスクのコミットの版にこの行が
-あれば `reviewed` に回し、`tasks`（まとめての振り返りの対象）から外す。
+あれば `reviewed` に回し、`tasks`（まとめての振り返りの対象）から外す。Beads 方式
+（task-workflow の WORKFLOW.md「Beads 方式」）では `## 結果` は閉じるときの comment にあるので、
+コミットの版ではなく Beads の comment を読む。
 
 **データの不備で traceback を出さない。** 呼び出し側のスキルは「`MISSING`・`EMPTY`・
 `INVALID`・TSV のいずれでもない出力」を「`python3` が使えない」の合図として扱うので、
@@ -28,6 +30,7 @@ _TASK_WORKFLOW_SCRIPTS = os.path.normpath(
 if _TASK_WORKFLOW_SCRIPTS not in sys.path:
     sys.path.insert(0, _TASK_WORKFLOW_SCRIPTS)
 
+import beads  # noqa: E402
 import layout  # noqa: E402
 import transcript  # noqa: E402
 
@@ -133,7 +136,16 @@ def has_review_line(root: str, rev: str, task_id: str) -> bool:
     """`rev` の版のタスクファイルの `## 結果` に `- 振り返り:` の行があるか。
 
     いまの `HEAD` ではなくそのコミットの版を読むので、あとでファイルを消したタスクでも判定できる。
+    Beads 方式ならタスクの `## 結果` の comment を読む（版は無い）。
     """
+    if is_beads(root):
+        if task_id not in _beads_reviewed:
+            try:
+                result = beads.last_result(beads.comments(root, beads.to_bd_id(task_id)))
+            except beads.BeadsError:
+                result = None
+            _beads_reviewed[task_id] = any(REVIEWED_LINE.match(l) for l in (result or "").splitlines())
+        return _beads_reviewed[task_id]
     text, _ = git_out(root, "show", f"{rev}:{layout.TASK_DIR}/{task_id}.md")
     in_result = False
     for line in (text or "").splitlines():
@@ -142,6 +154,16 @@ def has_review_line(root: str, rev: str, task_id: str) -> bool:
         elif in_result and REVIEWED_LINE.match(line):
             return True
     return False
+
+
+_beads_reviewed: dict[str, bool] = {}
+
+
+def is_beads(root: str) -> bool:
+    try:
+        return layout.read_store(root) == layout.STORE_BEADS
+    except (layout.ConfigConflict, layout.StoreSettingError):
+        return False
 
 
 def diffstat(root: str, rev: str) -> tuple[int, int, int]:

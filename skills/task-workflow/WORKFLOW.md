@@ -1,5 +1,10 @@
 # タスク運用（develop/task/ ＋ 台帳 ＋ `task` コマンド）の正典
 
+**置き場は2方式ある。** 既定は `develop/task/` の1件1ファイルと git の外の台帳（以下の節の大半）。
+設定ファイルの「## タスク運用」に `- タスクの置き場: beads` の行があるプロジェクトだけ、錠・本文・
+履歴を Beads（`bd`）に置く（末尾の「Beads 方式」。サブコマンドと出力の先頭語は同じで、違うところは
+その節にまとめる）。
+
 `/next-task`・`/plan-tasks`・`/list-tasks`・`/retrospect`・`/setup-tasks` が従うルール。
 **手順は `task` コマンドが持ち、自己テスト（`scripts/selftest_task.py`）で守る。** スキルの本文は
 「どのサブコマンドをいつ打つか」と「人が判断する点」だけで、プロジェクト側で手順を上書きする
@@ -22,6 +27,7 @@
 | ## 指示メモ（`develop/direction.md`） | 2節と承認ゲート、入口2つ、指示の履歴 |
 | ## `task` コマンドの参照 | サブコマンドと出力、終了コードの表 |
 | ## 旧形式からの移行 | `LEGACY` が出たときの案内 |
+| ## Beads 方式（`- タスクの置き場: beads`） | 錠と履歴を Beads（`bd`）に置く方式。設定の行、今の運用との対応、サイクルで変わるところ、トラッカー（GitHub・Jira）、バックアップ |
 
 ## ファイル配置と設定ファイル（AGENTS.md → CLAUDE.md の順）
 
@@ -350,6 +356,7 @@ zsh で単語に分かれず空振りし、`;` で続けた後続のコマンド
 | `ship` | rebase → （付け替えたら）検証 → ff-only で送る → 印を消す → 作業ブランチから降りる | `SHIPPED`・`NOTHING`・`MAIN_DIRTY`・`CONFLICT`・`VERIFY_FAILED`・`RACE` |
 | `prune [--dry-run] [--min N]` | `HEAD` で `done`・`dropped`・印なし、かつ振り返り済み（`## 結果` に `- 振り返り:` の行がある＝`reviewed`／`develop/retrospective.md` の基準点の版で既に `done`・`dropped`＝`retrospect`）のタスクファイルを `git rm` して stage（コミットしない）。対象が `--min`（既定10）件に届かなければ何もしない。`--dry-run` は一覧だけ（汚れていても打てる） | 対象ごとに `PRUNE\tT-xxx\t<reviewed\|retrospect>`、最後に `PRUNED\t<N>`／`PLAN\t<N>`（`--dry-run`）。対象が無いか `--min` 件に届かなければ `NOTHING`。`DIRTY`・`INVALID`（基準点のハッシュが無い） |
 | `migrate [--dry-run]` | 旧形式を変換する（下の「旧形式からの移行」） | `WRITE`・`MOVE`・`LEFTOVER`・`REMOVE`・`PLAN`/`MIGRATED` |
+| `show T-xxx` | タスク1件をタスクファイルの形で出す（読むだけ。ファイル方式は作業ツリーの版、無ければ主ブランチの版） | 本文。無ければ `NOT_READY` |
 | `config-doctor` | このリポジトリが今の読み取りに合っているかを点検する（**読むだけ。`--fix` は無い**）。主ブランチが何で決まったか・設定ファイルがどちらか・「## タスク運用」の3行・旧形式の残り、の4検査を必ず1行ずつ出す | `base_branch`・`config_file`・`claude_md_lines`・`legacy` の4行。各行の2語目が `OK`／`MISSING`／`MISSING_LINE`／`BAD_BRANCH`／`NO_SECTION`／`FOUND`／`INVALID` |
 
 | 終了コード | 先頭語 | 意味 | スキルがすること |
@@ -392,3 +399,113 @@ zsh で単語に分かれず空振りし、`;` で続けた後続のコマンド
 残っていれば `NOT_READY` で全体を止める。`evidence` は `## 結果` になる。「完了したこと」の小節は
 全部 `docs/history/progress.md` へ移る。`docs/history/tasks.md` は動かさない。
 `develop/tasks.json` と `develop/task/` の両方があれば移行が途中で、`INVALID`（終了コード3）になる。
+
+
+## Beads 方式（`- タスクの置き場: beads`）
+
+錠（着手の印・採番）と本文・履歴を Beads（`bd` 1.3.0 で確かめた）に置き、`task` は Beads と
+トラッカーと git をつなぐ薄い包みになる。**ファイル方式と併存し、設定の行が無いプロジェクトは
+ファイル方式のまま**（`.beads` があっても見ない）。サブコマンド・出力の先頭語・終了コードは
+ファイル方式と同じで、スキルは下の「サイクルで変わるところ」だけを読み替える。設計の経緯と
+Beads の挙動の実測は tsukumo の `docs/research/github-projects.md`。
+
+**設定の行**（「## タスク運用」節の任意行。どれも無いのが既定）:
+
+| 行 | 値 | 無いとき |
+| --- | --- | --- |
+| `- タスクの置き場:` | `develop/task`（ファイル方式）・`beads` | ファイル方式。ほかの値は `INVALID`（終了コード3） |
+| `- トラッカー:` | `なし`・`github`・`jira` | `なし`。ほかの値は `INVALID` |
+| `- GitHub Project:` | `` `<owner>/<番号>` ``（Status 欄を書く Project） | `github` なら `INVALID` |
+| `- バックアップ:` | `` `<パス>` ``（git の外） | `${XDG_DATA_HOME:-~/.local/share}/task-workflow/<本体の作業ツリーの名前>` |
+
+**用意**: `/setup-tasks` の `init.py` が、主ブランチを出している作業ツリー（本体）で
+`bd init --stealth -p t` を打ち、独自の状態 `pending:frozen` を足す。`.beads` は本体の根に1つで、
+どの作業ツリーの `bd` も同じデータベースを読む。`--stealth` は `.git/info/exclude` で `.beads` を外し、
+コミットも `AGENTS.md`・`CLAUDE.md` への書き足しもしない（**`--stealth` なしの `bd init` を打たない**。
+両方を書き足して自動でコミットする）。`github` なら人が `gh auth login`（`project` スコープ）と
+`bd config set github.repository <owner>/<repo>` を済ませる。
+
+**今の運用との対応**（`beads.py` の docstring と同じ表。どれも落とさずに移す）:
+
+| ファイル方式 | Beads 方式 |
+| --- | --- |
+| タスクID `T-123` | Beads の中は `t-123`（接頭辞は小文字だけ）。`task` の入出力とコミットの件名は `T-123` のまま |
+| 採番の錠（`lock/`）と `last-id` | `bd create --id t-<n>`（同じ番号は1つしか作れない。負けたら次の番号で打ち直し、20回で `LOCKED`）。最後の番号は `bd kv` の `task-workflow.last-id`。候補は Beads の番号・`bd kv`・主ブランチの `develop/task/` と `docs/history/tasks.md`・台帳の `last-id` の最大 |
+| 着手の印（`mkdir claim/T-xxx`） | `bd update --claim`（actor は作業ツリーの名前）。`claim` した時点の枝は metadata `task_branch` |
+| `NOT_OWNER` | `done`・`release` の前に assignee が自分かを見る（`bd close` も actor が違えば拒む） |
+| `todo`・`hold` | `open`・`pending`（`bd ready` から外れる） |
+| `done`・`dropped` | `bd close`（`dropped` は label `cancelled` を足す。独自の状態 `cancelled` は依存を解決しないので使わない） |
+| `difficulty`・`loopable` | label `difficulty:<値>`・`loopable:<Y/N>` |
+| `dependencies` | `blocks` の依存（`bd create --deps`） |
+| `summary` | `title` |
+| `## 完了条件` | `acceptance_criteria` |
+| `## やること` | `notes` |
+| `## 目的`・`## 背景`・`## 決まっていること`・`## 解くべき論点`・`## 注意` | `description`（見出しのまま） |
+| `## 結果`（`- 振り返り:` を含む） | `## 結果` で始まる comment（最後のものが正） |
+| 登録から完了までの本文の差（`retrospect` の材料） | `bd history`（`material.py` が最初と最後の版の差を出す） |
+| git に残る過去の `develop/task/` と `docs/history/` | 動かさない |
+| 送り出し（`task ship`） | そのまま（git の手順は同じ） |
+
+**サイクルで変わるところ**（「1サイクル」の各段の読み替え）:
+
+- **読む・書く**: タスクファイルを開く代わりに `task show T-xxx`（タスクファイルと同じ形で出す）。
+  直すのは `task edit T-xxx --body-file <path|->`（本文を丸ごと渡す。`## 完了条件`・`## やること` は
+  それぞれの欄へ分けて入れ、版は `bd history` に残る。`## 結果` は拒む）。`hold` ↔ `todo` は
+  `task edit T-xxx --status todo|hold`、`loopable`・`difficulty`・`summary` も `task edit` の引数で直す
+  （コミットも `ship` も要らない）
+- **`done`**: `## 結果` を comment に入れ、label `ship:done`／`ship:dropped` を立てる（stage しない。
+  印はまだ消さない）。コミットは作業のファイルだけで、差分が無ければコミットしない
+- **`ship`**: 送り終えたあと（`SHIPPED`・`NOTHING` のどちらでも）、自分の印のうち `ship:*` の立った
+  ものを `bd close` する（依存はここで初めて解決する。主ブランチに作業が入る前に後段を開けない）。
+  閉じられなかったものは `NOT_CLOSED\tT-xxx\t<理由>` の行。続けて `TRACKER`・`BACKUP` の行が付く
+- **`prune`**: 消すタスクファイルが無いので常に `NOTHING`
+- **取り残し**: `STALE:gone` は assignee がどの作業ツリーの名前でもない、`STALE:shipped` は `ship:*` が
+  立っていて主ブランチに着手より後の `T-xxx:` の件名のコミットがある、`STALE:no-owner` は assignee の
+  無い `in_progress`。片付けるのは人（`task release T-xxx --force` ＝ `bd unclaim --force`）。
+  **`bd reclaim` を打たない**——`--claim` には5分の lease が付くが、期限が過ぎても他の actor は
+  `claim` できない（実測）。期限切れの印を外すのは `bd reclaim` だけで、それは長い作業の印を壊す
+- **振り分け前**（番号でない ID か、`difficulty`・`loopable` の label が無い課題。トラッカーから
+  取り込んだもの）: `status` の `着手可否` が `TRIAGE` で、末尾の `triage` 行に出る。`claim` は
+  `NOT_READY\tT-xxx\tTRIAGE`。人の確認つきで `task adopt <ID> --difficulty … --loopable … --body-file …`
+  （番号を振り、`## 完了条件` を書き起こす）してから着手する
+- **`status` の末尾**: `invalid` の次に `triage\t<件数>\t<ID>` が必ず、`jira` なら `jira_close` 行が付く
+
+**トラッカー**（錠と本文は Beads が持ち、トラッカーは写し。**失敗はタスクの操作を止めない**——
+`new`・`claim`・`release`・`edit`・`adopt`・`ship` は `TRACKER\tFAILED\t…` の行を足して終了コードは
+そのまま。打ち直しは `task sync`）:
+
+| 方式 | すること | しないこと |
+| --- | --- | --- |
+| `github` | `bd github sync --push-only`（Issue と label。token は `GITHUB_TOKEN` が無ければ `gh auth token`）→ Project の Status 欄を `gh project item-edit` で書く（`pending` → `Pending`、`open` → `Todo`、`in_progress` → `In progress`、閉じた → `Done`、`cancelled` → `Cancel`。Project に無い Issue は `item-add`）。`bd` は Status 欄を触らない | `--pull-only`・引数なしの `sync`（GitHub 側の変更を取り込まない） |
+| `jira` | `task sync` で `bd jira sync --pull` だけ。ローカルで閉じた Jira の課題（`external_ref` あり）には label `jira:close` を付け、`status` の `jira_close` 行に出す。人が Jira で閉じたら `task jira-closed T-xxx` で外す | Jira へ書く（`--push`・引数なしの `sync`）。状態は人が Jira で変える |
+| `なし` | 何もしない（`task sync` は `NOTHING`） | ― |
+
+**Jira の方式は本物の Jira で試していない**（サイトとトークンが要る）。`bd jira sync --pull` が
+ローカルで閉じた課題をどう扱うか（開き直すか）は未確認で、試すときは人に用意を頼む。
+
+**バックアップ**: `.beads` は git の外なので、タスクの記録は git の履歴に残らない。`task ship` の
+最後と `task backup` が、置き場へ `bd backup sync`（Dolt の履歴ごと。置き場が未設定なら
+`bd backup init <置き場>/dolt`）と `bd export -o <置き場>/issues.jsonl` を取る（`BACKUP\tOK|FAILED\t<置き場>`）。
+**置き場がリポジトリの中なら取らない**——`bd export` の JSONL には作成者のメールアドレス（`owner`）が
+入るので、公開リポジトリにコミットされうる場所へ置かない。戻すのは `bd backup restore`（人が行う）。
+
+**触らないもの**: `bd metrics`（端末全体の設定）、`bd reclaim`、`bd init` の `--stealth` なし。
+
+**Beads 方式だけのサブコマンド**（ファイル方式で打つと終了コード2。`show` は両方式）:
+
+| サブコマンド | すること | 主な出力 |
+| --- | --- | --- |
+| `show T-xxx` | タスク1件をタスクファイルの形で出す（読むだけ） | 本文。無ければ `NOT_READY` |
+| `edit T-xxx [--body-file …] [--summary …] [--difficulty …] [--loopable Y\|N] [--status todo\|hold]` | 本文と属性を直す。`--status` は着手前（`open`・`pending`）だけ | `EDITED`・`NOT_READY` |
+| `adopt <ID> --difficulty … --loopable … [--summary …] --body-file …` | 振り分け前の課題に番号と label と本文を付ける | `ADOPTED\t<元のID>\tT-xxx` |
+| `sync` | トラッカーへ写す（打ち直し） | `TRACKER\tOK\|FAILED\t…`・`NOTHING` |
+| `backup` | バックアップを取る | `BACKUP\tOK\|FAILED\t<置き場>` |
+| `jira-closed T-xxx…` | `jira:close` を外す | `CLEARED` |
+
+| 終了コード | 先頭語 | 意味 | スキルがすること |
+| --- | --- | --- | --- |
+| 6 | `MISSING\t<.beads のパス>` | 設定は Beads 方式なのに `.beads` が無い | `/setup-tasks` を案内して止まる |
+| 10 | `TRACKER\tFAILED`・`BACKUP\tFAILED`（`sync`・`backup` だけ） | トラッカー・バックアップに届かない | 行を添えて報告する（タスクの操作は済んでいる） |
+
+`config-doctor` は `- タスクの置き場:` 行があるときだけ、4行のあとに `store`・（Beads 方式なら）
+`beads`・`tracker` の行を足す（`beads\tMISSING` は終了コード1）。
