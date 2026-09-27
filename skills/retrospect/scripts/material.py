@@ -352,7 +352,7 @@ def print_signals(root: str, task_id: str) -> None:
         print("-\tトランスクリプトが見つからない（材料を1つ諦めて先へ進む）")
         return
     for p in paths:
-        stats = transcript.read_signals(p)
+        stats = transcript.read_signals(p, root)
         if stats is None:
             print(f"-\t読めない: {os.path.basename(p)}")
             continue

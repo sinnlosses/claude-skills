@@ -4,7 +4,7 @@ Claude Code は作業ディレクトリのパスの英数字以外を `-` に潰
 `<設定ディレクトリ>/projects/<slug>/<セッション>/subagents/<エージェント>.jsonl` に置く
 （設定ディレクトリは `CLAUDE_CONFIG_DIR` が設定されていればそこ、無ければ `~/.claude`）。
 
-**会話の中身をここから外へ出さない。** 返すのはツール名・ファイル名・コマンドの先頭2語・
+**会話の中身をここから外へ出さない。** 返すのはツール名・ファイルパス・コマンドの先頭2語・
 件数・時刻だけ（CLAUDE.md「会話内容の扱い」）。本文を返す関数をここに足さない。
 """
 
@@ -109,8 +109,26 @@ def _head_text(path: str, lines: int = 3) -> str:
         return ""
 
 
-def read_signals(path: str) -> dict | None:
-    """ツール名・ファイル名・コマンドの先頭2語・件数・時刻だけを数える。"""
+def _repo_key(fp: str, root: str) -> str:
+    """`fp` を `root` から見た相対パスにする（別ディレクトリの同名ファイルを合算しないため）。
+
+    `root` の外（`/private/tmp/...` など）や別ドライブで relpath が組めない場合は、
+    落とさずに `fp` をそのまま返す。
+    """
+    try:
+        rel = os.path.relpath(fp, root)
+    except ValueError:
+        return fp
+    if rel == os.pardir or rel.startswith(os.pardir + os.sep):
+        return fp
+    return rel
+
+
+def read_signals(path: str, root: str) -> dict | None:
+    """ツール名・ファイルパス・コマンドの先頭2語・件数・時刻だけを数える。
+
+    `files` の集計キーは `root` から見たリポジトリ相対パス（`_repo_key` 参照）。
+    """
     tools: Counter[str] = Counter()
     files: Counter[str] = Counter()
     commands: Counter[str] = Counter()
@@ -145,7 +163,7 @@ def read_signals(path: str) -> dict | None:
                         if name in ("Edit", "Write", "NotebookEdit"):
                             fp = str(inp.get("file_path") or "")
                             if fp:
-                                files[os.path.basename(fp)] += 1
+                                files[_repo_key(fp, root)] += 1
                         elif name == "Bash":
                             head = " ".join(str(inp.get("command") or "").split()[:2])
                             if head:
