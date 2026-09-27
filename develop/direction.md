@@ -85,3 +85,19 @@
   - 出し先: `scripts/check_repo.py` に「スキルの `scripts/` が兄弟スキルのモジュールを `import` していたら、
     そのスキルの `REQUIRES` にその名前がある」ことを見る検査を足すタスク（`sys.path.insert` の行か
     `import layout` の有無で見つけられる）
+- **`## 背景` の事実主張（存在・パス・行番号）は実物で確かめてから直す、と委譲の指示に書く**（振り返り: T-017）
+  - 根拠: T-017 の `## 背景` は「tsukumo の `src/shared/task-summary.ts` は存在しない」と書いていたが、
+    実際には**存在し**、しかもそれが front matter を読む「読む」層（見本を写すテストも
+    `test/shared/task-summary.test.ts`）。委譲先は確かめずに背景を信じて正しい記述を
+    `src/server/repository/adapter/task-summary.ts`（`main` を見張る I/O の層）に書き換え、受け入れで戻した。
+    **正典と実物のズレを直すタスクが、新しいズレを作った**
+  - 出し先: `skills/next-task/SKILL.md` 手順5の委譲文に「`## 背景` がファイルの存在・パス・行番号を
+    主張していたら、`## やること` を書く前に実物で確かめる（他リポジトリなら `ghq` 配下を見る）。
+    違っていたら直さず『前提が誤り』と報告する」を足すタスク
+- **正典にモデルIDやバージョンを書くときは `claude-api` スキルで現行を確かめる**（振り返り: T-017）
+  - 根拠: 委譲先が足した difficulty → モデルの対応表が `claude-sonnet-4-20250514`・
+    `claude-opus-4-1-20250805` という古い世代のIDで、学習時の記憶から書かれていた（現行は
+    `claude-sonnet-5`・`claude-opus-5`・`claude-haiku-4-5`）。受け入れで `claude-api` スキルを読んで直し、
+    「Agent ツールに渡す短い名前」と「いまそれが指すモデル（日付つき）」を別の列に分けた
+  - 出し先: `skills/task-workflow/WORKFLOW.md`「difficulty とモデルの切り替え」に
+    「この表の右端を直すときは `claude-api` スキルで現行のIDを確かめる（記憶で書かない）」を1行足すタスク
