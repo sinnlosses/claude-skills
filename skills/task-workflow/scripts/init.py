@@ -3,11 +3,10 @@
 
 使い方: init.py [develop-dir]   （既定: develop）
 
-作るのは `develop/direction.md` の骨組み（`## ユーザーから`・`## エージェントのドラフト` の
-2節）だけ（正典は task-workflow の WORKFLOW.md「ファイル配置と設定ファイル（AGENTS.md →
-CLAUDE.md の順）」）。
-`develop/task/` は最初の `task new` が作り、`direction.md` が新形式の目印になる（空の
-ディレクトリは git に載らないため）。骨組みは決まりきっているのでモデルに書かせない
+作るのは `develop/direction.md` の骨組み（見出しと `## ユーザーから` の節）だけ（正典は
+task-workflow の WORKFLOW.md「ファイル配置と設定ファイル（AGENTS.md → CLAUDE.md の順）」）。
+`develop/task/` は最初の `task new` が、`develop/draft/` は最初のドラフトが作り、`direction.md` が
+新形式の目印になる（空のディレクトリは git に載らないため）。骨組みは決まりきっているのでモデルに書かせない
 （`direction.md` に見出し以外の行が混ざると `/plan-tasks` が「未対応の指示がある」と誤判定する）。
 
 **旧形式（`develop/tasks.json` がある）なら何も作らず `LEGACY` で止まる**（終了コード5。
@@ -27,10 +26,11 @@ import sys
 import beads
 import layout
 
-# direction.md の2節（正典「指示メモ」）。前方一致で探す。値は layout.py の正典を読む。
+# direction.md の節（正典「指示メモ」）。前方一致で探す。値は layout.py の正典を読む。
 SECTION_USER = layout.SECTION_USER
-SECTION_DRAFT = layout.SECTION_DRAFT
-DIRECTION = f"# 未対応の指示メモ\n\n{SECTION_USER}\n\n{SECTION_DRAFT}\n"
+LEGACY_SECTION_DRAFT = layout.LEGACY_SECTION_DRAFT
+# 見出しの行は数えないので、ドラフトの置き場は見出しの括弧に書く。
+DIRECTION = f"# 未対応の指示メモ（エージェントのドラフトは {layout.DRAFT_DIR}/ に1件1ファイル）\n\n{SECTION_USER}\n"
 
 # 設定ファイル側の正典（正典「ファイル配置と設定ファイル」）。スキルと task.py はこの節を読む。
 # ファイルの探索そのものは layout.find_config_file（`AGENTS.md` → `CLAUDE.md` の順）に寄せる。
@@ -145,36 +145,45 @@ def check_claude_md(root: str = ".") -> str:
 
 
 def check_direction(path: str) -> str:
-    """`## ユーザーから`・`## エージェントのドラフト` の本文行数を数える（正典「指示メモ」）。
+    """`## ユーザーから` の本文行数と、隣の `draft/` のドラフトの件数を数える（正典「指示メモ」）。
 
     **節見出しが1つも無い（古い）ファイルは、全体を `## ユーザーから` とみなす**（後方互換）。
+    ドラフトを積んでいた旧い節に行が残っていれば、それも数えて移すよう促す。
     """
     with open(path, encoding="utf-8") as f:
         lines = f.read().splitlines()
+    draft_n = _count_drafts(os.path.join(os.path.dirname(path), os.path.basename(layout.DRAFT_DIR)))
 
-    known = (SECTION_USER, SECTION_DRAFT)
+    known = (SECTION_USER, LEGACY_SECTION_DRAFT)
     if not any(l.startswith(k) for l in lines for k in known):
         body = [l for l in lines if l.strip() and not l.startswith("#")]
-        return _direction_result(len(body), 0)
+        return _direction_result(len(body), draft_n, 0)
 
-    counts = {"user": 0, "draft": 0}
+    counts = {"user": 0, "legacy": 0}
     current: str | None = None
     for l in lines:
         if l.startswith(SECTION_USER):
             current = "user"
-        elif l.startswith(SECTION_DRAFT):
-            current = "draft"
+        elif l.startswith(LEGACY_SECTION_DRAFT):
+            current = "legacy"
         elif l.startswith("## "):
             current = None
         elif l.strip() and current is not None:
             counts[current] += 1
-    return _direction_result(counts["user"], counts["draft"])
+    return _direction_result(counts["user"], draft_n, counts["legacy"])
 
 
-def _direction_result(user_n: int, draft_n: int) -> str:
-    if user_n or draft_n:
-        return f"PENDING: ユーザーから{user_n}行、エージェントのドラフト{draft_n}行（/plan-tasks が先）"
-    return "OK: 未対応の指示は無い"
+def _count_drafts(draft_dir: str) -> int:
+    if not os.path.isdir(draft_dir):
+        return 0
+    return sum(1 for n in os.listdir(draft_dir) if n.endswith(".md"))
+
+
+def _direction_result(user_n: int, draft_n: int, legacy_n: int) -> str:
+    if not (user_n or draft_n or legacy_n):
+        return "OK: 未対応の指示は無い"
+    legacy = f"、旧ドラフト節{legacy_n}行（{layout.DRAFT_DIR}/ へ移す）" if legacy_n else ""
+    return f"PENDING: ユーザーから{user_n}行、エージェントのドラフト{draft_n}件{legacy}（/plan-tasks が先）"
 
 
 if __name__ == "__main__":

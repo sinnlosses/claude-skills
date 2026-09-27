@@ -1,9 +1,9 @@
 ---
 name: plan-tasks
-description: "develop/direction.md に書かれたユーザーからの指示（と、承認を得たエージェントのドラフト）を task new で develop/task/ のタスクに分解して登録し、指示メモを docs/history/direction.md へ移して main へ送る。ユーザーが「指示をタスクにして」「direction.md を処理して」と言ったとき、またはセッション開始時に develop/direction.md に未対応の指示があったときに使う。旧形式（develop/tasks.json）のプロジェクトでは移行の案内を出して止まる。"
+description: "develop/direction.md に書かれたユーザーからの指示（と、develop/draft/ のエージェントのドラフトのうち承認を得たもの）を task new で develop/task/ のタスクに分解して登録し、指示メモを docs/history/direction.md へ移して main へ送る。ユーザーが「指示をタスクにして」「direction.md を処理して」と言ったとき、またはセッション開始時に develop/direction.md に未対応の指示があったときに使う。旧形式（develop/tasks.json）のプロジェクトでは移行の案内を出して止まる。"
 ---
 
-`develop/direction.md` に溜まった指示をタスクにする。ルールは `task-workflow` スキルの
+`develop/direction.md` と `develop/draft/` に溜まった指示をタスクにする。ルールは `task-workflow` スキルの
 `WORKFLOW.md`（以下「正典」）。以下の `task` は
 `python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py` の略（変数に入れず、毎回そのまま打つ）。
 
@@ -30,12 +30,13 @@ description: "develop/direction.md に書かれたユーザーからの指示（
    手順で `task migrate --dry-run` から移す（スキルは移さない）」と案内して終了、6（`MISSING`）なら
    タスク運用を始めてよいかユーザーに確かめてから `/setup-tasks`、1・3 は理由を報告して終了する。
 
-   `develop/direction.md` を節ごとに見て、扱うものを決める（判定は保守的に。迷ったら拾わない）:
+   `develop/direction.md` と `develop/draft/` を見て、扱うものを決める（判定は保守的に。迷ったら拾わない）:
 
-   | 節・入口 | 扱い |
+   | 置き場・入口 | 扱い |
    | --- | --- |
-   | `## ユーザーから`（節見出しの無い古いファイルは全体） | そのまま手順2へ |
-   | `## エージェントのドラフト` | 項目をユーザーに見せ、**承認を得たものだけ**手順2へ。無人のときは見ない |
+   | `develop/direction.md` の `## ユーザーから`（節見出しの無い古いファイルは全体） | そのまま手順2へ |
+   | `develop/draft/` のファイル（1件1ファイル） | 項目をユーザーに見せ、**承認を得たものだけ**手順2へ。無人のときは見ない |
+   | `develop/direction.md` に残った旧い `## エージェントのドラフト` の節 | 1件ずつ正典「指示メモ」の形で `develop/draft/` のファイルへ移して節を消し、上の行と同じに扱う。無人のときは触らない |
    | 会話の明示の指示（「これタスクにして」「それでいいよ」） | `develop/direction.md` を経由せず手順2へ。無人のときは使わない |
    | Beads 方式の `triage` 行（トラッカーから取り込んだ振り分け前の課題） | `task show <ID>` で読み、`## 完了条件`・`difficulty`・`loopable` を書き起こしてユーザーに見せ、承認を得たものだけ `task adopt` する（手順5）。無人のときは見ない |
    | どれも無い | 未対応の指示は無いと報告して終了する |
@@ -85,14 +86,14 @@ description: "develop/direction.md に書かれたユーザーからの指示（
 
 6. **指示メモを移す**: `docs/history/direction.md` の先頭に日付見出し（`## YYYY-MM-DD`）で、
    正典「指示メモ」の3点だけを書く（無ければ `# 指示の履歴` の1行で作る）。`## ユーザーから` は
-   **当時の記述のまま**移して節を見出しだけに戻し、`## エージェントのドラフト` は承認を得た項目だけを
-   出典1行つきで移して未承認は残す。会話入口は発言を生の言い回しのまま書く。
+   **当時の記述のまま**移して節を見出しだけに戻し、ドラフトは承認を得たファイルの中身だけを
+   出典1行つきで移してそのファイルを `git rm` する（未承認のファイルは残す）。会話入口は発言を生の言い回しのまま書く。
 
 7. **コミットして送る**: `git add` する前に整形コマンドを打つ（`タスク運用`節が `なし` なら不要。
    手順6で書き換えた `develop/direction.md` と `docs/history/direction.md` はそのままだと
    整形コマンドの検査に引っかかりうる）。打ったら、登録したタスクファイル・`develop/direction.md`・
-   `docs/history/direction.md`（と直した既存タスク）を**個別に** `git add` して1コミット
-   （Beads 方式ではタスクファイルが無いので、`develop/direction.md` と `docs/history/direction.md` だけ）（件名に
+   `docs/history/direction.md`（と直した既存タスク、移したドラフトのファイル）を**個別に** `git add`
+   し、手順6の `git rm` と合わせて1コミット（Beads 方式ではタスクファイルが無いので、それ以外だけ）（件名に
    タスクIDを付けない。例「指示をタスクにする（T-531〜T-533）」）→ `task ship`。`SHIPPED` 以外の
    扱いは `next-task` スキルの手順8の表と同じ（止まって預ける）。push はしない。
 
@@ -104,11 +105,11 @@ description: "develop/direction.md に書かれたユーザーからの指示（
    `SHIPPED` 以外で止まったときは、止まったことと先頭語を結論にする
 2. **対応表**（全項目。**取りこぼしの検知点はここだけなので必ず出す**）: 列は
    項目・発言 | タスクID | `summary` | `difficulty` | `loopable` | 依存 | `hold`。
-   ドラフト由来は承認の発言を表の見出しの1行に添える。タスクにしなかった項目と、節に残した
+   ドラフト由来は承認の発言を表の見出しの1行に添える。タスクにしなかった項目と、残した
    未承認のドラフトも行に入れ、タスクIDの列に理由を書く
 3. **人に知らせること**があるときだけ: 裏取りで項目の中身と違うと分かったこと、その場で
    決めてもらったこと、`loopable: N` と `hold` の理由（`/loop` では進まないため）
 
 書かないもの: `SHIPPED` の範囲・コミットのハッシュ、`task status` の件数、
-`develop/direction.md` のどの節を空にしたか、移した先の日付見出し（どれも決まった手順の
+`develop/direction.md` のどの節を空にしたか・どのドラフトを消したか、移した先の日付見出し（どれも決まった手順の
 とおりで、見たければ `git log` と `task status` で見られる）。

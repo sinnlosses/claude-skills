@@ -209,6 +209,7 @@ LAYOUT_CONSUMERS = (
 _LAYOUT_PATHS = {
     "develop/task",
     "develop/direction.md",
+    "develop/draft",
     "develop/retrospective.md",
     "docs/history/tasks.md",
 }

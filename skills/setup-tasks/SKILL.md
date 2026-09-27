@@ -1,6 +1,6 @@
 ---
 name: setup-tasks
-description: "タスク運用に要る develop/direction.md（## ユーザーから・## エージェントのドラフト）をプロジェクトに用意し、検証コマンド・整形コマンド・ブランチの3行を CLAUDE.md の「## タスク運用」節に書く。ユーザーが「タスク運用を始めたい」「develop/ を用意して」「このプロジェクトでもタスク管理を使いたい」と言ったとき、/next-task・/plan-tasks・/list-tasks が MISSING を返したときに使う。既にあるファイルは上書きしない。旧形式（develop/tasks.json）なら作らずに移行を案内する。"
+description: "タスク運用に要る develop/direction.md（## ユーザーから）をプロジェクトに用意し、検証コマンド・整形コマンド・ブランチの3行を CLAUDE.md の「## タスク運用」節に書く。ユーザーが「タスク運用を始めたい」「develop/ を用意して」「このプロジェクトでもタスク管理を使いたい」と言ったとき、/next-task・/plan-tasks・/list-tasks が MISSING を返したときに使う。既にあるファイルは上書きしない。旧形式（develop/tasks.json）なら作らずに移行を案内する。"
 ---
 
 `/next-task` `/plan-tasks` `/list-tasks` が読む**プロジェクト側のファイルを用意する**。置き場と役割は
@@ -31,8 +31,8 @@ description: "タスク運用に要る develop/direction.md（## ユーザーか
    | `CREATED\t<…/.beads>`・`KEPT\t<…/.beads>`・`CONFIG\tstatus.custom=…` | 節が Beads 方式（`- タスクの置き場: beads`）なので `.beads` を用意した（`bd init --stealth -p t`）・既にあった・独自の状態 `pending` を足した |
    | `NOT_MAIN_WORKTREE`（終了コード4） | `.beads` は主ブランチを出している作業ツリー（本体）の根に置く。パスの作業ツリーで打ち直すよう案内する |
 
-   `develop/task/` は最初の `task new` が作る（空のディレクトリは git に載らない。新形式の目印は
-   `develop/direction.md`）。`docs/history/` も掘らない。
+   `develop/task/` は最初の `task new` が、`develop/draft/` は最初のドラフトが作る（空のディレクトリは
+   git に載らない。新形式の目印は `develop/direction.md`）。`docs/history/` も掘らない。
 
 2. **CLAUDE.md の「## タスク運用」節を用意する**。プロジェクトごとに変わる値は3行だけ。まず値を
    決める。**推測で書かない**:

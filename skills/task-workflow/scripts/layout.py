@@ -21,10 +21,14 @@ import re
 # develop/task/T-xxx.md（正典3章）
 TASK_DIR = "develop/task"
 
-# develop/direction.md とその2節（正典「指示メモ」）
+# develop/direction.md とその節（正典「指示メモ」）
 DIRECTION_PATH = "develop/direction.md"
 SECTION_USER = "## ユーザーから"
-SECTION_DRAFT = "## エージェントのドラフト"
+# ドラフトを direction.md に積んでいたころの節。移し忘れを数えるためだけに残す。
+LEGACY_SECTION_DRAFT = "## エージェントのドラフト"
+
+# エージェントのドラフト（1件1ファイル。正典「指示メモ」）
+DRAFT_DIR = "develop/draft"
 
 # develop/retrospective.md（正典「振り返り」）
 RETROSPECTIVE_PATH = "develop/retrospective.md"

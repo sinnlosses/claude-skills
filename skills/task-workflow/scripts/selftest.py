@@ -151,10 +151,11 @@ def test_init() -> None:
 
             created = open("develop/direction.md", encoding="utf-8").read()
             check(
-                "作った direction.md に2節がある",
-                all(h in created for h in ("## ユーザーから", "## エージェントのドラフト")),
+                "作った direction.md は「ユーザーから」の節だけを持つ",
+                "## ユーザーから" in created and "## エージェントのドラフト" not in created,
                 created,
             )
+            check("draft/ は作らない", not os.path.exists("develop/draft"))
 
             r = run("init.py", "develop")
             check("2回目は上書きしない", "KEPT" in r.stdout and "CREATED" not in r.stdout, r.stdout)
@@ -168,18 +169,18 @@ def test_init() -> None:
                 r.stdout,
             )
 
-            write(
-                "develop/direction.md",
-                "# 未対応の指示メモ\n\n## ユーザーから\nこれをやって\n\n"
-                "## エージェントのドラフト\nこれも直したい\n",
-            )
+            write("develop/direction.md", "# 未対応の指示メモ\n\n## ユーザーから\nこれをやって\n")
+            write("develop/draft/2026-09-27-fix-a.md", "# a\n\n- 根拠: x\n- 出し先: y\n")
+            write("develop/draft/2026-09-27-fix-b.md", "# b\n")
             r = run("init.py", "develop")
             check(
-                "節ごとの行数を分けて数える",
-                "ユーザーから1行" in r.stdout and "エージェントのドラフト1行" in r.stdout,
+                "ユーザーからは行数、ドラフトは draft/ のファイルの件数で数える",
+                "ユーザーから1行" in r.stdout and "エージェントのドラフト2件" in r.stdout and "旧ドラフト節" not in r.stdout,
                 r.stdout,
             )
 
+            os.remove("develop/draft/2026-09-27-fix-a.md")
+            os.remove("develop/draft/2026-09-27-fix-b.md")
             write(
                 "develop/direction.md",
                 "# 未対応の指示メモ\n\n## ユーザーから\n\n"
@@ -190,8 +191,8 @@ def test_init() -> None:
             )
             r = run("init.py", "develop")
             check(
-                "###の小見出しを含むドラフトがPENDINGになる（小見出しは本文の行として数える）",
-                "PENDING:" in r.stdout and "エージェントのドラフト3行" in r.stdout,
+                "旧いドラフトの節に行が残っていれば、移すよう促して PENDING",
+                "PENDING:" in r.stdout and "旧ドラフト節3行" in r.stdout and "エージェントのドラフト0件" in r.stdout,
                 r.stdout,
             )
 
