@@ -40,6 +40,10 @@ TASK_SECTION_KEYS = ("検証コマンド", "整形コマンド", "ブランチ")
 # 行頭がズレているのか、行そのものが無いのかを見分けるための短い手がかり。
 TASK_SECTION_STEMS = {"検証コマンド": "検証", "整形コマンド": "整形", "ブランチ": "ブランチ"}
 DEVELOP_FILES = ("tasks.json", "progress.md", "direction.md")
+# 新形式（`develop/task/` の1件1ファイル）で在ったら旧形式の残りと見なすファイル。
+# `task-workflow` の `cmd_config_doctor` の検査4（`develop/tasks.json`・`develop/progress.md`）
+# と同じ組・同じ案内（`task migrate --dry-run`）に揃える（T-030）。
+DEVELOP_LEGACY_FILES = ("tasks.json", "progress.md")
 
 # `docs/history/` は当時の記述をそのまま残すアーカイブなので、どの検査の対象にもしない。
 HISTORY_DIR = "history"
@@ -327,11 +331,13 @@ def main() -> int:
         config_found = None
         config_conflict = str(e)
     sec = task_section(config_found[1]) if config_found else []
+    task_dir_present = os.path.isdir(os.path.join(root, "develop", "task"))
     develop_present = [f for f in DEVELOP_FILES if os.path.exists(os.path.join(root, "develop", f))]
     if config_conflict is not None:
         note(5, f"AGENTS.md と CLAUDE.md の両方に「## タスク運用」節がある（{config_conflict}）")
-    elif not sec and develop_present:
-        note(5, f"develop/ はあるが AGENTS.md/CLAUDE.md に「## タスク運用」節が無い（{len(develop_present)}/3ファイル）")
+    elif not sec and (develop_present or task_dir_present):
+        found = list(develop_present) + (["task/"] if task_dir_present else [])
+        note(5, f"develop/ はあるが AGENTS.md/CLAUDE.md に「## タスク運用」節が無い（develop/{', develop/'.join(found)}）")
     if sec:
         for key in TASK_SECTION_KEYS:
             hit = [l for l in sec if l.startswith(f"- {key}:")]
@@ -344,9 +350,19 @@ def main() -> int:
                     note(5, f"「- {key}:」の行が無い（消さずに「なし」と書く）")
             elif not hit[0].split(":", 1)[1].strip():
                 note(5, f"「- {key}:」の値が空（走らせるものが無ければ「なし」）")
-        for f in DEVELOP_FILES:
-            if not os.path.exists(os.path.join(root, "develop", f)):
-                note(5, f"「## タスク運用」節はあるが develop/{f} が無い")
+        # 新形式が期待するもの（正典 WORKFLOW.md「ファイル配置と設定ファイル」）は
+        # `develop/direction.md`（新形式の目印も兼ねる）と `develop/task/`。
+        # `develop/tasks.json`・`develop/progress.md` は在っても新形式では要らないので、
+        # 「無い」を NG にはせず、**在ったら**旧形式の残りとして指摘する
+        # （`cmd_config_doctor` の検査4と同じ判定・同じ案内。二重の言い方にしない）。
+        if not os.path.exists(os.path.join(root, "develop", "direction.md")):
+            note(5, "「## タスク運用」節はあるが develop/direction.md が無い")
+        legacy_present = [f for f in DEVELOP_LEGACY_FILES if os.path.exists(os.path.join(root, "develop", f))]
+        if legacy_present:
+            leftover = "・".join(f"develop/{f}" for f in legacy_present)
+            note(5, f"{leftover} が残っている（旧形式の残り。`task migrate --dry-run` で移行を確かめる）")
+        elif not task_dir_present:
+            note(5, "「## タスク運用」節はあるが develop/task/ が無い")
 
     # 検査6: バッククォートで名指ししたパスが実在しない（経緯の記録なら正当なので候補群）。
     #
