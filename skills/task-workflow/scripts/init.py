@@ -125,7 +125,7 @@ def check_direction(path: str) -> str:
             current = "user"
         elif l.startswith(SECTION_DRAFT):
             current = "draft"
-        elif l.startswith("#"):
+        elif l.startswith("## "):
             current = None
         elif l.strip() and current is not None:
             counts[current] += 1

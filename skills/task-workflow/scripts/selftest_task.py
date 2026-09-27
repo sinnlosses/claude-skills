@@ -164,6 +164,14 @@ def test_taskfile_parse() -> None:
         "登録時にやること/結果を含む本文は拒む", taskfile.validate_new_body(BODY + "\n## やること\nx\n") is not None
     )
     check("正しい登録時の本文はOK", taskfile.validate_new_body(BODY) is None)
+    check(
+        "本文で禁止節の名前に言及しただけなら通る（見出しではない）",
+        taskfile.validate_new_body(BODY + "\n`## 結果`セクションは作業後に追加します\n") is None,
+    )
+    check(
+        "本文に禁止節の見出しがあると拒まれる",
+        taskfile.validate_new_body(BODY + "\n## 結果\n結果の内容\n") is not None,
+    )
 
 
 # --- task.py: 単独の作業ツリー ---------------------------------------------

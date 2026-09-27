@@ -180,6 +180,21 @@ def test_init() -> None:
                 r.stdout,
             )
 
+            write(
+                "develop/direction.md",
+                "# 未対応の指示メモ\n\n## ユーザーから\n\n"
+                "## エージェントのドラフト\n"
+                "### 開発フローとスキルの汎用化\n"
+                "開発フロー関連の改善についてのドラフト\n"
+                "複数行のドラフトです\n",
+            )
+            r = run("init.py", "develop")
+            check(
+                "###の小見出しを含むドラフトがPENDINGになる（小見出しは本文の行として数える）",
+                "PENDING:" in r.stdout and "エージェントのドラフト3行" in r.stdout,
+                r.stdout,
+            )
+
             write("CLAUDE.md", "# x\n\n## タスク運用\n\n- 検証コマンド: `なし`\n- 整形コマンド: `なし`\n")
             r = run("init.py", "develop")
             check("ブランチ行が無ければ MISSING_LINE", "MISSING_LINE" in r.stdout and "- ブランチ:" in r.stdout, r.stdout)

@@ -146,7 +146,10 @@ def validate_new_body(body: str) -> str | None:
     missing = [s for s in REQUIRED_NEW_SECTIONS if s not in body]
     if missing:
         return "本文に必須の節が無い: " + "、".join(missing)
-    present = [s for s in FORBIDDEN_NEW_SECTIONS if s in body]
+    # 禁止節は**見出しの行として**現れたときだけ拒む（本文の説明文で節名に言及するのは許す）。
+    # 行末の空白で擦り抜けないように落としてから比べる。
+    body_lines = [l.rstrip() for l in body.split("\n")]
+    present = [s for s in FORBIDDEN_NEW_SECTIONS if s in body_lines]
     if present:
         return "本文に登録時にはまだ書けない節がある（着手直後に書く節）: " + "、".join(present)
     return None
