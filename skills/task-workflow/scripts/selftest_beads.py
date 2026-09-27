@@ -9,7 +9,9 @@
 
 GitHub・Jira には繋がない。`bd github sync`・`bd jira sync` と `gh` は、PATH の先頭に置いた
 偽のコマンドが受けて呼ばれ方を記録する（`bd` のそれ以外のサブコマンドは本物へ渡す）。
-バックアップの置き場は `XDG_DATA_HOME` を一時ディレクトリへ向けて、利用者の家を汚さない。
+`HOME`・`XDG_CONFIG_HOME`・`XDG_DATA_HOME` を一時ディレクトリへ向けて、利用者の家を汚さない
+（`bd init` は利用者の `~/.config/bd/config.yaml` を読み書きし、並行に打つと使用状況の送信の設定まで
+書き戻すことがあった。一時の家には送信を止めた設定を置く）。
 """
 
 from __future__ import annotations
@@ -540,6 +542,14 @@ def test_backup() -> None:
         check("リポジトリの中へは取らない（終了コード10）", r.returncode == 10 and "BACKUP\tFAILED" in r.stdout, r.stdout)
 
 
+def _stat(path: str) -> tuple[float, int] | None:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return st.st_mtime, st.st_size
+
+
 def _run_one(test) -> list[str]:
     _local.lines = []
     try:
@@ -553,8 +563,14 @@ def main() -> None:
     if shutil.which("bd") is None:
         print("bd が無いので Beads 方式の自己テストを飛ばす")
         return
-    with tempfile.TemporaryDirectory() as data_home:
-        BASE_ENV["XDG_DATA_HOME"] = data_home
+    real_config = os.path.join(os.path.expanduser("~"), ".config", "bd", "config.yaml")
+    before = _stat(real_config)
+    with tempfile.TemporaryDirectory() as home:
+        write(os.path.join(home, ".config", "bd", "config.yaml"),
+              "metrics:\n    disabled: true\n    notice_shown: true\nno-git-ops: true\n")
+        BASE_ENV["HOME"] = home
+        BASE_ENV["XDG_CONFIG_HOME"] = os.path.join(home, ".config")
+        BASE_ENV["XDG_DATA_HOME"] = os.path.join(home, ".local", "share")
         BASE_ENV.pop("BEADS_ACTOR", None)
         BASE_ENV.pop("GITHUB_TOKEN", None)
         tests = (
@@ -573,6 +589,9 @@ def main() -> None:
             outputs = list(pool.map(_run_one, tests))
     for lines in outputs:
         print("\n".join(lines))
+    _local.lines = []
+    check("利用者の ~/.config/bd/config.yaml に触れていない", _stat(real_config) == before, real_config)
+    print("\n".join(_local.lines))
     print()
     if failures:
         print(f"FAILED {len(failures)}件: " + ", ".join(failures))

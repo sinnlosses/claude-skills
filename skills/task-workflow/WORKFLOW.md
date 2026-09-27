@@ -422,7 +422,10 @@ Beads の挙動の実測は tsukumo の `docs/research/github-projects.md`。
 `bd init --stealth -p t` を打ち、独自の状態 `pending:frozen` を足す。`.beads` は本体の根に1つで、
 どの作業ツリーの `bd` も同じデータベースを読む。`--stealth` は `.git/info/exclude` で `.beads` を外し、
 コミットも `AGENTS.md`・`CLAUDE.md` への書き足しもしない（**`--stealth` なしの `bd init` を打たない**。
-両方を書き足して自動でコミットする）。`github` なら人が `gh auth login`（`project` スコープ）と
+両方を書き足して自動でコミットする）。ただし `--stealth` は利用者の `~/.config/bd/config.yaml` に `no-git-ops: true` を
+書き足す（端末全体の設定。2026-09-27 の実測）。`bd` を同時に何本も `init` すると、この設定ファイルの
+ほかの値（使用状況の送信を止めた `metrics.disabled`）まで書き戻したことがあるので、`init` は1本ずつ打つ
+（自己テストは `HOME` を一時ディレクトリへ向けて利用者の設定に触れない）。`github` なら人が `gh auth login`（`project` スコープ）と
 `bd config set github.repository <owner>/<repo>` を済ませる。
 
 **今の運用との対応**（`beads.py` の docstring と同じ表。どれも落とさずに移す）:
