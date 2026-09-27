@@ -84,16 +84,15 @@ def prepare_beads(root: str) -> int:
         if os.path.realpath(os.path.dirname(target)) != toplevel:
             print(f"NOT_MAIN_WORKTREE\t{os.path.dirname(target)}\t（.beads はそこで作る）")
             return 4
-        r = beads.run(root, ["init", "--stealth", "-p", beads.PREFIX, "--non-interactive", "--skip-hooks", "--quiet"])
+        # トラッカーが github なら ID は Issue 番号（`gh-<n>`）、それ以外は `task` の採番（`t-<n>`）。
+        tracker_value = layout.read_setting_value(root, layout.TRACKER_KEY)
+        github = tracker_value is not None and layout.setting_word(tracker_value) == "github"
+        prefix = beads.PREFIX_GITHUB if github else beads.PREFIX_LOCAL
+        r = beads.run(root, ["init", "--stealth", "-p", prefix, "--non-interactive", "--skip-hooks", "--quiet"])
         if r.returncode != 0:
             print(f"FAILED\tbd init\t{(r.stderr or r.stdout).strip()}")
             return 1
-        print(f"CREATED\t{target}\t(bd init --stealth -p {beads.PREFIX})")
-    current = beads.run(root, ["config", "get", "status.custom"]).stdout.strip()
-    if beads.HOLD_STATUS + ":" not in current:
-        merged = ",".join(x for x in (current if "(not set)" not in current else "", beads.CUSTOM_STATUSES) if x)
-        beads.run_ok(root, ["config", "set", "status.custom", merged])
-        print(f"CONFIG\tstatus.custom={merged}")
+        print(f"CREATED\t{target}\t(bd init --stealth -p {prefix})")
     return 0
 
 

@@ -445,9 +445,6 @@ Beads の挙動の実測は tsukumo の `docs/research/github-projects.md`（双
 （`gh` か `t`）で決め、`task` は両方の形を読む（切り替えの途中は `t-<n>` と `gh-<n>` が混ざる）。
 ファイル方式・過去の `T-xxx`（git の履歴と `docs/history/`）は動かさない。
 
-**`task` のスクリプトは、この節の `gh-<n>`・双方向の同期・`deferred` にまだ追いついていない。**
-追いつくまでは `t-<n>`・`--push-only`・`pending` で動く（実際の出力が正）。
-
 **設定の行**（「## タスク運用」節の任意行。どれも無いのが既定）:
 
 | 行 | 値 | 無いとき |
@@ -476,7 +473,7 @@ Beads の挙動の実測は tsukumo の `docs/research/github-projects.md`（双
 | 採番の錠（`lock/`）と `last-id` | `github`: GitHub の採番（下の「GitHub との双方向」の登録）。`なし`・`jira`: `bd create --id t-<n>`（同じ番号は1つしか作れない。負けたら次の番号で打ち直し、20回で `LOCKED`）。最後の番号は `bd kv` の `task-workflow.last-id`。候補は Beads の番号・`bd kv`・主ブランチの `develop/task/` と `docs/history/tasks.md`・台帳の `last-id` の最大 |
 | 着手の印（`mkdir claim/T-xxx`） | `bd update --claim`（actor は作業ツリーの名前）。`claim` した時点の枝は metadata `task_branch` |
 | `NOT_OWNER` | `done`・`release` の前に assignee が自分かを見る（`bd close` も actor が違えば拒む） |
-| `todo`・`hold` | `open`・`deferred`（`bd ready` から外れる。GitHub では label `status::deferred`） |
+| `todo`・`hold` | `open`・`deferred`（`bd ready` から外れる。GitHub では label `status::deferred`）。切り替え前の独自の状態 `pending` も `hold` と読む |
 | `done`・`dropped` | `bd close`（`dropped` は label `cancelled` を足す。独自の状態 `cancelled` は依存を解決しないので使わない） |
 | `difficulty`・`loopable` | label `difficulty:<値>`・`loopable:<Y/N>` |
 | `dependencies` | `blocks` の依存（`bd create --deps`） |
@@ -515,14 +512,23 @@ Beads の挙動の実測は tsukumo の `docs/research/github-projects.md`（双
 - **`status` の末尾**: `invalid` の次に `triage\t<件数>\t<ID>` が必ず、`jira` なら `jira_close` 行が付く
 
 **トラッカー**（錠と本文は Beads が持ち、トラッカーは写し。**失敗はタスクの操作を止めない**——
-`new`・`claim`・`release`・`edit`・`adopt`・`ship` は `TRACKER\tFAILED\t…` の行を足して終了コードは
-そのまま。打ち直しは `task sync`）:
+`new`・`claim`・`release`・`edit`・`adopt`・`done`・`ship` は `TRACKER\tFAILED\t…` の行を足して終了コードは
+そのまま。打ち直しは `task sync`。`bd github` は GitHub に届かなくても終了コード0を返すので、`task` は
+`--json` の `stats.errors` と `Warning: Failed` の行で失敗を見る）:
 
 | 方式 | すること | しないこと |
 | --- | --- | --- |
-| `github` | 双方向（下の「GitHub との双方向」）。そのあと Project の Status 欄を `gh project item-edit` で書く（`deferred` → `Pending`、`open` → `Todo`、`in_progress` → `In progress`、閉じた → `Done`、`cancelled` → `Cancel`。Project に無い Issue は `item-add`）。`bd` は Status 欄を触らない。token は `GITHUB_TOKEN` が無ければ `gh auth token` | 引数なしの `bd github sync`・`--pull-only`（`bd` の増分の取り込みは取りこぼす）。Status 欄を読む（人が Project で変えた Status は次の書き込みで戻る） |
+| `github` | `issue_prefix` が `gh` なら双方向（下の「GitHub との双方向」）、`t` なら Beads から送るだけ。1件だけを触る操作（`new`・`claim`・`release`・`edit`・`adopt`・`done`）はその1件だけを `bd github push <ID>` で、`ship`・`sync` は全件を `bd github sync --push-only` で送る。そのあと Project の Status 欄を `gh api graphql` で書く（`deferred` → `Pending`、`open` → `Todo`、`in_progress` → `In progress`、閉じた → `Done`、`cancelled` → `Cancel`。Project に無い Issue は足す）。`bd` は Status 欄を触らない。token は `GITHUB_TOKEN` が無ければ `gh auth token` | 引数なしの `bd github sync`・`--pull-only`（`bd` の増分の取り込みは取りこぼす）。`gh project` のコマンド（`item-list` は入れ子の上限で1回約101点かかり、どれも持ち主の照会を足す）。Status 欄を読んで合わせる（人が Project で変えた Status は、次にその課題の Beads の状態が変わるまで戻らない） |
 | `jira` | `task sync` で `bd jira sync --pull` だけ。ローカルで閉じた Jira の課題（`external_ref` あり）には label `jira:close` を付け、`status` の `jira_close` 行に出す。人が Jira で閉じたら `task jira-closed T-xxx` で外す | Jira へ書く（`--push`・引数なしの `sync`）。状態は人が Jira で変える |
 | `なし` | 何もしない（`task sync` は `NOTHING`） | ― |
+
+**Status 欄の控え**（GraphQL の枠は1時間に5000点・アカウント単位で、点数は要求の上限で数えられる）:
+Project・Status 欄・選択肢の ID は `bd kv` の `task-workflow.project` に控え、控えで書いて落ちたら（欄や
+選択肢を作り直したとき）1回だけ読み直す。Issue ごとの項目 ID と最後に書いた Status は
+`task-workflow.project-items`（Issue の URL が鍵）に控え、Beads の状態から決まる Status が控えと同じ課題には
+触らない。項目 ID が控えに無い課題は Issue の `projectItems(first: 10)` だけを引き、控えの無い課題が10件を
+超えるとき（最初の1回）は Project を `items(first: 100)` の `id`・`content.url`・`fieldValueByName("Status")`
+だけで一巡して控えを埋める。Issue の読み書きと取り込む番号を選ぶ一覧は REST で、GraphQL の枠を食わない。
 
 **Jira の方式は本物の Jira で試していない**（サイトとトークンが要る）。`bd jira sync --pull` が
 ローカルで閉じた課題をどう扱うか（開き直すか）は未確認で、試すときは人に用意を頼む。
@@ -531,12 +537,13 @@ Beads の挙動の実測は tsukumo の `docs/research/github-projects.md`（双
 
 - **`bd` の増分の取り込みを使わない**。`bd` は前回の同期の時刻（push でも pull でも進む）より後に
   更新された Issue だけを読むので、その間の GitHub での変更と、立てた直後の Issue を取りこぼす。
-  `task` は GitHub の一覧（`gh issue list --state all --json number,updatedAt`）の更新時刻を自分で覚え
-  （`bd kv` の `task-workflow.github-seen`。無ければ開いている全件）、それより後に更新された Issue と、
-  Beads に無い開いた Issue を番号で `bd github pull <番号>…` する
-- **登録**（`task new`）: `bd create --id gh-new-<作業ツリーの名前>-<秒>`（仮の ID。`bd` の採番は
+  `task sync` は GitHub の一覧（REST の `repos/<repo>/issues?state=all&since=…`）で見た最後の更新時刻を
+  自分で覚え（`bd kv` の `task-workflow.github-seen`。無ければ開いている全件）、その1時間前より後に
+  更新された Issue（立てた直後の Issue が一覧に遅れて出る分をさかのぼる）を番号で `bd github pull <番号>…` する
+- **登録**（`task new`）: `bd create --id gh-new-<作業ツリーの名前>-<時刻>`（仮の ID。`bd` の採番は
   数字だけの hash になりうるので使わない）→ `bd github push <仮の ID>` → `external_ref` の末尾の番号 →
-  `bd rename <仮の ID> gh-<番号>`（依存・comment・履歴ごと付け替わる）。push で落ちたら仮の ID のまま
+  `bd rename <仮の ID> gh-<番号>`（依存・comment・履歴ごと付け替わる）→ もう一度 `bd github push`（付け替えも
+  Beads の更新なので、前回の同期の時刻を進めておく）。push で落ちたら仮の ID のまま
   `TRACKER\tFAILED` を出し、`task sync` が push と付け替えをやり直す
 - **取り込み**: 取り込んだ課題の ID は `gh-<時刻>-1-<hash>` なので、`external_ref` の番号 `n` と ID が
   違う課題は `task` が `bd rename` で `gh-<n>` にする（行き先が既にあれば付け替えず `INVALID` の行）。
@@ -547,16 +554,20 @@ Beads の挙動の実測は tsukumo の `docs/research/github-projects.md`（双
 - **錠の持ち主**: 取り込みは assignee を GitHub の担当者で上書きする（作業ツリーの名前は GitHub の
   利用者でないので空になる）。`task` は取り込みの前に `in_progress` の assignee を控え、空になったものを
   `bd update --assignee` で戻す。**取り込みはすべてこの包みを通す**
-- **タスクの操作**（`new`・`claim`・`release`・`edit`・`adopt`・`done`・`ship`）: 触る課題だけを
-  取り込み → 操作 → `bd github push <ID>` の順で打つ
+- **タスクの操作**（`claim`・`release`・`edit`・`adopt`・`done`）: 触る課題だけを
+  取り込み → 操作 → `bd github push <ID>` の順で打つ。`ship` は取り込まずに全件を送る。
+  取り込みは前回の同期の時刻を進めるので、取り込みのあとの直し（assignee・label・付け替え）は
+  その場で送る（送らないと、次の取り込みがその課題を「Beads で変えたもの」として飛ばし、GitHub での変更を送り返して消す）
 - **衝突**: 課題ごとの勝ち負けで、欄ごとには合わせない。取り込みは前回の同期より後に Beads で
   変えた課題を上書きしないので、**両側で変えたら Beads が勝ち**、GitHub の版は Issue の編集履歴に残る。
-  `task` はその課題を `TRACKER\tCONFLICT\tGH-<n>` の行で知らせる（人が履歴から拾い直す）
+  `task` はその課題を `TRACKER\tCONFLICT\tGH-<n>` の行で知らせる（人が履歴から拾い直す）。`bd` は飛ばしたことを
+  教えないので、`task` が課題ごとに最後に送った・取り込んだ時刻（`bd kv` の `task-workflow.github-synced`）を
+  控え、そのあとに Beads と GitHub の両方で更新された課題を衝突とする
 - **GitHub で閉じる**: 取り込むと Beads でも閉じ、依存が解ける。`ship:*` の無い課題が GitHub で
   閉じられたら見送りとして label `cancelled` を足し、`TRACKER\tCLOSED\tGH-<n>` の行を出す（着手中なら
   人に預ける）。GitHub で開き直したら `cancelled` と `ship:*` を外す
-- **`task sync` の順**: 控える → 取り込む → 付け替える → push（`bd github sync --push-only`）→
-  assignee を戻す → Status 欄を書く
+- **`task sync` の順**: 控える → 取り込む → 付け替える・assignee を戻す（直したものを送る）→
+  push（`bd github sync --push-only`）→ 登録で落ちた仮の ID を付け替える → Status 欄を書く
 
 **Jira の方式との違い**:
 

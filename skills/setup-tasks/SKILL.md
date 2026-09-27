@@ -28,7 +28,7 @@ description: "タスク運用に要る develop/direction.md（## ユーザーか
    | `KEPT` + `OK:` | 既にあり、筋が通っている。触っていない |
    | `KEPT` + `PENDING:` | セットアップとしては完了。未タスク化の指示が残っているので `/plan-tasks` が先と報告する |
    | `MISSING`/`NO_SECTION`/`MISSING_LINE`/`BAD_BRANCH`/`OK` の行 | CLAUDE.md の点検結果。手順2で使う |
-   | `CREATED\t<…/.beads>`・`KEPT\t<…/.beads>`・`CONFIG\tstatus.custom=…` | 節が Beads 方式（`- タスクの置き場: beads`）なので `.beads` を用意した（`bd init --stealth -p t`）・既にあった・独自の状態 `pending` を足した |
+   | `CREATED\t<…/.beads>`・`KEPT\t<…/.beads>` | 節が Beads 方式（`- タスクの置き場: beads`）なので `.beads` を用意した（トラッカーが `github` なら `bd init --stealth -p gh` で ID は Issue 番号、それ以外は `-p t`）・既にあった |
    | `NOT_MAIN_WORKTREE`（終了コード4） | `.beads` は主ブランチを出している作業ツリー（本体）の根に置く。パスの作業ツリーで打ち直すよう案内する |
 
    `develop/task/` は最初の `task new` が、`develop/draft/` は最初のドラフトが作る（空のディレクトリは

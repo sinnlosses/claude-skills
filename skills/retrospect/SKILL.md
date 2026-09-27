@@ -126,6 +126,7 @@ TSVの列は `hash / 日付 / タスクID / ファイル数 / 増減 / 件名`�
 python3 ${CLAUDE_SKILL_DIR}/scripts/material.py . T-XXX --diff
 ```
 
+`T-XXX` は Beads 方式でトラッカーが `github` なら `GH-<n>` のこともある（`scan.py` もコミットの件名から両方を拾う）。
 出るのは4つ（Beads 方式のプロジェクトでは、タスク本文と `## 結果` は Beads の課題と comment から、
 登録から完了までの差分は `bd history` の最初と最後の版から出る。`task-workflow` の WORKFLOW.md
 「Beads 方式」）。**タスク本文と `## 結果`**（`develop/task/T-xxx.md` の `HEAD` の版。`task prune` で消したものは最後にあった版。旧形式の

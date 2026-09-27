@@ -3,16 +3,18 @@
 正典は WORKFLOW.md「Beads 方式」。`bd` は Beads の CLI（1.3.0 で確かめた）で、`.beads` は
 主ブランチを出している作業ツリーの根にあり、どの作業ツリーから打っても同じデータベースを読む。
 
-タスクID の対応: `task` の外に見せる ID は `T-123`（コミットの件名・`retrospect` の割り付けと同じ形）、
-Beads の中の ID は `t-123`（Beads の ID の接頭辞は小文字だけ）。数字でない ID（トラッカーから
-取り込んだ `t-a3f2` など）はそのまま見せる（`adopt` で番号を振るまで着手できない）。
+タスクID の対応: Beads の中の ID の接頭辞は小文字だけなので、外に見せる ID は大文字にする
+（コミットの件名・`retrospect` の割り付けと同じ形）。Beads の `issue_prefix` が `gh` なら GitHub の
+Issue 番号（`gh-5` ↔ `GH-5`）、`t` なら `task` の採番（`t-123` ↔ `T-123`）で、読むときは両方を受ける
+（切り替えの途中は混ざる）。`gh` の登録の途中の仮の ID（`gh-new-<作業ツリー>-<時刻>`）と、数字でない ID
+（トラッカーから取り込んだ `gh-1790…-1-4dfc` など）はそのまま見せる。
 
 `Task` への写し方（WORKFLOW.md「Beads 方式」の対応表）:
 
 | Beads | `Task` |
 | --- | --- |
 | `open` | `todo` |
-| 独自の状態 `pending`（`frozen`） | `hold` |
+| `deferred`（切り替え前の独自の状態 `pending` も） | `hold` |
 | `in_progress` | `todo` ＋ 着手の印（assignee が作業ツリー名） |
 | `closed` | `done`（label `cancelled` があれば `dropped`） |
 | label `difficulty:<値>`・`loopable:<Y/N>` | `difficulty`・`loopable` |
@@ -35,10 +37,15 @@ import layout
 import taskfile
 
 BD = "bd"
-PREFIX = "t"
-BD_ID_PATTERN = re.compile(r"^t-(\d{3,})$")
-HOLD_STATUS = "pending"
-CUSTOM_STATUSES = f"{HOLD_STATUS}:frozen"
+# `issue_prefix` の値。`gh` は GitHub の Issue 番号、`t` は `task` の採番。
+PREFIX_GITHUB = "gh"
+PREFIX_LOCAL = "t"
+BD_ID_PATTERN = re.compile(r"^(?:t-(\d{3,})|gh-(\d+))$")
+PROVISIONAL_PREFIX = "gh-new-"
+HOLD_STATUS = "deferred"
+# 切り替え前の hold（独自の状態 `pending:frozen`）。読むだけで、書くのは `deferred`。
+LEGACY_HOLD_STATUS = "pending"
+HOLD_STATUSES = (HOLD_STATUS, LEGACY_HOLD_STATUS)
 CANCELLED_LABEL = "cancelled"
 DIFFICULTY_LABEL = "difficulty:"
 LOOPABLE_LABEL = "loopable:"
@@ -78,18 +85,36 @@ class Issue:
 
 
 def to_bd_id(task_id: str) -> str:
-    """`T-123`／`t-123` → `t-123`。数字でない ID（`t-a3f2`）は小文字にするだけ。"""
+    """`T-123`／`GH-5` → `t-123`／`gh-5`。ほかの ID は小文字にするだけ。"""
     return task_id.lower()
 
 
 def to_task_id(bd_id: str) -> str:
-    """`t-123` → `T-123`。数字でない ID はそのまま。"""
-    m = BD_ID_PATTERN.match(bd_id)
-    return f"T-{m.group(1)}" if m else bd_id
+    """`t-123`／`gh-5` → `T-123`／`GH-5`。番号でない ID はそのまま。"""
+    return bd_id.upper() if BD_ID_PATTERN.match(bd_id) else bd_id
 
 
 def is_numbered(bd_id: str) -> bool:
     return BD_ID_PATTERN.match(bd_id) is not None
+
+
+def is_provisional(bd_id: str) -> bool:
+    """`task new` が Issue の番号を得る前に使う仮の ID か。"""
+    return bd_id.startswith(PROVISIONAL_PREFIX)
+
+
+def sort_key(task_id: str) -> tuple[int, int, str]:
+    """`status` の並び。`T-<n>` → `GH-<n>` → そのほか（仮の ID）。"""
+    m = BD_ID_PATTERN.match(task_id.lower())
+    if m is None:
+        return (2, 0, task_id)
+    return (0, int(m.group(1)), "") if m.group(1) else (1, int(m.group(2)), "")
+
+
+def read_prefix(toplevel: str) -> str:
+    """Beads の `issue_prefix`（`gh` か `t`）。ほかの値や未設定は `t` として扱う。"""
+    value = run(toplevel, ["config", "get", "issue_prefix"]).stdout.strip()
+    return PREFIX_GITHUB if value == PREFIX_GITHUB else PREFIX_LOCAL
 
 
 # --- bd の呼び出し ----------------------------------------------------------------
@@ -207,14 +232,14 @@ def to_task(issue: Issue) -> tuple[taskfile.Task | None, str | None]:
         status = "dropped" if CANCELLED_LABEL in issue.labels else "done"
     elif issue.status in ("open", "in_progress"):
         status = "todo"
-    elif issue.status == HOLD_STATUS:
+    elif issue.status in HOLD_STATUSES:
         status = "hold"
     else:
         return None, f"Beads の状態 {issue.status!r} はこの運用に無い（open・{HOLD_STATUS}・in_progress・closed だけ）"
 
     difficulty = _label_values(issue.labels, DIFFICULTY_LABEL)
     loopable = _label_values(issue.labels, LOOPABLE_LABEL)
-    if not is_numbered(issue.bd_id) or (not difficulty and not loopable):
+    if not (is_numbered(issue.bd_id) or is_provisional(issue.bd_id)) or (not difficulty and not loopable):
         return None, None
     if len(difficulty) != 1 or difficulty[0] not in taskfile.DIFFICULTY_VALUES:
         return None, "label difficulty:<haiku|sonnet|opus> がちょうど1つでない"
@@ -332,8 +357,9 @@ def write_last_id(toplevel: str, number: int) -> None:
 
 
 def id_number(bd_id: str) -> int | None:
+    """`t-<n>` の番号（`task` の採番の候補）。`gh-<n>` は Issue 番号なので数えない。"""
     m = BD_ID_PATTERN.match(bd_id)
-    return int(m.group(1)) if m else None
+    return int(m.group(1)) if m and m.group(1) else None
 
 
 def format_bd_id(number: int) -> str:
@@ -344,9 +370,11 @@ def format_bd_id(number: int) -> str:
 
 
 def workflow_state(issue: Issue) -> str:
-    """`pending`・`open`・`in_progress`・`done`・`cancelled` のどれか（Project の Status 欄の対応に使う）。"""
+    """`hold`・`open`・`in_progress`・`done`・`cancelled` のどれか（Project の Status 欄の対応に使う）。"""
     if issue.status == "closed":
         return "cancelled" if CANCELLED_LABEL in issue.labels else "done"
+    if issue.status in HOLD_STATUSES:
+        return "hold"
     return issue.status
 
 

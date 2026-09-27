@@ -271,12 +271,13 @@ def _print_status_table(
     marker_of: Callable[[str], str],
     stale_entries: list[str],
     extra_rows: "list[list[str]] | None" = None,
+    sort_key: Callable[[str], object] = taskfile.id_number,
 ) -> None:
     """`status` の行と `---` 以降の集計（`invalid` の行まで）。ファイル方式と Beads 方式で同じ形。
 
     `extra_rows` は番号順の行のあとに足す行（Beads 方式の振り分け前の課題）。集計には数えない。
     """
-    for tid in sorted(tasks, key=taskfile.id_number):
+    for tid in sorted(tasks, key=sort_key):
         t = tasks[tid]
         if not show_all and t.status in ("done", "dropped"):
             continue
@@ -314,7 +315,7 @@ def _print_status_table(
 
     long_ids = [
         tid
-        for tid in sorted(tasks, key=taskfile.id_number)
+        for tid in sorted(tasks, key=sort_key)
         if tasks[tid].status in ("todo", "hold") and display_width(tasks[tid].summary) > LONG_SUMMARY_WIDTH
     ]
     print(f"long_summary\t{len(long_ids)}\t" + (",".join(long_ids) or "-"))
@@ -900,7 +901,7 @@ def cmd_config_doctor(toplevel: str) -> None:
 #
 # 錠・本文・履歴は Beads（`bd`）が持ち、ここは Beads とトラッカーと git をつなぐ。出力の先頭語・
 # 列・終了コードはファイル方式と同じにし、スキルが方式で分かれずに済むようにする。違うのは、
-# 3列目の置き場が `beads:t-xxx` になること、`done` が stage しないこと、行のあとに
+# 3列目の置き場が `beads:<Beads の ID>` になること、`done` が stage しないこと、行のあとに
 # `TRACKER`・`BACKUP` の行が付くことだけ。
 
 
@@ -910,8 +911,9 @@ def _actor(toplevel: str) -> str:
 
 
 def _bd_task_id(task_id: str) -> str:
-    if not (taskfile.ID_PATTERN.match(task_id.upper()) or re.fullmatch(r"[tT]-[0-9a-z.]+", task_id)):
-        print(f"usage: {task_id!r} が T-999 の形式でない", file=sys.stderr)
+    """`T-123`・`GH-5`・Beads の ID（仮の `gh-new-…`・取り込んだままの `gh-1790…-1-4dfc`）を受ける。"""
+    if not re.fullmatch(r"(?i:t|gh)-[0-9a-z.-]+", task_id):
+        print(f"usage: {task_id!r} が T-999・GH-5 の形式でない", file=sys.stderr)
         raise SystemExit(2)
     return beads.to_bd_id(task_id)
 
@@ -982,10 +984,6 @@ def _age_seconds(iso: str | None) -> float | None:
     return (datetime.now(timezone.utc) - at).total_seconds()
 
 
-def _tracker_lines(toplevel: str) -> list[str]:
-    return tracker.sync(toplevel, tracker.read_tracker(toplevel))
-
-
 def cmd_beads_status(toplevel: str, show_all: bool, check: bool) -> None:
     snap = _beads_snapshot(toplevel)
     if check:
@@ -1016,7 +1014,9 @@ def cmd_beads_status(toplevel: str, show_all: bool, check: bool) -> None:
          "TRIAGE", i.assignee or "-", " ".join(i.title.split()) or "-"]
         for i in open_triage
     ]
-    _print_status_table(snap.tasks, snap.invalid, snap.claims, show_all, marker_of, stale_entries, triage_rows)
+    _print_status_table(
+        snap.tasks, snap.invalid, snap.claims, show_all, marker_of, stale_entries, triage_rows, beads.sort_key
+    )
     triage_ids = [row[0] for row in triage_rows]
     print(f"triage\t{len(triage_ids)}\t" + (",".join(triage_ids) or "-"))
     if tracker.read_tracker(toplevel).kind == "jira":
@@ -1032,8 +1032,8 @@ def cmd_beads_new(toplevel: str, args: argparse.Namespace) -> None:
         raise SystemExit(2)
     deps = tuple(d for d in (x.strip() for x in args.deps.split(",")) if d) if args.deps else ()
     for d in deps:
-        if not taskfile.ID_PATTERN.match(d):
-            print(f"usage: --deps の {d!r} が T-999 の形式でない", file=sys.stderr)
+        if not layout.ANY_ID_PATTERN.match(d):
+            print(f"usage: --deps の {d!r} が T-999・GH-5 の形式でない", file=sys.stderr)
             raise SystemExit(2)
     body = read_body(args.body_file)
     error = taskfile.validate_new_body(body)
@@ -1048,11 +1048,10 @@ def cmd_beads_new(toplevel: str, args: argparse.Namespace) -> None:
         raise SystemExit(2)
 
     parts = beads.split_body(body)
-    number = _next_number(toplevel, snap)
     actor = _actor(toplevel)
     labels = f"{beads.DIFFICULTY_LABEL}{args.difficulty},{beads.LOOPABLE_LABEL}{args.loopable}"
-    for _ in range(NEW_ATTEMPTS):
-        bd_id = beads.format_bd_id(number)
+
+    def create_cmd(bd_id: str) -> list[str]:
         cmd = ["create", "--id", bd_id, "--title", summary, "--body-file", "-", "-l", labels, "--silent"]
         if parts.acceptance:
             cmd += ["--acceptance", parts.acceptance]
@@ -1060,11 +1059,26 @@ def cmd_beads_new(toplevel: str, args: argparse.Namespace) -> None:
             cmd += ["-s", beads.HOLD_STATUS]
         if deps:
             cmd += ["--deps", ",".join(beads.to_bd_id(d) for d in deps)]
-        r = beads.run(toplevel, cmd, actor, parts.description)
+        return cmd
+
+    trk = tracker.session(toplevel)
+    if trk.bidirectional:
+        # 番号は Issue を立てるまで決まらないので、仮の ID で作ってから `gh-<Issue 番号>` へ付け替える。
+        provisional = f"{beads.PROVISIONAL_PREFIX}{re.sub(r'[^0-9a-z]+', '-', actor.lower()).strip('-')}-{time.time_ns()}"
+        beads.run_ok(toplevel, create_cmd(provisional), actor, parts.description)
+        bd_id, lines = trk.register(provisional)
+        print(f"CREATED\t{beads.to_task_id(bd_id)}\tbeads:{bd_id}")
+        _print_lines(lines)
+        return
+
+    number = _next_number(toplevel, snap)
+    for _ in range(NEW_ATTEMPTS):
+        bd_id = beads.format_bd_id(number)
+        r = beads.run(toplevel, create_cmd(bd_id), actor, parts.description)
         if r.returncode == 0:
             beads.write_last_id(toplevel, number)
             print(f"CREATED\t{beads.to_task_id(bd_id)}\tbeads:{bd_id}")
-            _print_lines(_tracker_lines(toplevel))
+            _print_lines(trk.after([bd_id]))
             return
         if "already exists" not in (r.stderr + r.stdout):
             raise beads.BeadsError(f"bd create が失敗: {(r.stderr or r.stdout).strip()}")
@@ -1103,6 +1117,8 @@ def cmd_beads_claim(toplevel: str, task_id: str) -> None:
     shown = beads.to_task_id(bd_id)
     branch_setting, base = _claim_preflight(toplevel)
 
+    trk = tracker.session(toplevel)
+    pulled = trk.before([bd_id])
     issue = beads.show(toplevel, bd_id)
     if issue is None:
         print(f"NOT_READY\t{shown}\t存在しない")
@@ -1138,7 +1154,7 @@ def cmd_beads_claim(toplevel: str, task_id: str) -> None:
             _print_taken(shown, again)
         raise beads.BeadsError(f"bd update --claim が失敗: {(r.stderr or r.stdout).strip()}")
     _claim_branch_out(toplevel, shown, branch_setting, base, branch_after_sync, f"beads:{bd_id}")
-    _print_lines(_tracker_lines(toplevel))
+    _print_lines(pulled + trk.after([bd_id]))
 
 
 def _print_taken(shown: str, issue: beads.Issue) -> None:
@@ -1155,9 +1171,12 @@ def _beads_resolved(toplevel: str, bd_id: str) -> bool:
 def cmd_beads_release(toplevel: str, task_id: str, force: bool) -> None:
     bd_id = _bd_task_id(task_id)
     shown = beads.to_task_id(bd_id)
+    trk = tracker.session(toplevel)
+    pulled = trk.before([bd_id])
     issue = beads.show(toplevel, bd_id)
     if issue is None or issue.status != "in_progress":
         print(f"NOT_CLAIMED\t{shown}")
+        _print_lines(pulled)
         return
     actor = _actor(toplevel)
     if not force and issue.assignee != actor:
@@ -1168,21 +1187,24 @@ def cmd_beads_release(toplevel: str, task_id: str, force: bool) -> None:
     if marks:
         beads.run_ok(toplevel, ["update", bd_id] + [x for m in marks for x in ("--remove-label", m)], actor)
     print(f"RELEASED\t{shown}")
-    _print_lines(_tracker_lines(toplevel))
+    _print_lines(pulled + trk.after([bd_id]))
 
 
 def cmd_beads_done(toplevel: str, task_id: str, dropped: bool, result_path: str) -> None:
     bd_id = _bd_task_id(task_id)
     shown = beads.to_task_id(bd_id)
     actor = _actor(toplevel)
-    issue = beads.show(toplevel, bd_id)
-    if issue is None or issue.status != "in_progress" or issue.assignee != actor:
-        print(f"NOT_OWNER\t{shown}")
-        raise SystemExit(4)
     result = read_body(result_path).strip()
     if result == "":
         print("usage: --result-file の中身が空", file=sys.stderr)
         raise SystemExit(2)
+    trk = tracker.session(toplevel)
+    pulled = trk.before([bd_id])
+    issue = beads.show(toplevel, bd_id)
+    if issue is None or issue.status != "in_progress" or issue.assignee != actor:
+        print(f"NOT_OWNER\t{shown}")
+        _print_lines(pulled)
+        raise SystemExit(4)
     kind = "dropped" if dropped else "done"
     beads.run_ok(toplevel, ["comment", bd_id, "--stdin"], actor, f"{beads.RESULT_HEADING}\n\n{result}\n")
     other = beads.SHIP_LABELS["done" if dropped else "dropped"]
@@ -1190,6 +1212,7 @@ def cmd_beads_done(toplevel: str, task_id: str, dropped: bool, result_path: str)
         toplevel, ["update", bd_id, "--add-label", beads.SHIP_LABELS[kind], "--remove-label", other], actor
     )
     print(f"DONE\t{shown}\tbeads:{bd_id}\tship で閉じる")
+    _print_lines(pulled + trk.after([bd_id]))
 
 
 def _beads_ship_hooks(toplevel: str) -> ShipHooks:
@@ -1222,7 +1245,7 @@ def _beads_ship_hooks(toplevel: str) -> ShipHooks:
         return metadata.get(beads.CLAIM_BRANCH_KEY) if isinstance(metadata, dict) else None
 
     def after_send() -> list[str]:
-        return not_closed + _tracker_lines(toplevel) + beads.backup(toplevel)
+        return not_closed + tracker.session(toplevel).sync_all(pull=False) + beads.backup(toplevel)
 
     return ShipHooks(release_shipped, claimed_branch, after_send)
 
@@ -1264,13 +1287,15 @@ def cmd_beads_edit(toplevel: str, args: argparse.Namespace) -> None:
     """本文・summary・difficulty・loopable・todo↔hold を書き換える（ファイル方式で手で直していたもの）。"""
     bd_id = _bd_task_id(args.task_id)
     shown = beads.to_task_id(bd_id)
+    if not any([args.body_file, args.summary, args.difficulty, args.loopable, args.status]):
+        print("usage: 直すもの（--body-file・--summary・--difficulty・--loopable・--status）が無い", file=sys.stderr)
+        raise SystemExit(2)
+    trk = tracker.session(toplevel)
+    pulled = trk.before([bd_id])
     issue = beads.show(toplevel, bd_id)
     if issue is None:
         print(f"NOT_READY\t{shown}\t存在しない")
         raise SystemExit(4)
-    if not any([args.body_file, args.summary, args.difficulty, args.loopable, args.status]):
-        print("usage: 直すもの（--body-file・--summary・--difficulty・--loopable・--status）が無い", file=sys.stderr)
-        raise SystemExit(2)
     cmd = ["update", bd_id]
     stdin = None
     if args.body_file:
@@ -1292,7 +1317,7 @@ def cmd_beads_edit(toplevel: str, args: argparse.Namespace) -> None:
             cmd += [x for l in issue.labels if l.startswith(prefix) for x in ("--remove-label", l)]
             cmd += ["--add-label", f"{prefix}{value}"]
     if args.status:
-        if issue.status not in ("open", beads.HOLD_STATUS):
+        if issue.status not in ("open", *beads.HOLD_STATUSES):
             print(f"NOT_READY\t{shown}\t{issue.status}（todo↔hold は着手前だけ）")
             raise SystemExit(4)
         cmd += ["--status", "open" if args.status == "todo" else beads.HOLD_STATUS]
@@ -1300,26 +1325,28 @@ def cmd_beads_edit(toplevel: str, args: argparse.Namespace) -> None:
     if r.returncode != 0:
         raise beads.BeadsError(f"bd update が失敗: {(r.stderr or r.stdout).strip()}")
     print(f"EDITED\t{shown}")
-    _print_lines(_tracker_lines(toplevel))
+    _print_lines(pulled + trk.after([bd_id]))
 
 
 def cmd_beads_adopt(toplevel: str, args: argparse.Namespace) -> None:
     """振り分け前の課題（トラッカーから取り込んだものなど）に番号・difficulty・loopable を付ける。"""
     old = beads.to_bd_id(args.bd_id)
-    issue = beads.show(toplevel, old)
-    if issue is None:
-        print(f"NOT_READY\t{args.bd_id}\t存在しない")
-        raise SystemExit(4)
     body = read_body(args.body_file)
     error = taskfile.validate_new_body(body)
     if error is not None:
         print(f"usage: {error}", file=sys.stderr)
         raise SystemExit(2)
-    snap = _beads_snapshot(toplevel)
-    number = _next_number(toplevel, snap)
+    trk = tracker.session(toplevel)
+    pulled = trk.before([old])
+    issue = beads.show(toplevel, old)
+    if issue is None:
+        print(f"NOT_READY\t{args.bd_id}\t存在しない")
+        raise SystemExit(4)
     actor = _actor(toplevel)
     new_id = old
-    if not beads.is_numbered(old):
+    # github（`issue_prefix` が `gh`）は取り込みの時点で Issue 番号の ID になっているので番号を振らない。
+    if not beads.is_numbered(old) and not trk.bidirectional:
+        number = _next_number(toplevel, _beads_snapshot(toplevel))
         for _ in range(NEW_ATTEMPTS):
             new_id = beads.format_bd_id(number)
             r = beads.run(toplevel, ["rename", old, new_id], actor)
@@ -1338,11 +1365,11 @@ def cmd_beads_adopt(toplevel: str, args: argparse.Namespace) -> None:
         cmd += ["--title", args.summary.strip()]
     beads.run_ok(toplevel, cmd, actor, parts.description)
     print(f"ADOPTED\t{args.bd_id}\t{beads.to_task_id(new_id)}")
-    _print_lines(_tracker_lines(toplevel))
+    _print_lines(pulled + trk.after([new_id]))
 
 
 def cmd_beads_sync(toplevel: str) -> None:
-    lines = _tracker_lines(toplevel)
+    lines = tracker.session(toplevel).sync_all(pull=True)
     if not lines:
         print("NOTHING\t(トラッカーなし)")
         return
@@ -1381,7 +1408,7 @@ def _doctor_store(toplevel: str) -> int:
     if beads.is_initialized(toplevel):
         print(f"beads\tOK\t{beads.beads_dir(toplevel)}")
     else:
-        print(f"beads\tMISSING\t{beads.beads_dir(toplevel)}\tbd init --stealth -p {beads.PREFIX}")
+        print(f"beads\tMISSING\t{beads.beads_dir(toplevel)}\tinit.py（bd init --stealth）")
         code = 1
     try:
         t = tracker.read_tracker(toplevel)

@@ -7,8 +7,10 @@
 `task.py` を実際に子プロセスで（取り合いは同時に）起こして確かめる。本物の `bd` を使う
 （無ければ飛ばして 0 で終わる。ファイル方式は `selftest_task.py` が見る）。
 
-GitHub・Jira には繋がない。`bd github sync`・`bd jira sync` と `gh` は、PATH の先頭に置いた
-偽のコマンドが受けて呼ばれ方を記録する（`bd` のそれ以外のサブコマンドは本物へ渡す）。
+GitHub・Jira には繋がない。GitHub は、本物の `bd` の `bd github push`・`pull` を `GITHUB_API_URL` で
+偽の HTTP サーバ（`FakeGitHub`。REST の Issue と Project の GraphQL）へ向ける。`gh` は PATH の先頭に置いた
+偽のコマンドが呼ばれ方を記録して `api` を同じサーバへ転送し、`bd jira sync` は偽の `bd` が受ける
+（`bd` のそれ以外のサブコマンドは本物へ渡す）。
 `HOME`・`XDG_CONFIG_HOME`・`XDG_DATA_HOME` を一時ディレクトリへ向けて、利用者の家を汚さない
 （`bd init` は利用者の `~/.config/bd/config.yaml` を読み書きし、並行に打つと使用状況の送信の設定まで
 書き戻すことがあった。一時の家には送信を止めた設定を置く）。
@@ -21,9 +23,13 @@ import os
 import shutil
 import subprocess
 import sys
+import re
 import tempfile
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -245,6 +251,16 @@ def test_new_status_and_numbering() -> None:
         r = bd(main_path, "kv", "get", beads.LAST_ID_KEY)
         check("最後の番号を bd kv に残す", r.stdout.strip().isdigit() and int(r.stdout.strip()) >= 45, r.stdout)
 
+        check("hold は組み込みの deferred で書く", beads.show(main_path, beads.to_bd_id(h)).status == "deferred")
+        bd(main_path, "config", "set", "status.custom", "pending:frozen")
+        bd(main_path, "create", "--id", "t-100", "--title", "切り替え前の待ち", "-l", "difficulty:haiku,loopable:Y",
+           "-s", "pending", "--silent")
+        r = run_task(wt1, "status")
+        check("切り替え前の pending も hold と読む", rows(r.stdout).get("T-100", [""] * 8)[1] == "hold", r.stdout)
+        r = run_task(wt1, "edit", "T-100", "--status", "todo")
+        check("pending から todo へ戻せる", r.returncode == 0 and beads.show(main_path, "t-100").status == "open",
+              r.stdout + r.stderr)
+
 
 def test_claim_race_owner_and_release() -> None:
     say("claim の取り合い・NOT_OWNER・release")
@@ -374,7 +390,8 @@ def test_triage_and_adopt() -> None:
     say("振り分け前の課題（トラッカーから来たもの）と adopt")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _ = make_repo(tmp)
-        raw = bd(main_path, "create", "--title", "外から来た", "-d", "本文", "--silent").stdout.strip()
+        # `bd` に採番させると数字だけの hash（`t-456`）になりうるので、数字でない ID を決めて作る。
+        raw = bd(main_path, "create", "--id", "t-x1a", "--title", "外から来た", "-d", "本文", "--silent").stdout.strip()
         r = run_task(wt1, "status")
         check("labels の無い課題は triage に出て READY にならない", f"triage\t1\t{raw}" in r.stdout
               and "ready\t0" in r.stdout and rows(r.stdout).get(raw, [""] * 8)[5] == "TRIAGE", r.stdout)
@@ -386,122 +403,376 @@ def test_triage_and_adopt() -> None:
         check("adopt したものは READY", rows(r.stdout).get("T-001", [""] * 8)[5] == "READY" and "triage\t0" in r.stdout, r.stdout)
 
 
+class FakeGitHub:
+    """偽の GitHub。REST の Issue（本物の `bd github push`・`pull` が `GITHUB_API_URL` で叩く）と、
+    Project の GraphQL（偽の `gh api graphql` が転送する）を、1つの HTTP サーバの中の状態で受ける。"""
+
+    def __init__(self) -> None:
+        self.issues: dict[int, dict] = {}
+        self.items: dict[str, dict] = {}  # 項目 ID → {"url", "status"}
+        self.option_prefix = "O-"
+        self.graphql: list[str] = []  # 受けた GraphQL の問い合わせの種類（最初の語）
+        self.clock_offset = 0  # 秒。GitHub 側の編集を後の時刻にする
+        self.lock = threading.Lock()
+        fake = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):  # noqa: D401
+                pass
+
+            def _reply(self, code: int, obj) -> None:
+                data = json.dumps(obj).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def _handle(self) -> None:
+                n = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(n).decode() or "null") if n else None
+                with fake.lock:
+                    code, obj = fake.route(self.command, self.path, body)
+                self._reply(code, obj)
+
+            do_GET = do_POST = do_PATCH = do_PUT = do_DELETE = _handle
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+    def now(self) -> str:
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + self.clock_offset))
+
+    def issue_json(self, i: dict) -> dict:
+        n = i["number"]
+        return {
+            "id": 1000 + n, "node_id": f"I_{n}", "number": n, "title": i["title"], "body": i["body"],
+            "state": i["state"], "labels": [{"name": l} for l in i["labels"]], "assignees": [], "assignee": None,
+            "created_at": i["created_at"], "updated_at": i["updated_at"], "closed_at": None,
+            "html_url": f"https://github.com/o/r/issues/{n}", "url": f"{self.url}/repos/o/r/issues/{n}",
+            "user": {"login": "someone"},
+        }
+
+    def edit(self, number: int, **fields) -> None:
+        """人が GitHub で Issue を直した（題・本文・state・labels）。"""
+        with self.lock:
+            self.issues[number].update(fields)
+            self.issues[number]["updated_at"] = self.now()
+
+    def open_issue(self, title: str, labels: list[str]) -> int:
+        with self.lock:
+            return self._create({"title": title, "body": "外で立てた", "labels": labels})["number"]
+
+    def _create(self, body: dict) -> dict:
+        n = len(self.issues) + 1
+        issue = {"number": n, "title": body.get("title", ""), "body": body.get("body") or "", "state": "open",
+                 "labels": list(body.get("labels") or []), "created_at": self.now(), "updated_at": self.now()}
+        self.issues[n] = issue
+        return issue
+
+    def status_of(self, number: int) -> str | None:
+        url = f"https://github.com/o/r/issues/{number}"
+        return next((i["status"] for i in self.items.values() if i["url"] == url), None)
+
+    def route(self, method: str, path: str, body):
+        u = urlparse(path)
+        m = re.fullmatch(r"/repos/o/r/issues/(\d+)", u.path)
+        if u.path == "/graphql":
+            return 200, self.answer_graphql(body["query"], body.get("variables") or {})
+        if method == "POST" and u.path == "/repos/o/r/issues":
+            return 201, self.issue_json(self._create(body))
+        if m and method == "PATCH":
+            issue = self.issues[int(m.group(1))]
+            for k in ("title", "body", "state", "labels"):
+                if k in body:
+                    issue[k] = body[k]
+            issue["updated_at"] = self.now()
+            return 200, self.issue_json(issue)
+        if m and method == "GET":
+            issue = self.issues.get(int(m.group(1)))
+            return (200, self.issue_json(issue)) if issue else (404, {"message": "Not Found"})
+        if u.path == "/repos/o/r/issues" and method == "GET":
+            q = parse_qs(u.query)
+            state, since = (q.get("state") or ["open"])[0], (q.get("since") or [""])[0]
+            found = [i for i in self.issues.values() if (state == "all" or i["state"] == state)
+                     and (not since or i["updated_at"] >= since)]
+            return 200, [self.issue_json(i) for i in found]
+        return 404, {"message": f"fake: {method} {u.path}"}
+
+    def answer_graphql(self, query: str, v: dict) -> dict:
+        names = ["Pending", "Todo", "In progress", "Done", "Cancel"]
+        if "repositoryOwner" in query:
+            self.graphql.append("project")
+            options = [{"id": self.option_prefix + n, "name": n} for n in names]
+            return {"data": {"repositoryOwner": {"projectV2": {"id": "PID", "field": {"id": "FID", "options": options}}}}}
+        if "projectItems" in query:
+            self.graphql.append("issue")
+            url = f"https://github.com/{v['owner']}/{v['repo']}/issues/{v['number']}"
+            nodes = [{"id": k, "project": {"id": "PID"}} for k, i in self.items.items() if i["url"] == url]
+            return {"data": {"repository": {"issue": {"id": f"I_{v['number']}", "projectItems": {"nodes": nodes}}}}}
+        if "addProjectV2ItemById" in query:
+            self.graphql.append("add")
+            n = v["content"].split("_", 1)[1]
+            item_id = f"PVTI_{n}"
+            self.items[item_id] = {"url": f"https://github.com/o/r/issues/{n}", "status": None}
+            return {"data": {"addProjectV2ItemById": {"item": {"id": item_id}}}}
+        if "updateProjectV2ItemFieldValue" in query:
+            self.graphql.append("set")
+            option, item = v["option"], self.items.get(v["item"])
+            if item is None or not option.startswith(self.option_prefix):
+                return {"errors": [{"message": "Could not resolve to a node"}]}
+            item["status"] = option[len(self.option_prefix):]
+            return {"data": {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": v["item"]}}}}
+        if "items(first" in query:
+            self.graphql.append("items")
+            nodes = [{"id": k, "content": {"url": i["url"]},
+                      "fieldValueByName": {"name": i["status"]} if i["status"] else None} for k, i in self.items.items()]
+            return {"data": {"node": {"items": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}}}}
+        return {"errors": [{"message": "fake: 知らない問い合わせ"}]}
+
+
 def _fake_bin(tmp: str) -> str:
-    """偽の `bd`（github/jira の sync だけ受け、残りは本物へ）と偽の `gh` を置いたディレクトリ。"""
+    """偽の `bd`（jira の sync だけ受け、残りは本物へ）と、偽の `gh`（呼ばれ方を記録し、`api` は偽の GitHub へ転送）。"""
     bin_dir = os.path.join(tmp, "bin")
     real_bd = shutil.which("bd") or "bd"
     write(os.path.join(bin_dir, "bd"), f"""#!{sys.executable}
-import json, os, subprocess, sys
+import os, sys
 REAL = {real_bd!r}
 args = sys.argv[1:]
 core = [a for i, a in enumerate(args) if a != "--actor" and (i == 0 or args[i - 1] != "--actor")]
-if core[:1] in (["github"], ["jira"]) and "sync" in core:
+if core[:1] == ["jira"] and "sync" in core:
     with open(os.environ["FAKE_BD_LOG"], "a") as f:
-        f.write(" ".join(core) + ("\\ttoken" if os.environ.get("GITHUB_TOKEN") else "") + "\\n")
-    if os.environ.get("FAKE_BD_SYNC_FAIL"):
-        sys.stderr.write("network down\\n")
-        sys.exit(1)
-    if core[0] == "github":
-        out = subprocess.run([REAL, "list", "--all", "-n", "0", "--json"], capture_output=True, text=True).stdout
-        for n, issue in enumerate(json.loads(out or "[]"), start=1):
-            if not issue.get("external_ref"):
-                num = issue["id"].split("-")[-1]
-                subprocess.run([REAL, "update", issue["id"], "--external-ref",
-                                "https://github.com/o/r/issues/" + num], capture_output=True)
-    sys.exit(0)
+        f.write(" ".join(core) + "\\n")
+    sys.exit(1 if os.environ.get("FAKE_BD_SYNC_FAIL") else 0)
 os.execv(REAL, [REAL] + args)
 """)
     write(os.path.join(bin_dir, "gh"), f"""#!{sys.executable}
-import json, os, sys
+import json, os, sys, urllib.request
 args = sys.argv[1:]
-state_path = os.environ["FAKE_GH_STATE"]
-state = json.load(open(state_path)) if os.path.exists(state_path) else {{"items": [], "calls": []}}
-state["calls"].append(args)
-out = None
+with open(os.environ["FAKE_GH_LOG"], "a") as f:
+    f.write(json.dumps(args) + "\\n")
+server = os.environ["GITHUB_API_URL"]
+def call(method, path, body=None):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(server + path, data=data, method=method, headers={{"Content-Type": "application/json"}})
+    try:
+        return json.load(urllib.request.urlopen(req, timeout=10))
+    except OSError as e:
+        sys.stderr.write(f"fake gh: {{e}}\\n")
+        sys.exit(1)
 if args[:2] == ["auth", "token"]:
     if os.environ.get("FAKE_GH_AUTH_FAIL"):
         sys.exit(1)
     print("fake-token")
-elif args[:2] == ["project", "view"]:
-    out = {{"id": "PID", "number": int(args[2])}}
-elif args[:2] == ["project", "field-list"]:
-    names = ["Pending", "Todo", "In progress", "Done", "Cancel"]
-    out = {{"fields": [{{"id": "FID", "name": "Status", "options": [{{"id": "O-" + n, "name": n}} for n in names]}}]}}
-elif args[:2] == ["project", "item-list"]:
-    out = {{"items": state["items"]}}
-elif args[:2] == ["project", "item-add"]:
-    url = args[args.index("--url") + 1]
-    item = {{"id": "I-" + url.rsplit("/", 1)[-1], "content": {{"url": url}}, "status": "Pending"}}
-    state["items"].append(item)
-    out = item
-elif args[:2] == ["project", "item-edit"]:
-    item_id = args[args.index("--id") + 1]
-    option = args[args.index("--single-select-option-id") + 1]
-    for item in state["items"]:
-        if item["id"] == item_id:
-            item["status"] = option[len("O-"):]
-json.dump(state, open(state_path, "w"))
-if out is not None:
-    print(json.dumps(out))
+elif args[:2] == ["api", "graphql"]:
+    query, variables = "", {{}}
+    for flag, kv in zip(args[2::2], args[3::2]):
+        k, v = kv.split("=", 1)
+        if k == "query":
+            query = v
+        else:
+            variables[k] = int(v) if flag == "-F" else v
+    print(json.dumps(call("POST", "/graphql", {{"query": query, "variables": variables}})))
+elif args[:1] == ["api"]:
+    path = "/" + [a for a in args[1:] if not a.startswith("--")][0]
+    out = call("GET", path)
+    print(json.dumps([out] if "--slurp" in args else out))
+else:
+    sys.stderr.write("fake gh: 知らない呼び出し " + " ".join(args) + "\\n")
+    sys.exit(1)
 """)
     for name in ("bd", "gh"):
         os.chmod(os.path.join(bin_dir, name), 0o755)
     return bin_dir
 
 
-def _with_fakes(tmp: str) -> dict[str, str]:
+def _with_fakes(tmp: str, fake: FakeGitHub | None = None) -> dict[str, str]:
     env = dict(BASE_ENV)
     env["PATH"] = _fake_bin(tmp) + os.pathsep + env.get("PATH", "")
     env["FAKE_BD_LOG"] = os.path.join(tmp, "bd.log")
-    env["FAKE_GH_STATE"] = os.path.join(tmp, "gh.json")
+    env["FAKE_GH_LOG"] = os.path.join(tmp, "gh.log")
+    env["GITHUB_API_URL"] = fake.url if fake else "http://127.0.0.1:9"
     env.pop("GITHUB_TOKEN", None)
     return env
 
 
-def test_tracker_github() -> None:
-    say("トラッカー github（偽の bd github sync と gh）")
+def gh_calls() -> list[list[str]]:
+    path = env()["FAKE_GH_LOG"]
+    if not os.path.exists(path):
+        return []
+    with open(path) as f:
+        return [json.loads(l) for l in f if l.strip()]
+
+
+def _github_repo(tmp: str, prefix: str) -> tuple[str, str]:
+    """トラッカーが github の `(本体, 作業ツリー1)`。`prefix` が `t` なら切り替え前（送るだけ）。"""
+    main_path, wt1, _ = make_repo(tmp, extra="- トラッカー: github\n- GitHub Project: `sinnlosses/1`\n")
+    if prefix != beads.PREFIX_GITHUB:
+        # `issue_prefix` は `bd config set` では変えられない（`bd` 1.3.0）ので作り直す。
+        shutil.rmtree(os.path.join(main_path, ".beads"))
+        bd(main_path, "init", "--stealth", "-p", prefix, "--non-interactive", "--skip-hooks", "--quiet")
+    bd(main_path, "config", "set", "github.repository", "o/r")
+    return main_path, wt1
+
+
+def test_tracker_github_push_only() -> None:
+    say("トラッカー github・issue_prefix t（切り替え前: 送るだけ・Status 欄の控え）")
+    fake = FakeGitHub()
     with tempfile.TemporaryDirectory() as tmp:
-        _local.env = _with_fakes(tmp)
+        _local.env = _with_fakes(tmp, fake)
         try:
-            main_path, wt1, _ = make_repo(tmp, extra="- トラッカー: github\n- GitHub Project: `sinnlosses/1`\n")
+            main_path, wt1 = _github_repo(tmp, beads.PREFIX_LOCAL)
             a = new(main_path, "GitHub へ")
             h = new(main_path, "待ち", "--hold")
             c = new(main_path, "見送る")
-            with open(env()["FAKE_BD_LOG"]) as f:
-                log = f.read()
-            check("new のたびに bd github sync --push-only（token は gh auth token から）",
-                  "github sync --push-only\ttoken" in log and "--pull" not in log, log)
-            state = json.load(open(env()["FAKE_GH_STATE"]))
-            status = {i["content"]["url"].rsplit("/", 1)[-1]: i["status"] for i in state["items"]}
-            num = lambda t: t.split("-")[1]  # noqa: E731
-            check("Status 欄: open → Todo、pending → Pending", status.get(num(a)) == "Todo"
-                  and status.get(num(h)) == "Pending", repr(status))
-            run_task(wt1, "claim", a)
-            state = json.load(open(env()["FAKE_GH_STATE"]))
-            status = {i["content"]["url"].rsplit("/", 1)[-1]: i["status"] for i in state["items"]}
-            check("claim で In progress", status.get(num(a)) == "In progress", repr(status))
+            check("ID は t の採番のまま", a == "T-001", a)
+            check("new で Issue が立つ（1件ずつ送る。token は gh auth token から）", len(fake.issues) == 3
+                  and ["auth", "token"] in gh_calls(), repr(fake.issues))
+            num = lambda t: int(beads.to_bd_id(t).split("-")[1])  # noqa: E731
+            check("hold は deferred で書く", beads.show(main_path, beads.to_bd_id(h)).status == "deferred")
+            check("Status 欄: open → Todo、hold → Pending", fake.status_of(num(a)) == "Todo"
+                  and fake.status_of(num(h)) == "Pending", repr(fake.items))
+            check("取り込まない（GitHub の Issue を読みに行かない）",
+                  not any(c[:1] == ["api"] and c[1] != "graphql" for c in gh_calls()), repr(gh_calls()))
+            check("Project・Status 欄の ID は1回だけ引いて控える", fake.graphql.count("project") == 1, repr(fake.graphql))
+
+            before = len(gh_calls())
+            shown = run_task(wt1, "show", a).stdout.split("---\n", 2)[2]
+            r = run_task(wt1, "edit", a, "--body-file", "-", stdin=shown.replace("## 注意\n\nz", "## 注意\n\nzz"))
+            calls = gh_calls()[before:]
+            check("状態の変わらない edit は gh api・gh project を呼ばない", r.returncode == 0
+                  and "TRACKER\tOK\tgithub\tpushed=1\tstatus_changed=0" in r.stdout
+                  and not any(c[:1] in (["api"], ["project"]) for c in calls), r.stdout + repr(calls))
+            check("edit は触った1件だけを送る", "zz" in fake.issues[num(a)]["body"], repr(fake.issues[num(a)]))
+
+            before_calls, before_gql = len(gh_calls()), len(fake.graphql)
+            r = run_task(wt1, "claim", a)
+            calls = [c for c in gh_calls()[before_calls:] if c[:2] == ["api", "graphql"]]
+            check("claim で In progress", fake.status_of(num(a)) == "In progress", repr(fake.items))
+            check("claim の GraphQL は数回（持ち主の照会・field-list・item-list なし）", 1 <= len(calls) <= 3
+                  and "project" not in fake.graphql[before_gql:] and "items" not in fake.graphql[before_gql:]
+                  and not any(c[:1] == ["project"] for c in gh_calls()), repr(fake.graphql[before_gql:]))
             work_and_done(wt1, a)
             run_task(wt1, "ship")
             run_task(wt1, "claim", c)
             work_and_done(wt1, c, dropped=True, name="c.txt")
             r = run_task(wt1, "ship")
-            state = json.load(open(env()["FAKE_GH_STATE"]))
-            status = {i["content"]["url"].rsplit("/", 1)[-1]: i["status"] for i in state["items"]}
-            check("閉じたら Done、見送りは Cancel", status.get(num(a)) == "Done" and status.get(num(c)) == "Cancel",
-                  repr(status) + r.stdout)
+            check("閉じたら Done、見送りは Cancel", fake.status_of(num(a)) == "Done"
+                  and fake.status_of(num(c)) == "Cancel", repr(fake.items) + r.stdout)
             check("ship の行に TRACKER OK", any(l.startswith("TRACKER\tOK\tgithub") for l in r.stdout.splitlines()), r.stdout)
+            check("GitHub で閉じる", fake.issues[num(a)]["state"] == "closed")
 
-            env()["FAKE_BD_SYNC_FAIL"] = "1"
+            before_gql = len(fake.graphql)
+            r = run_task(main_path, "sync")
+            check("変わりの無い sync は GraphQL を呼ばない", r.returncode == 0 and fake.graphql[before_gql:] == [],
+                  r.stdout + repr(fake.graphql[before_gql:]))
+
+            fake.option_prefix = "O2-"  # 人が Status 欄の選択肢を作り直した
+            before_gql = len(fake.graphql)
+            r = run_task(main_path, "edit", h, "--status", "todo")
+            check("控えた選択肢が古ければ1回だけ読み直して書く", fake.status_of(num(h)) == "Todo"
+                  and fake.graphql[before_gql:].count("project") == 1 and "TRACKER\tOK" in r.stdout,
+                  r.stdout + repr(fake.graphql[before_gql:]))
+
+            fake.close()
             r = run_task(main_path, "new", "--summary", "落ちても登録", "--difficulty", "haiku", "--loopable", "Y",
                          "--body-file", "-", stdin=BODY)
             check("トラッカーの失敗は new を止めない（TRACKER FAILED を足して終了コード0）", r.returncode == 0
                   and r.stdout.startswith("CREATED") and "TRACKER\tFAILED\tgithub" in r.stdout, r.stdout)
             r = run_task(main_path, "sync")
             check("task sync の失敗は終了コード10", r.returncode == 10 and "TRACKER\tFAILED" in r.stdout, r.stdout)
-            env().pop("FAKE_BD_SYNC_FAIL")
-            r = run_task(main_path, "sync")
-            check("task sync で打ち直せる", r.returncode == 0 and r.stdout.startswith("TRACKER\tOK\tgithub"), r.stdout)
         finally:
+            fake.close()
+            del _local.env
+
+
+def test_tracker_github_bidirectional() -> None:
+    say("トラッカー github・issue_prefix gh（Issue 番号の ID・双方向）")
+    fake = FakeGitHub()
+    with tempfile.TemporaryDirectory() as tmp:
+        _local.env = _with_fakes(tmp, fake)
+        try:
+            main_path, wt1 = _github_repo(tmp, beads.PREFIX_GITHUB)
+            fake.open_issue("先にある PR 以外の Issue", [])
+            a = new(main_path, "Issue を先に立てる")
+            check("new は Issue を立てて GH-<番号> を返す", a == "GH-2" and beads.show(main_path, "gh-2") is not None, a)
+            check("仮の ID は残らない", not any(i.bd_id.startswith("gh-new-") for i in beads.list_issues(main_path)))
+            b = new(main_path, "後段", "--deps", a)
+            r = run_task(wt1, "status")
+            check("status は GH-<n> の行と依存", rows(r.stdout).get(b, [""] * 8)[5] == f"BLOCKED:{a}", r.stdout)
+            check("Status 欄も書く", fake.status_of(2) == "Todo", repr(fake.items))
+
+            r = run_task(main_path, "sync")
+            check("sync が GitHub で立てた Issue を取り込み、番号の ID へ付け替えて振り分け前にする", r.returncode == 0
+                  and "triage\t1\tGH-1" in run_task(main_path, "status").stdout, r.stdout)
+            r = run_task(main_path, "adopt", "GH-1", "--difficulty", "haiku", "--loopable", "N", "--body-file", "-", stdin=BODY)
+            check("adopt は番号を変えない", r.stdout.startswith("ADOPTED\tGH-1\tGH-1"), r.stdout + r.stderr)
+
+            r = run_task(wt1, "claim", a)
+            check("claim", r.returncode == 0 and r.stdout.startswith("CLAIMED"), r.stdout + r.stderr)
+            fake.edit(2, body="GitHub で直した本文")
+            r = run_task(main_path, "sync")
+            issue = beads.show(main_path, "gh-2")
+            check("取り込みで GitHub の本文が入り、錠の持ち主（assignee）は戻る", issue is not None
+                  and "GitHub で直した本文" in str(issue.raw.get("description"))
+                  and issue.assignee == "wt1" and issue.status == "in_progress", r.stdout + str(issue and issue.raw))
+
+            fake.edit(2, body="GitHub で2回目に直した本文")
+            r = run_task(main_path, "sync")
+            issue = beads.show(main_path, "gh-2")
+            check("assignee を戻したあとの GitHub での変更も次の取り込みで入る（送り返して消さない）", issue is not None
+                  and "2回目" in str(issue.raw.get("description")) and "2回目" in fake.issues[2]["body"]
+                  and "CONFLICT" not in r.stdout, r.stdout + str(issue and issue.raw.get("description")))
+
+            time.sleep(1.1)
+            bd(main_path, "update", "gh-2", "--title", "Beads で直した題")
+            fake.clock_offset = 60
+            fake.edit(2, body="GitHub でも直した")
+            r = run_task(main_path, "sync")
+            check("両側で変えたら CONFLICT の行を出し、Beads が勝つ", "TRACKER\tCONFLICT\tGH-2" in r.stdout
+                  and fake.issues[2]["title"] == "Beads で直した題", r.stdout + repr(fake.issues[2]))
+
+            c = new(main_path, "GitHub で閉じられる")
+            fake.edit(int(c.split("-")[1]), state="closed")
+            r = run_task(main_path, "sync")
+            t = rows(run_task(main_path, "status", "--all").stdout)
+            check("ship の印の無い課題が GitHub で閉じたら見送り（cancelled）と CLOSED の行", f"TRACKER\tCLOSED\t{c}" in r.stdout
+                  and t.get(c, [""] * 8)[1] == "dropped", r.stdout)
+            fake.edit(int(c.split("-")[1]), state="open")
+            run_task(main_path, "sync")
+            issue = beads.show(main_path, beads.to_bd_id(c))
+            check("開き直したら cancelled を外す", issue is not None and issue.status == "open"
+                  and "cancelled" not in issue.labels, str(issue and issue.labels))
+
+            h = new(main_path, "待ち", "--hold")
+            fake.edit(int(h.split("-")[1]), body="GitHub で本文だけ直す")
+            run_task(main_path, "sync")
+            check("hold（deferred）は GitHub での編集を往復しても hold のまま",
+                  rows(run_task(main_path, "status").stdout).get(h, [""] * 8)[1] == "hold")
+
+            fake.close()
+            r = run_task(main_path, "new", "--summary", "落ちたら仮の ID", "--difficulty", "haiku", "--loopable", "Y",
+                         "--body-file", "-", stdin=BODY)
+            provisional = r.stdout.split("\t")[1] if r.stdout.startswith("CREATED") else ""
+            check("push で落ちたら仮の ID のまま CREATED と TRACKER FAILED", provisional.startswith("gh-new-")
+                  and "TRACKER\tFAILED" in r.stdout, r.stdout)
+            fake2 = FakeGitHub()
+            fake2.issues, fake2.items = fake.issues, fake.items
+            env()["GITHUB_API_URL"] = fake2.url
+            try:
+                r = run_task(main_path, "sync")
+                ids = {i.bd_id for i in beads.list_issues(main_path)}
+                check("task sync が送り直して番号の ID へ付け替える", r.returncode == 0 and not any(
+                    i.startswith("gh-new-") for i in ids) and f"gh-{len(fake2.issues)}" in ids, r.stdout + repr(ids))
+            finally:
+                fake2.close()
+        finally:
+            fake.close()
             del _local.env
 
 
@@ -564,6 +835,7 @@ def _run_one(test) -> list[str]:
 
 
 def main() -> None:
+    only = sys.argv[1:]  # テストの関数名を渡すとそれだけを走らせる（手で直すとき）
     if shutil.which("bd") is None:
         print("bd が無いので Beads 方式の自己テストを飛ばす")
         return
@@ -585,10 +857,12 @@ def main() -> None:
             test_cycle_done_ship_and_dropped,
             test_stale_markers,
             test_triage_and_adopt,
-            test_tracker_github,
+            test_tracker_github_push_only,
+            test_tracker_github_bidirectional,
             test_tracker_jira,
             test_backup,
         )
+        tests = tuple(t for t in tests if not only or t.__name__ in only)
         with ThreadPoolExecutor(max_workers=len(tests)) as pool:
             outputs = list(pool.map(_run_one, tests))
     for lines in outputs:

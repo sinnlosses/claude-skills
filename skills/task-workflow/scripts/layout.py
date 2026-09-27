@@ -39,12 +39,16 @@ HISTORY_TASKS_PATH = "docs/history/tasks.md"
 # タスクID: "T-" + 3桁以上の数字（正典3.1）
 ID_FRAGMENT = r"T-\d{3,}"
 ID_PATTERN = re.compile(rf"^{ID_FRAGMENT}$")  # 全体一致（front matter の id・--deps の各要素）
-ID_SEARCH_PATTERN = re.compile(rf"\b{ID_FRAGMENT}\b")  # 文中から拾う（コミット件名・トランスクリプト）
+# Beads 方式でトラッカーが github なら、タスクID は Issue 番号の `GH-<n>`（ゼロ埋めしない。正典「Beads 方式」）。
+GH_ID_FRAGMENT = r"GH-\d+"
+ANY_ID_FRAGMENT = rf"(?:{ID_FRAGMENT}|{GH_ID_FRAGMENT})"
+ANY_ID_PATTERN = re.compile(rf"^{ANY_ID_FRAGMENT}$")  # Beads 方式の --deps・retrospect の引数
+ID_SEARCH_PATTERN = re.compile(rf"\b{ANY_ID_FRAGMENT}\b")  # 文中から拾う（コミット件名・トランスクリプト）
 HISTORY_HEADING_PATTERN = re.compile(rf"^## ({ID_FRAGMENT})\b", re.MULTILINE)  # docs/history/tasks.md の見出し
 
 # 作業ブランチの接頭辞（`claim` が切る `feature/T-xxx`。正典「ファイル配置と設定ファイル」6.1）
 FEATURE_BRANCH_PREFIX = "feature/"
-FEATURE_BRANCH_PATTERN = re.compile(rf"{FEATURE_BRANCH_PREFIX}({ID_FRAGMENT})")
+FEATURE_BRANCH_PATTERN = re.compile(rf"{FEATURE_BRANCH_PREFIX}({ANY_ID_FRAGMENT})")
 
 # 設定ファイル（`## タスク運用` 節の置き場。正典「ファイル配置と設定ファイル」）。
 # `AGENTS.md` → `CLAUDE.md` の順で探し、節を持つ最初のファイルを設定とする（T-020）。

@@ -47,8 +47,8 @@ DEFAULT_DIFF_BYTES = 40000
 
 def main() -> None:
     root, task_id, want_diff, diff_bytes, signals_only = parse_args(sys.argv[1:])
-    if not layout.ID_PATTERN.fullmatch(task_id):
-        print(f"INVALID\t{task_id}\tタスクIDは T- + 3桁以上")
+    if not layout.ANY_ID_PATTERN.fullmatch(task_id):
+        print(f"INVALID\t{task_id}\tタスクIDは T- + 3桁以上か GH- + 番号")
         return
 
     if signals_only:

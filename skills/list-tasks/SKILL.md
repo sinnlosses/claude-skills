@@ -11,7 +11,8 @@ description: "task status の出力から、develop/task/ に登録されてい�
 python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py status
 ```
 
-行の列は `id / status / difficulty / loopable / dependencies / 着手可否 / 印 / summary`。`---` の後ろに
+行の列は `id / status / difficulty / loopable / dependencies / 着手可否 / 印 / summary`（`id` は `T-xxx`。
+Beads 方式でトラッカーが `github` なら Issue 番号の `GH-<n>` もあり、`T-xxx` の行のあとに並ぶ）。`---` の後ろに
 `counts`・`ready`（READY 件数）・`todo_loopable`・`stale`・`invalid`、Beads 方式（正典「Beads 方式」）なら
 `triage`（とトラッカーが `jira` なら `jira_close`）、残っていれば `legacy_progress`。
 
