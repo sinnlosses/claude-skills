@@ -2,6 +2,29 @@
 
 ## 2026-09-27
 
+### エージェントのドラフト（承認: 「提案どおり6タスク（推奨）」「キーをパスに＋兆候の目安を書き換え（推奨）」）
+
+`/next-task` の1件ごとの振り返り（T-015・T-017〜T-022）と `/retrospect`（T-023・T-024）で積んだ12件。
+
+対応表:
+
+- 「`--signals` の集計キーをパスにする」＋「N回直したを直し直しで数える」→ T-025（同じ関数を触るのでまとめた。
+  数え方そのものは変えない、が承認時の決定）
+- 「翻訳したスキルについて `description` と生成物の言語の2点を翻訳方針に足す」→ T-026
+- 「委譲先が無応答のまま止まったときの手順」＋「`## 背景` の事実主張は実物で確かめる」→ T-027
+  （どちらも `next-task/SKILL.md` 手順5付近の追記なのでまとめた）
+- 「サブコマンドを足すときは参照表と終了コードの表も直す」＋「行き先の無い一時的な注意はドラフトへ」
+  ＋「モデルIDは `claude-api` で確かめる」→ T-028（どれも `WORKFLOW.md` への1〜2行の追記）
+- 「別スキルを `import` したら `REQUIRES` に足す（機械で見る）」→ T-029
+- 「`check_docs.py` の検査5 を新形式に合わせる」→ T-030
+
+タスクにしなかった項目:
+
+- 「`selftest_task.py` の ship の RACE テストを安定させる」→ **T-013 で解決済み**。相手役を別スレッドから
+  検証コマンド自体（rebase 直後と送る直前に本体を1コミット進める sh）に置き換えてあり、`threading` は残っていない
+- 「helm-yadokari と tsukumo の `docs/workflow.md` に残る `develop/workflow.json` の値の表を消す」→
+  **両リポジトリとも残っていない**（`grep 'workflow.json'` が0件）。`docs/workflow.md` 自体は別の中身で現役
+
 ### ユーザーから
 
 - https://github.com/mattpocock/skills/tree/main/skills/engineering/improve-codebase-architecture を導入してください。
