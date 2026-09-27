@@ -10,6 +10,8 @@
 - `docs/` に書くスキルが、索引 `docs/README.md` に1行足す指示を持っていること
 - スクリプトのパスが `${CLAUDE_SKILL_DIR}` 形で書かれ、実在するファイルを指していること
 - 同梱スクリプトが構文として読めること
+- 兄弟スキルの `scripts/` を `sys.path` に足して `import` しているなら、`REQUIRES` にその
+  兄弟スキル名があること
 """
 
 from __future__ import annotations
@@ -300,6 +302,103 @@ def check_task_workflow_layout() -> None:
                     fail(f"{rel}:{node.lineno}: os.path.join が {hit!r} を直書きしている")
 
 
+def _sys_path_call(node: ast.AST) -> ast.expr | None:
+    """`sys.path.insert(i, x)` / `sys.path.append(x)` なら、足す先のパスの引数ノードを返す。"""
+    if not (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Attribute)
+        and node.func.value.attr == "path"
+        and isinstance(node.func.value.value, ast.Name)
+        and node.func.value.value.id == "sys"
+    ):
+        return None
+    if node.func.attr == "insert" and len(node.args) >= 2:
+        return node.args[1]
+    if node.func.attr == "append" and len(node.args) >= 1:
+        return node.args[0]
+    return None
+
+
+def _unwrap_normpath(node: ast.expr) -> ast.expr:
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "normpath":
+        return node.args[0] if node.args else node
+    return node
+
+
+def check_sibling_imports(names: list[str]) -> None:
+    """兄弟スキルの `scripts/` を `sys.path` に足して `import` しているなら、そのスキルの
+    `REQUIRES` に足し先のスキル名があるか（T-029）。
+
+    見るのは `sys.path.insert(0, X)` / `sys.path.append(X)` の `X` だけ。`X` が変数なら
+    同じファイル内の代入までたどる。`os.path.join(dirname(__file__), "..", "..", "<skill>",
+    "scripts")`（`os.path.normpath` で包んでもよい）の形で、二階層上がって別スキルの
+    `scripts` を指しているものだけを「兄弟スキルへの依存」として扱う。依存先の並びの取り方は
+    「`..`,`..` の次の要素を見る」で、この1形しか今のリポジトリに無いのでそれで十分。
+
+    `sys.path.insert(0, HERE)`（`HERE = os.path.dirname(...)`）のように `..` を挟まず
+    自分の `scripts/` を指すものは同一スキル内の兄弟モジュール読み込みで、依存ではないので
+    無視する（`selftest.py`・`selftest_task.py` 等）。
+
+    それ以外の形（文字列の連結や f-string で組んだパスなど）は、依存の有無をこの検査では
+    読み取れない。黙って通すと「検査を素通りする書き方」が増えても気づけなくなるので、
+    「読めない」として指摘し、人に読める形へ直すか `REQUIRES` を確認するかを判断させる。
+    """
+    for n in names:
+        scripts_dir = os.path.join(SKILLS, n, "scripts")
+        if not os.path.isdir(scripts_dir):
+            continue
+        req_path = os.path.join(SKILLS, n, "REQUIRES")
+        required = set()
+        if os.path.exists(req_path):
+            required = {line.strip() for line in read(req_path).splitlines() if line.strip()}
+        for fname in sorted(os.listdir(scripts_dir)):
+            if not fname.endswith(".py"):
+                continue
+            path = os.path.join(scripts_dir, fname)
+            rel = os.path.relpath(path, ROOT)
+            tree = ast.parse(read(path))
+            assigns = {
+                node.targets[0].id: node.value
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+            }
+            for node in ast.walk(tree):
+                target = _sys_path_call(node)
+                if target is None:
+                    continue
+                expr = target
+                if isinstance(expr, ast.Name) and expr.id in assigns:
+                    expr = assigns[expr.id]
+                expr = _unwrap_normpath(expr)
+                if _is_os_path_join(expr):
+                    segments = _trailing_literal_segments(expr.args)
+                    if (
+                        len(segments) == 4
+                        and segments[0] == ".."
+                        and segments[1] == ".."
+                        and segments[3] == "scripts"
+                    ):
+                        dep = segments[2]
+                        if dep == n:
+                            continue
+                        if dep not in names:
+                            fail(f"{rel}:{node.lineno}: sys.path の足し先 `{dep}` はスキルとして実在しない")
+                        elif dep not in required:
+                            fail(
+                                f"{rel}:{node.lineno}: `{dep}` の scripts/ を import しているが "
+                                f"{n}/REQUIRES に `{dep}` が無い"
+                            )
+                        continue
+                    fail(f"{rel}:{node.lineno}: sys.path の組み立てを読めない（兄弟スキル依存を検査できない）")
+                    continue
+                if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute) and expr.func.attr == "dirname":
+                    continue  # HERE 相当。自分の scripts/ を指すだけで依存ではない
+                fail(f"{rel}:{node.lineno}: sys.path の組み立てを読めない（兄弟スキル依存を検査できない）")
+
+
 def main() -> None:
     names = skill_names()
     check_frontmatter(names)
@@ -307,6 +406,7 @@ def main() -> None:
     check_script_paths(names)
     check_cross_references(names)
     check_requires(names)
+    check_sibling_imports(names)
     check_docs_index(names)
     check_python_syntax(names)
     check_task_workflow_layout()
