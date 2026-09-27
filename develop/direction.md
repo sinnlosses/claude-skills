@@ -101,3 +101,13 @@
     「Agent ツールに渡す短い名前」と「いまそれが指すモデル（日付つき）」を別の列に分けた
   - 出し先: `skills/task-workflow/WORKFLOW.md`「difficulty とモデルの切り替え」に
     「この表の右端を直すときは `claude-api` スキルで現行のIDを確かめる（記憶で書かない）」を1行足すタスク
+- **`check_docs.py` の検査5 が期待する `develop/` の顔ぶれを新形式に合わせる**（振り返り: T-019）
+  - 根拠: `DEVELOP_FILES = ("tasks.json", "progress.md", "direction.md")` を「節があるなら3つとも在るはず」と
+    見ているため、移行を終えた claude-skills 自身で `NG 「## タスク運用」節はあるが develop/tasks.json が無い`・
+    `同 develop/progress.md が無い` の2件を**誤検知する**（T-019 の受け入れで既定の出力を見て気づいた。
+    T-019 の変更前からある挙動で、T-022 で `progress.md` を消したことで顕在化した）。
+    移行が進んだリポジトリほど確定群（NG）にノイズが出るので、`maintenance-docs` の出力が信用されなくなる
+  - 出し先: `skills/maintenance-docs/scripts/check_docs.py` の検査5で、新形式は
+    `develop/direction.md` と `develop/task/` を期待し、`tasks.json`・`progress.md` は
+    **在ったら旧形式の残り**として `task migrate` を案内する向きに直すタスク（`task config-doctor` の
+    検査4と同じ判定なので、そちらと言い回しを揃える）

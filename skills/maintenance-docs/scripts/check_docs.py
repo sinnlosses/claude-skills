@@ -2,10 +2,12 @@
 """`docs/`・`README.md`・`CLAUDE.md` を10個の検査にかけ、指摘を出す。
 
 使い方:
-    python3 check_docs.py [プロジェクトのルート] [--skills-dir DIR]
+    python3 check_docs.py [プロジェクトのルート] [--skills-dir DIR] [--docs-dir DIR] [--index FILE]
 
 ルートの既定はカレントディレクトリ。`--skills-dir` の既定はこのスクリプトを含むスキルの
 親ディレクトリ（＝インストール済みスキルの置き場）で、検査10と `== 参考 canon ==` に使う。
+`--docs-dir` の既定は `docs`、`--index` の既定は `README.md`（`--docs-dir` 配下の索引ファイル名）。
+置き場が違うプロジェクトでもこの2つを渡せば検査できる。既定値のままなら挙動はいまと同じ。
 
 指摘の頭は2種類:
     NG  確定群。正典が決めた形に反していて、直せば必ず正しくなる
@@ -41,9 +43,6 @@ DEVELOP_FILES = ("tasks.json", "progress.md", "direction.md")
 
 # `docs/history/` は当時の記述をそのまま残すアーカイブなので、どの検査の対象にもしない。
 HISTORY_DIR = "history"
-
-# 索引 `docs/README.md` に載せる対象から外すもの。
-INDEX_EXEMPT = ("README.md",)
 
 # 検査9（索引の無い大きなドキュメント）のしきい値。
 BIG_DOC_BYTES = 20480
@@ -104,13 +103,13 @@ def first_heading(body: str) -> str:
     return ""
 
 
-def docs_files(root: str) -> list[str]:
-    """`docs/` 配下の Markdown（`docs/history/` は除く）。パスは posix 形式の相対。"""
+def docs_files(root: str, docs_dir: str = "docs") -> list[str]:
+    """`docs_dir` 配下の Markdown（`{docs_dir}/history/` は除く）。パスは posix 形式の相対。"""
     out: list[str] = []
-    for dirpath, dirnames, files in os.walk(os.path.join(root, "docs")):
+    for dirpath, dirnames, files in os.walk(os.path.join(root, docs_dir)):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
         rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
-        if rel_dir == f"docs/{HISTORY_DIR}" or rel_dir.startswith(f"docs/{HISTORY_DIR}/"):
+        if rel_dir == f"{docs_dir}/{HISTORY_DIR}" or rel_dir.startswith(f"{docs_dir}/{HISTORY_DIR}/"):
             dirnames[:] = []
             continue
         for f in sorted(files):
@@ -119,18 +118,18 @@ def docs_files(root: str) -> list[str]:
     return sorted(out)
 
 
-def targets(root: str) -> list[str]:
-    """検査の対象。`docs/`（history 除く）＋ ルートの `README.md`・`CLAUDE.md`。"""
-    out = docs_files(root)
+def targets(root: str, docs_dir: str = "docs") -> list[str]:
+    """検査の対象。`docs_dir`（history 除く）＋ ルートの `README.md`・`CLAUDE.md`。"""
+    out = docs_files(root, docs_dir)
     for f in ("README.md", "CLAUDE.md"):
         if os.path.exists(os.path.join(root, f)):
             out.append(f)
     return out
 
 
-def index_entries(root: str) -> list[str]:
-    """`docs/README.md` が名指ししているパス（`` `path` `` と `[..](path)` の両方）。"""
-    body = read(os.path.join(root, "docs", "README.md"))
+def index_entries(root: str, docs_dir: str = "docs", index: str = "README.md") -> list[str]:
+    """索引（`{docs_dir}/{index}`）が名指ししているパス（`` `path` `` と `[..](path)` の両方）。"""
+    body = read(os.path.join(root, docs_dir, index))
     found = [m.group(1) for m in re.finditer(r"`([^`\s]+\.\w+)`", body)]
     found += [m.group(1) for m in re.finditer(r"\]\(([^)\s]+)\)", body)]
     out: list[str] = []
@@ -138,7 +137,7 @@ def index_entries(root: str) -> list[str]:
         if p.startswith(("http://", "https://", "#")):
             continue
         p = p.split("#")[0].lstrip("./")
-        norm = p if p.startswith("docs/") else f"docs/{p}"
+        norm = p if p.startswith(f"{docs_dir}/") else f"{docs_dir}/{p}"
         if norm not in out:
             out.append(norm)
     return out
@@ -258,41 +257,47 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("root", nargs="?", default=".")
     ap.add_argument("--skills-dir", default=None)
+    ap.add_argument("--docs-dir", default="docs")
+    ap.add_argument("--index", default="README.md")
     args = ap.parse_args()
 
     root = os.path.abspath(args.root)
     skills_dir = args.skills_dir or os.path.dirname(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     )
+    docs_dir = args.docs_dir
+    index_name = args.index
+    index_path = f"{docs_dir}/{index_name}"
+    index_exempt = (index_name,)
 
     canon = canon_paths(skills_dir)
     claude_path = os.path.join(root, "CLAUDE.md")
     claude_body = read(claude_path)
-    docs = docs_files(root)
-    tgts = targets(root)
-    has_index = os.path.exists(os.path.join(root, "docs", "README.md"))
-    entries = index_entries(root) if has_index else []
-    indexable = [p for p in docs if os.path.basename(p) not in INDEX_EXEMPT]
+    docs = docs_files(root, docs_dir)
+    tgts = targets(root, docs_dir)
+    has_index = os.path.exists(os.path.join(root, docs_dir, index_name))
+    entries = index_entries(root, docs_dir, index_name) if has_index else []
+    indexable = [p for p in docs if os.path.basename(p) not in index_exempt]
 
     found: dict[int, list[str]] = {n: [] for n, _, _ in CHECKS}
 
     def note(n: int, msg: str) -> None:
         found[n].append(msg)
 
-    # 検査1: docs/ にあるのに索引に載っていない。
+    # 検査1: docs_dir にあるのに索引に載っていない。
     if has_index:
         for p in indexable:
             if p not in entries:
-                note(1, f"{p} が docs/README.md に無い")
+                note(1, f"{p} が {index_path} に無い")
 
     # 検査2: 索引が指す先が無い。
     for p in entries:
         if not os.path.exists(os.path.join(root, p)):
-            note(2, f"docs/README.md -> {p} が実在しない")
+            note(2, f"{index_path} -> {p} が実在しない")
 
     # 検査3: 索引だけあって載せる中身が無い。
     if has_index and not indexable:
-        note(3, "docs/README.md はあるが索引に載せるファイルが1件も無い")
+        note(3, f"{index_path} はあるが索引に載せるファイルが1件も無い")
 
     # 検査4: Markdown リンクの切れ（辿れる前提の記法なので、切れていれば必ず誤り）。
     for rel in tgts:
@@ -373,19 +378,21 @@ def main() -> int:
         name = os.path.basename(rel)
         body = read(os.path.join(root, rel))
         head = first_heading(body)
-        if name in INDEX_EXEMPT:
+        if name in index_exempt:
             continue
         under = rel.split("/")
-        if not rel.startswith("docs/adr/") and (ADR_BODY.search(body) or ADR_HINT.search(name)):
-            note(7, f"{rel}: 中身が決定記録に見える（正典は docs/adr/000N-*.md）")
-        if rel.startswith("docs/adr/") and not re.match(r"^\d{4}-[a-z0-9-]+\.md$", name):
+        adr_dir = f"{docs_dir}/adr/"
+        research_dir = f"{docs_dir}/research/"
+        if not rel.startswith(adr_dir) and (ADR_BODY.search(body) or ADR_HINT.search(name)):
+            note(7, f"{rel}: 中身が決定記録に見える（正典は {adr_dir}000N-*.md）")
+        if rel.startswith(adr_dir) and not re.match(r"^\d{4}-[a-z0-9-]+\.md$", name):
             note(7, f"{rel}: ADR の名前が 000N-<slug>.md の形でない")
-        if not rel.startswith("docs/research/") and RESEARCH_HINT.search(name + " " + head):
-            note(7, f"{rel}: 調査メモに見える（正典は docs/research/<topic>.md）")
+        if not rel.startswith(research_dir) and RESEARCH_HINT.search(name + " " + head):
+            note(7, f"{rel}: 調査メモに見える（正典は {research_dir}<topic>.md）")
         if name == "architecture.md" and PROPOSAL_BODY.search(body):
-            note(7, f"{rel}: 採用後の正典に提案の記述が混ざっている（提案は docs/architecture-proposal.md）")
+            note(7, f"{rel}: 採用後の正典に提案の記述が混ざっている（提案は {docs_dir}/architecture-proposal.md）")
         if len(under) > 2 and under[1] in ("archive", "old", "past", "backup"):
-            note(7, f"{rel}: 履歴の置き場は docs/history/")
+            note(7, f"{rel}: 履歴の置き場は {docs_dir}/{HISTORY_DIR}/")
     for rel in docs:
         if os.path.basename(rel) in ("CONTEXT.md", "CONTEXT-MAP.md"):
             note(7, f"{rel}: CONTEXT.md はリポジトリのルート（または各コンテキストのルート）に置く")
@@ -479,7 +486,7 @@ def main() -> int:
     print("\n== 参考 対象 ==")
     print(f"root\t{root}")
     print(f"targets\t{len(tgts)}件\t{', '.join(tgts) if tgts else '(none)'}")
-    print(f"docs/README.md\t{'YES' if has_index else 'NO'}")
+    print(f"{index_path}\t{'YES' if has_index else 'NO'}")
     for f in DEVELOP_FILES:
         print(f"develop/{f}\t{'YES' if os.path.exists(os.path.join(root, 'develop', f)) else 'NO'}")
     for name, where in skill_where:
