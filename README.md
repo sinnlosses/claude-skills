@@ -10,6 +10,10 @@ Claude Code のユーザー単位スキル（`~/.claude/skills/`）のソース�
 意図を裏切らないため）。ここを直接 `~/.claude/skills` にしないのは、Claude Code が
 `~/.claude/skills/synced/` を claude.ai 同期用に予約していて、git 管理下に混ざるのを避けるため。
 
+`agents/` にはサブエージェントの定義（1ファイル1エージェント）を置き、`./install.sh` が同じ安全策で
+`~/.claude/agents/`（`CLAUDE_CONFIG_DIR` があればその下の `agents/`）へ張る。スキル名の絞り込みは
+効かず常に全件が対象。
+
 ## 由来
 
 全24スキル。`skills/` にあるものが全てで、この一覧がその索引。
@@ -104,7 +108,8 @@ Claude Code のユーザー単位スキル（`~/.claude/skills/`）のソース�
 由来一覧と `skills/` の一致、`${CLAUDE_SKILL_DIR}` で書かれた参照先の実在、スキル名の
 相互参照の実在、`docs/` に書くスキル（`architecture-proposal` `domain-modeling` `research`。
 `check_repo.py` の `DOCS_WRITING_SKILLS`）が索引 `docs/README.md` に1行足す指示を
-持っていること）。**由来の一覧が索引なので、スキルを足したり消したりしたらここも直す**
+持っていること、`agents/*.md` の frontmatter の `name` とファイル名の一致・`description` の有無）。
+**由来の一覧が索引なので、スキルを足したり消したりしたらここも直す**
 （直し忘れは `./check.sh` が落として教える）。標準ライブラリだけで動く。
 
 ## 制約

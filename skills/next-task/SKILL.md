@@ -88,6 +88,10 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 
 5. **委譲する**: Agent ツールで `difficulty` と同じモデルのサブエージェントへ（メインのモデルは
    判断材料にしない。一致していても委譲する。正典「difficulty とモデルの切り替え」）。
+   `subagent_type` は、Agent ツールの説明に並ぶエージェント一覧に `no-delegate`（`tools` から
+   `Agent` を外したエージェント定義。claude-skills の `agents/no-delegate.md` を `install.sh` が
+   `~/.claude/agents/` へ張ったもの）があればそれを使う。一覧に無ければ、`install.sh` を打つ前
+   （人がやること）とみなして、これまでどおり `general-purpose` を使う。
    本文は貼らず、次を渡す（`retrospect` の SKILL.md を指す箇所は
    `${CLAUDE_SKILL_DIR}/../retrospect/SKILL.md` を解決した絶対パスに置き換えて渡す。委譲先は
    `${CLAUDE_SKILL_DIR}` を持たない）:
@@ -128,7 +132,9 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
      ような方針・理由の説明も足さない」
    - 「報告では `## 完了条件` の各行について、満たしたか・何で確かめたかを1行ずつ書く。CSS を
      足したら計算済みのスタイルで効いたことを確かめる」
-   - 「サブエージェントの中では別のエージェント（fork を含む）を立てず、レーンを順に自分で読む」
+   - `general-purpose` に委譲したときだけ渡す（`no-delegate` は `Agent` ツール自体が無く
+     仕組みで立てられないので渡さない）: 「サブエージェントの中では別のエージェント
+     （fork を含む）を立てず、レーンを順に自分で読む」
 
    `loopable: N` のタスク（ユーザーが直接呼んだとき）は委譲せずメインで行う。着手して初めて
    ユーザーの判断が要ると分かったら、front matter を `loopable: N` に直し、`task release T-xxx`

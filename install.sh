@@ -1,14 +1,18 @@
 #!/bin/sh
-# skills/ 配下の各スキルを張る先にシンボリックリンクする。
+# skills/ 配下の各スキルと、agents/ 配下の各エージェント定義を、張る先にシンボリックリンクする。
 #
-# - 張る先は `--dest DIR` → `CLAUDE_CONFIG_DIR`（設定されていればその下の `skills/`）→
-#   `$HOME/.claude/skills` の順で決める
+# - スキルの張る先は `--dest DIR` → `CLAUDE_CONFIG_DIR`（設定されていればその下の `skills/`）→
+#   `$HOME/.claude/skills` の順で決める。エージェント定義の張る先は `CLAUDE_CONFIG_DIR`
+#   （設定されていればその下の `agents/`）→ `$HOME/.claude/agents` で、`--dest` とスキル名の
+#   絞り込みの影響を受けない（`--dest` はスキル用の張る先を指す引数のため）。エージェント定義は
+#   常に全件張り替える
 # - `--dest` の後ろに残った引数はスキル名で、渡せば対象を絞る（無ければ従来どおり全件）
 # - 既にこのリポジトリを指すリンクは張り替える
 # - **実ディレクトリ・他所を指すリンクは触らず警告する**。`ln -sfn` は相手が実ディレクトリだと
 #   エラーにならず *その中に* リンクを作り（`<name>/<name>`）、壊れたスキルが黙って生まれる
-# - このリポジトリを指していたのに解決できなくなったリンク（スキルを消した・改名した跡）は消す。
-#   **対象を絞ったときはこの掃除を走らせない**（対象外のスキルを消さないため）
+# - このリポジトリを指していたのに解決できなくなったリンク（スキルを消した・改名した跡、
+#   エージェント定義を消した跡）は消す。**スキルは対象を絞ったときこの掃除を走らせない**
+#   （対象外のスキルを消さないため）。エージェント定義の掃除は絞り込みの対象が無いので常に走る
 # - **対象を絞ったときは依存も見る**（`skills/<name>/REQUIRES` に1行で書かれた兄弟スキル名）。
 #   張る先に依存先が無ければ警告するだけで、自動では足さない（絞り込みの意図を守るため）
 set -e
@@ -16,8 +20,10 @@ here=$(cd "$(dirname "$0")" && pwd)
 
 if [ -n "$CLAUDE_CONFIG_DIR" ]; then
   dest="$CLAUDE_CONFIG_DIR/skills"
+  agents_dest="$CLAUDE_CONFIG_DIR/agents"
 else
   dest="$HOME/.claude/skills"
+  agents_dest="$HOME/.claude/agents"
 fi
 
 while [ $# -gt 0 ]; do
@@ -116,5 +122,44 @@ else
     done < "$req"
   done
 fi
+
+# agents/ 配下の各エージェント定義（1ファイル1つ）を張る。スキル名の絞り込みは効かず常に全件。
+mkdir -p "$agents_dest"
+
+for f in "$here"/agents/*.md; do
+  [ -f "$f" ] || continue
+  n=$(basename "$f")
+  link="$agents_dest/$n"
+  if [ -e "$link" ] && [ ! -L "$link" ]; then
+    echo "skipped $n （$link が実ファイル/実ディレクトリ。中に入れ子のリンクを作らないため触らない）" >&2
+    warned=1
+    continue
+  fi
+  if [ -L "$link" ]; then
+    current=$(readlink "$link")
+    case "$current" in
+      "$here"/agents/*) ;;  # このリポジトリのもの。張り替えてよい
+      *)
+        echo "skipped $n （$link は別の場所 $current を指している）" >&2
+        warned=1
+        continue
+        ;;
+    esac
+  fi
+  ln -sfn "$f" "$link"
+  echo "linked $n"
+done
+
+# 消したエージェント定義の残骸を掃除する。このリポジトリを指していたリンクだけが対象。
+for link in "$agents_dest"/*; do
+  [ -L "$link" ] || continue
+  [ -e "$link" ] && continue
+  case "$(readlink "$link")" in
+    "$here"/agents/*)
+      rm "$link"
+      echo "pruned $(basename "$link") （リンク先が無くなっていた）"
+      ;;
+  esac
+done
 
 [ "$warned" -eq 0 ] || echo "※ skipped があります。上の理由を確認してから手で片付けてください。" >&2

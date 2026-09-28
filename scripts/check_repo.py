@@ -5,6 +5,8 @@
 
 見るもの:
 - 各 SKILL.md の frontmatter が読めて、`name` がディレクトリ名と一致すること
+- 各 `agents/*.md`（`install.sh` が `~/.claude/agents/` へ張るエージェント定義）の frontmatter が
+  読めて、`name` がファイル名と一致し、`description` があること
 - README の「由来」一覧が `skills/` と過不足なく一致すること（README が索引なので）
 - スキル同士の相互参照が実在するスキルを指していること
 - `docs/` に書くスキルが、索引 `docs/README.md` に1行足す指示を持っていること
@@ -23,6 +25,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILLS = os.path.join(ROOT, "skills")
+AGENTS = os.path.join(ROOT, "agents")
 
 # 使う側のプロジェクトの `docs/` に成果物を書くスキル。ここに載っているスキルは
 # 「索引 `docs/README.md` に1行足す」指示を持っていなければならない。
@@ -39,6 +42,12 @@ def skill_names() -> list[str]:
     return sorted(
         n for n in os.listdir(SKILLS) if os.path.isdir(os.path.join(SKILLS, n))
     )
+
+
+def agent_names() -> list[str]:
+    if not os.path.isdir(AGENTS):
+        return []
+    return sorted(f[:-3] for f in os.listdir(AGENTS) if f.endswith(".md"))
 
 
 def read(path: str) -> str:
@@ -76,6 +85,19 @@ def check_frontmatter(names: list[str]) -> None:
             fail(f"{n}: frontmatter の name が {fm.get('name')!r} でディレクトリ名と違う")
         if not fm.get("description"):
             fail(f"{n}: description が無い")
+
+
+def check_agent_frontmatter(names: list[str]) -> None:
+    for n in names:
+        path = os.path.join(AGENTS, f"{n}.md")
+        fm = frontmatter(read(path))
+        if not fm:
+            fail(f"agents/{n}.md: frontmatter を読めない")
+            continue
+        if fm.get("name") != n:
+            fail(f"agents/{n}.md: frontmatter の name が {fm.get('name')!r} でファイル名と違う")
+        if not fm.get("description"):
+            fail(f"agents/{n}.md: description が無い")
 
 
 def check_readme_index(names: list[str]) -> None:
@@ -410,6 +432,7 @@ def main() -> None:
     check_docs_index(names)
     check_python_syntax(names)
     check_task_workflow_layout()
+    check_agent_frontmatter(agent_names())
 
     if problems:
         for p in problems:
