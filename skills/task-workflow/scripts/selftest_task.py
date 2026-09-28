@@ -51,8 +51,8 @@ def git(cwd: str, *args: str) -> subprocess.CompletedProcess:
     return r
 
 
-def run_task(cwd: str, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, TASK_PY, *args], cwd=cwd, capture_output=True, text=True)
+def run_task(cwd: str, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, TASK_PY, *args], cwd=cwd, capture_output=True, text=True, input=stdin)
 
 
 def start_task(cwd: str, *args: str) -> subprocess.Popen:
@@ -793,6 +793,75 @@ def test_done_commits_since_claim() -> None:
         )
 
 
+# --- task.py: edit・plan-check ----------------------------------------------
+
+
+def test_edit_and_plan_check() -> None:
+    print("task.py edit・plan-check: ## やること を作業より先に書いたかを知らせる")
+    planned = BODY.replace("## やること\n", "## やること\n1. 書く\n")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp)
+        for tid in ("T-100", "T-101", "T-102", "T-103"):
+            commit_task(main_path, taskfile.Task(tid, "やることの順", "todo", "sonnet", "Y", (), BODY))
+        commit_task(main_path, taskfile.Task("T-104", "閉じたもの", "done", "sonnet", "Y", (), BODY + "\n## 結果\n\nx\n"))
+        task_file = lambda tid: os.path.join(wt1, "develop", "task", f"{tid}.md")  # noqa: E731
+
+        def reset(tid: str) -> None:
+            git(wt1, "checkout", "--", f"develop/task/{tid}.md")
+            git(wt1, "clean", "-fdq")
+
+        run_task(wt1, "claim", "T-100")
+        inner_body = write(os.path.join(wt1, "plan-body.md"), planned)
+        r = run_task(wt1, "edit", "T-100", "--body-file", inner_body)
+        task, _ = taskfile.read_task_file(task_file("T-100"))
+        check("ファイル方式の edit が本文を書き換える", r.returncode == 0 and r.stdout.strip() == "EDITED\tT-100"
+              and task is not None and "1. 書く" in task.body and task.status == "todo", r.stdout + r.stderr)
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        run_task(wt1, "edit", "T-100", "--body-file", "-", stdin=planned.replace("1. 書く", "1. 書き直す"))
+        r = run_task(wt1, "plan-check", "T-100")
+        check("作業より先に書けば PLAN_FIRST（渡した本文のファイル・後の書き直しは数えない）",
+              r.returncode == 0 and r.stdout.strip() == "PLAN_FIRST\tT-100", r.stdout + r.stderr)
+        r = run_task(wt2, "plan-check", "T-100")
+        check("自分の印が無ければ NOT_OWNER（終了コード4）", r.returncode == 4 and r.stdout.strip() == "NOT_OWNER\tT-100", r.stdout)
+        reset("T-100")
+
+        run_task(wt1, "claim", "T-101")
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        r = run_task(wt1, "plan-check", "T-101")
+        check("書かずに作業へ進むと PLAN_NOT_FIRST missing", r.returncode == 0
+              and r.stdout.strip() == "PLAN_NOT_FIRST\tT-101\tmissing", r.stdout + r.stderr)
+        run_task(wt1, "edit", "T-101", "--body-file", "-", stdin=planned)
+        r = run_task(wt1, "plan-check", "T-101")
+        check("作業のあとで書くと PLAN_NOT_FIRST after-work", r.returncode == 0
+              and r.stdout.strip() == "PLAN_NOT_FIRST\tT-101\tafter-work", r.stdout + r.stderr)
+        reset("T-101")
+
+        run_task(wt1, "claim", "T-102")
+        with open(task_file("T-102"), encoding="utf-8") as f:
+            text = f.read()
+        write(task_file("T-102"), text.replace("## やること\n", "## やること\n1. 直に書く\n"))
+        r = run_task(wt1, "plan-check", "T-102")
+        check("edit を通さずに書くと PLAN_NOT_FIRST unrecorded", r.returncode == 0
+              and r.stdout.strip() == "PLAN_NOT_FIRST\tT-102\tunrecorded", r.stdout + r.stderr)
+        reset("T-102")
+
+        run_task(wt1, "claim", "T-103")
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        git(wt1, "add", "work.txt")
+        git(wt1, "commit", "-q", "-m", "作業")
+        run_task(wt1, "edit", "T-103", "--body-file", "-", stdin=planned)
+        r = run_task(wt1, "plan-check", "T-103")
+        check("claim 後にコミットしてから書いても after-work", r.stdout.strip() == "PLAN_NOT_FIRST\tT-103\tafter-work", r.stdout)
+
+        r = run_task(wt1, "edit", "T-103", "--summary", "x")
+        check("ファイル方式の edit は --body-file のほかは終了コード2", r.returncode == 2, r.stdout + r.stderr)
+        r = run_task(wt1, "edit", "T-103", "--body-file", "-", stdin=planned + "\n## 結果\n\nx\n")
+        check("edit は ## 結果 を拒む（終了コード2）", r.returncode == 2, r.stdout + r.stderr)
+        r = run_task(wt1, "edit", "T-104", "--body-file", "-", stdin=planned)
+        check("done のタスクは NOT_READY（終了コード4）", r.returncode == 4
+              and r.stdout.strip() == "NOT_READY\tT-104\tdone", r.stdout + r.stderr)
+
+
 # --- task.py: ship（5.8・6章） -----------------------------------------------
 
 
@@ -1394,6 +1463,7 @@ def main() -> None:
         test_taskfile_set_result_section,
         test_done_single_worktree,
         test_done_commits_since_claim,
+        test_edit_and_plan_check,
         test_ship_fast_forward,
         test_ship_rebases_when_main_advances,
         test_ship_forces_verify_after_verify_failed_without_new_rebase,

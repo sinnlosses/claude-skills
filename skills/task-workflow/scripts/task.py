@@ -563,6 +563,113 @@ def _print_commits_since_claim(toplevel: str, shown_id: str, head: str | None) -
         print(f"COMMITS_SINCE_CLAIM\t{shown_id}\t{','.join(commits)}")
 
 
+# --- edit・plan-check（`## やること` を作業より先に書いたか） ----------------
+
+PLAN_FIRST = "first"
+PLAN_AFTER_WORK = "after-work"
+
+
+def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
+    """ファイル方式の `edit`。本文だけを書き換え、`## やること` を初めて書いた時点の判定を印に残す。"""
+    if any([args.summary, args.difficulty, args.loopable, args.status]) or not args.body_file:
+        print("usage: ファイル方式の edit は --body-file だけ（ほかはタスクファイルを直に直す）", file=sys.stderr)
+        raise SystemExit(2)
+    task_id = args.task_id
+    if not taskfile.ID_PATTERN.match(task_id):
+        print(f"usage: {task_id!r} が T-999 の形式でない", file=sys.stderr)
+        raise SystemExit(2)
+    path = taskfile.task_path(os.path.join(toplevel, layout.TASK_DIR), task_id)
+    if not os.path.exists(path):
+        print(f"NOT_READY\t{task_id}\t存在しない")
+        raise SystemExit(4)
+    task, err = taskfile.read_task_file(path)
+    if err is not None or task is None:
+        print(f"INVALID\t{err or '読めない'}")
+        raise SystemExit(3)
+    if task.status not in ("todo", "hold"):
+        print(f"NOT_READY\t{task_id}\t{task.status}")
+        raise SystemExit(4)
+    body = read_body(args.body_file)
+    error = taskfile.validate_body(body)
+    if error is not None:
+        print(f"usage: {error}", file=sys.stderr)
+        raise SystemExit(2)
+
+    root = ledger.ledger_root(cwd=toplevel)
+    owner = ledger.read_owner(ledger.claim_dir(root, task_id))
+    state = None
+    if (
+        owner is not None
+        and owner.get("worktree") == toplevel
+        and taskfile.has_plan(body)
+        and ledger.read_plan_mark(root, task_id) is None
+    ):
+        own = f"{layout.TASK_DIR}/{task_id}.md"
+        state = _plan_state(toplevel, owner.get("head"), args.body_file, own)
+
+    rendered = taskfile.render(
+        taskfile.Task(task.id, task.summary, task.status, task.difficulty, task.loopable, task.dependencies, body)
+    )
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(rendered)
+    if state is not None:
+        ledger.write_plan_mark(root, task_id, state)
+    print(f"EDITED\t{task_id}")
+
+
+def cmd_plan_check(toplevel: str, task_id: str) -> None:
+    if not taskfile.ID_PATTERN.match(task_id):
+        print(f"usage: {task_id!r} が T-999 の形式でない", file=sys.stderr)
+        raise SystemExit(2)
+    root = ledger.ledger_root(cwd=toplevel)
+    owner = ledger.read_owner(ledger.claim_dir(root, task_id))
+    if owner is None or owner.get("worktree") != toplevel:
+        print(f"NOT_OWNER\t{task_id}")
+        raise SystemExit(4)
+    task, err = taskfile.read_task_file(taskfile.task_path(os.path.join(toplevel, layout.TASK_DIR), task_id))
+    if err is not None or task is None:
+        print(f"INVALID\t{err or '読めない'}")
+        raise SystemExit(3)
+    _print_plan_check(task_id, taskfile.has_plan(task.body), ledger.read_plan_mark(root, task_id))
+
+
+def _plan_state(toplevel: str, head: str | None, body_file: str, own_path: str | None) -> str:
+    """いま `## やること` を書くと、作業より先（`first`）か作業が始まってから（`after-work`）か。
+
+    作業が始まっているとは、claim した時点の `head` より後のコミットがあるか、タスク自身のファイル
+    （`own_path`）と `body_file` 以外に `git status` の変更があること。
+    """
+    if _commits_since_claim(toplevel, head):
+        return PLAN_AFTER_WORK
+    ignored = {own_path} if own_path else set()
+    if body_file != "-":
+        ignored.add(os.path.relpath(os.path.realpath(body_file), os.path.realpath(toplevel)))
+    r = _run_git(toplevel, ["status", "--porcelain", "-z", "--untracked-files=all"])
+    changed = _porcelain_paths(r.stdout) if r.returncode == 0 else []
+    return PLAN_AFTER_WORK if any(p not in ignored for p in changed) else PLAN_FIRST
+
+
+def _porcelain_paths(out: str) -> list[str]:
+    """`git status --porcelain -z` の出力から変更のあるパスを取り出す（名前の変更は元の名前を読み飛ばす）。"""
+    paths: list[str] = []
+    entries = iter(out.split("\0"))
+    for entry in entries:
+        if len(entry) < 4:
+            continue
+        paths.append(entry[3:])
+        if entry[0] in "RC":
+            next(entries, None)
+    return paths
+
+
+def _print_plan_check(shown: str, has_plan: bool, mark: str | None) -> None:
+    if has_plan and mark == PLAN_FIRST:
+        print(f"PLAN_FIRST\t{shown}")
+        return
+    reason = "missing" if not has_plan else (mark or "unrecorded")
+    print(f"PLAN_NOT_FIRST\t{shown}\t{reason}")
+
+
 # --- ship（5.8・6章） --------------------------------------------------------
 
 
@@ -1312,6 +1419,16 @@ def cmd_beads_edit(toplevel: str, args: argparse.Namespace) -> None:
         parts = beads.split_body(body)
         cmd += ["--body-file", "-", "--acceptance", parts.acceptance, "--notes", parts.notes]
         stdin = parts.description
+        metadata = issue.raw.get("metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        if (
+            issue.status == "in_progress"
+            and issue.assignee == _actor(toplevel)
+            and taskfile.has_plan(body)
+            and not metadata.get(beads.PLAN_KEY)
+        ):
+            state = _plan_state(toplevel, metadata.get(beads.CLAIM_HEAD_KEY), args.body_file, None)
+            cmd += ["--set-metadata", f"{beads.PLAN_KEY}={state}"]
     if args.summary:
         if "\n" in args.summary or not args.summary.strip():
             print("usage: --summary は改行を含まない1行にする", file=sys.stderr)
@@ -1331,6 +1448,18 @@ def cmd_beads_edit(toplevel: str, args: argparse.Namespace) -> None:
         raise beads.BeadsError(f"bd update が失敗: {(r.stderr or r.stdout).strip()}")
     print(f"EDITED\t{shown}")
     _print_lines(pulled + trk.after([bd_id]))
+
+
+def cmd_beads_plan_check(toplevel: str, task_id: str) -> None:
+    bd_id = _bd_task_id(task_id)
+    shown = beads.to_task_id(bd_id)
+    issue = beads.show(toplevel, bd_id)
+    if issue is None or issue.status != "in_progress" or issue.assignee != _actor(toplevel):
+        print(f"NOT_OWNER\t{shown}")
+        raise SystemExit(4)
+    metadata = issue.raw.get("metadata")
+    mark = metadata.get(beads.PLAN_KEY) if isinstance(metadata, dict) else None
+    _print_plan_check(shown, not taskfile.is_blank(str(issue.raw.get("notes") or "")), mark)
 
 
 def cmd_beads_adopt(toplevel: str, args: argparse.Namespace) -> None:
@@ -1470,7 +1599,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_show = sub.add_parser("show")
     p_show.add_argument("task_id")
 
-    # 以下は Beads 方式だけ（ファイル方式ではタスクファイルを直に直す）。
+    p_plan_check = sub.add_parser("plan-check")
+    p_plan_check.add_argument("task_id")
+
+    # ファイル方式は --body-file だけ（ほかはタスクファイルを直に直す）。
     p_edit = sub.add_parser("edit")
     p_edit.add_argument("task_id")
     p_edit.add_argument("--body-file", default=None)
@@ -1478,6 +1610,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_edit.add_argument("--difficulty", default=None, choices=taskfile.DIFFICULTY_VALUES)
     p_edit.add_argument("--loopable", default=None, choices=taskfile.LOOPABLE_VALUES)
     p_edit.add_argument("--status", default=None, choices=("todo", "hold"))
+
+    # 以下は Beads 方式だけ。
 
     p_adopt = sub.add_parser("adopt")
     p_adopt.add_argument("bd_id")
@@ -1495,7 +1629,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-BEADS_ONLY_COMMANDS = ("edit", "adopt", "sync", "backup", "jira-closed")
+BEADS_ONLY_COMMANDS = ("adopt", "sync", "backup", "jira-closed")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -1548,6 +1682,10 @@ def main(argv: list[str] | None = None) -> None:
             cmd_config_doctor(toplevel)
         elif args.command == "show":
             cmd_show(toplevel, args.task_id, layout.STORE_FILES)
+        elif args.command == "edit":
+            cmd_edit(toplevel, args)
+        elif args.command == "plan-check":
+            cmd_plan_check(toplevel, args.task_id)
     except (ledger.NoBaseBranch, layout.ConfigConflict, layout.StoreSettingError, tracker.TrackerSettingError) as e:
         print(f"INVALID\t{e}")
         raise SystemExit(3)
@@ -1577,6 +1715,8 @@ def _main_beads(toplevel: str, args: argparse.Namespace) -> None:
             cmd_show(toplevel, args.task_id, layout.STORE_BEADS)
         elif args.command == "edit":
             cmd_beads_edit(toplevel, args)
+        elif args.command == "plan-check":
+            cmd_beads_plan_check(toplevel, args.task_id)
         elif args.command == "adopt":
             cmd_beads_adopt(toplevel, args)
         elif args.command == "sync":

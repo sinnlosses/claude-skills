@@ -57,6 +57,8 @@ LAST_ID_KEY = "task-workflow.last-id"
 CLAIM_BRANCH_KEY = "task_branch"
 # claim した時点の HEAD の SHA（`task done` が委譲先のコミットを知らせるのに使う）。
 CLAIM_HEAD_KEY = "task_claim_head"
+# `## やること` を初めて書いた時点の判定（`first`・`after-work`）。
+PLAN_KEY = "task_plan"
 RESULT_HEADING = taskfile.RESULT_HEADING
 
 # 本文の節のうち、`description` 以外へ入るもの。

@@ -293,6 +293,27 @@ def release_claim(root: str, task_id: str, worktree: str, force: bool = False) -
     return "RELEASED"
 
 
+PLAN_FILE_NAME = "plan"
+
+
+def write_plan_mark(root: str, task_id: str, state: str) -> None:
+    """印のディレクトリに `## やること` を初めて書いた時点の判定を残す。2回目以降は書き換えない。"""
+    try:
+        fd = os.open(os.path.join(claim_dir(root, task_id), PLAN_FILE_NAME), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        return
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(f"{state}\n")
+
+
+def read_plan_mark(root: str, task_id: str) -> str | None:
+    path = os.path.join(claim_dir(root, task_id), PLAN_FILE_NAME)
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return f.read().strip() or None
+
+
 def list_claims(root: str) -> list[str]:
     d = os.path.join(root, CLAIM_DIR_NAME)
     if not os.path.isdir(d):

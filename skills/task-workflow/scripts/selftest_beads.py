@@ -205,7 +205,7 @@ def test_file_mode_untouched_by_beads_dir() -> None:
         r = run_task(main_path, "config-doctor")
         check("config-doctor は4行のまま", len(r.stdout.strip().splitlines()) == 4, r.stdout)
         r = run_task(main_path, "edit", "T-001", "--summary", "x")
-        check("edit はファイル方式では使えない（終了コード2）", r.returncode == 2, r.stdout + r.stderr)
+        check("edit はファイル方式では --body-file だけ（ほかは終了コード2）", r.returncode == 2, r.stdout + r.stderr)
         r = run_task(main_path, "show", "T-001")
         check("show はファイル方式でもタスクファイルを出す", r.returncode == 0 and r.stdout.startswith("---\nid: T-001"), r.stdout)
         r = bd(main_path, "list", "--json", "--all")
@@ -334,6 +334,49 @@ def test_done_commits_since_claim() -> None:
             r2.returncode == 0 and r2.stdout.strip() == f"DONE\t{b}\tbeads:{bd_id_b}\tship で閉じる",
             r2.stdout,
         )
+
+
+def test_plan_check() -> None:
+    say("edit・plan-check: ## やること を作業より先に書いたかを知らせる")
+    planned = BODY.replace("## やること\n", "## やること\n1. 書く\n")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp)
+        a = new(main_path, "先に書く")
+        b = new(main_path, "後から書く")
+        c = new(main_path, "着手前に直す")
+
+        def metadata(task_id: str) -> dict:
+            issue = beads.show(main_path, beads.to_bd_id(task_id))
+            raw = issue.raw.get("metadata") if issue is not None else None
+            return raw if isinstance(raw, dict) else {}
+
+        run_task(wt1, "claim", a)
+        r = run_task(wt1, "edit", a, "--body-file", "-", stdin=planned)
+        check("作業より先の edit は metadata に first を残し、claim の控えを消さない", r.returncode == 0
+              and metadata(a).get(beads.PLAN_KEY) == "first" and metadata(a).get(beads.CLAIM_HEAD_KEY),
+              r.stdout + r.stderr + str(metadata(a)))
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        run_task(wt1, "edit", a, "--body-file", "-", stdin=planned.replace("1. 書く", "1. 書き直す"))
+        r = run_task(wt1, "plan-check", a)
+        check("作業より先に書けば PLAN_FIRST（後の書き直しで変わらない）", r.returncode == 0
+              and r.stdout.strip() == f"PLAN_FIRST\t{a}", r.stdout + r.stderr)
+
+        run_task(wt2, "claim", b)
+        write(os.path.join(wt2, "work.txt"), "x\n")
+        r = run_task(wt2, "plan-check", b)
+        check("書かずに作業へ進むと PLAN_NOT_FIRST missing", r.returncode == 0
+              and r.stdout.strip() == f"PLAN_NOT_FIRST\t{b}\tmissing", r.stdout + r.stderr)
+        run_task(wt2, "edit", b, "--body-file", "-", stdin=planned)
+        r = run_task(wt2, "plan-check", b)
+        check("作業のあとで書くと PLAN_NOT_FIRST after-work", r.returncode == 0
+              and r.stdout.strip() == f"PLAN_NOT_FIRST\t{b}\tafter-work", r.stdout + r.stderr)
+        r = run_task(wt1, "plan-check", b)
+        check("自分の印が無ければ NOT_OWNER（終了コード4）", r.returncode == 4
+              and r.stdout.strip() == f"NOT_OWNER\t{b}", r.stdout)
+
+        r = run_task(main_path, "edit", c, "--body-file", "-", stdin=planned)
+        check("着手の印の持ち主でない edit は記録しない", r.returncode == 0 and beads.PLAN_KEY not in metadata(c),
+              r.stdout + r.stderr + str(metadata(c)))
 
 
 def test_cycle_done_ship_and_dropped() -> None:
@@ -886,6 +929,7 @@ def main() -> None:
             test_claim_race_owner_and_release,
             test_cycle_done_ship_and_dropped,
             test_done_commits_since_claim,
+            test_plan_check,
             test_stale_markers,
             test_triage_and_adopt,
             test_tracker_github_push_only,

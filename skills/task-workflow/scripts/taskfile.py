@@ -161,7 +161,7 @@ def validate_new_body(body: str) -> str | None:
     error = validate_body(body)
     if error is not None:
         return error
-    if not _is_blank(dict(_frame_sections(body)[1]).get(PLAN_HEADING, "")):
+    if has_plan(body):
         return f"{PLAN_HEADING} は着手直後に書く（登録時は空か「{EMPTY_MARK}」）"
     return None
 
@@ -180,7 +180,7 @@ def validate_body(body: str) -> str | None:
     if headings != SECTION_HEADINGS:
         return "本文の見出しが枠と違う（この順に1つずつ置く）: " + "、".join(SECTION_HEADINGS)
     contents = dict(sections)
-    blank = [h for h in FILLED_SECTIONS if _is_blank(contents[h])]
+    blank = [h for h in FILLED_SECTIONS if is_blank(contents[h])]
     if blank:
         return f"空・「{EMPTY_MARK}」にできない節: " + "、".join(blank)
     return None
@@ -200,8 +200,13 @@ def _frame_sections(body: str) -> tuple[str, list[tuple[str, str]]]:
     return "\n".join(preamble), [(h, "\n".join(c).strip()) for h, c in sections]
 
 
-def _is_blank(content: str) -> bool:
+def is_blank(content: str) -> bool:
     return content.strip() in ("", EMPTY_MARK)
+
+
+def has_plan(body: str) -> bool:
+    """`## やること` に中身があるか（空でも「なし」でもない）。"""
+    return not is_blank(dict(_frame_sections(body)[1]).get(PLAN_HEADING, ""))
 
 
 def set_result_section(body: str, content: str) -> str:
