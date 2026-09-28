@@ -70,12 +70,17 @@ def attempt(
     base_worktree: ledger.Worktree | None,
     verify_command: str | None,
     base: str,
+    verify_owed: bool = False,
 ) -> ShipOutcome:
     """最大 `MAX_TRIES` 回、rebase → 検証（付け替えた回だけ）→ 送る、を繰り返す（6.2手順5・6）。
 
     `base` は主ブランチの名前（`ledger.base_branch`）。送る先は `base_worktree` があれば
     `git -C <本体> merge --ff-only <HEAD のコミット>`、無ければ比較付きの `git update-ref`。
     失敗（相手に先を越された）は次の回の rebase からやり直す。
+
+    `verify_owed` は前回の `ship` が `VERIFY_FAILED` で終わった印（`ledger.is_verify_owed`）。
+    立っていれば、1回目の試行で付け替えが起きなくても検証を打つ——付け替え済みのまま次の
+    `ship` を打つと、そのままでは検証を素通りして送ってしまうため（T-777）。
     """
     rebased_any = False
     verify_state = "none" if verify_command is None else "skipped"
@@ -92,7 +97,8 @@ def attempt(
             rebased_this_round = True
             rebased_any = True
 
-        if rebased_this_round and verify_command is not None:
+        owed_this_round = tries == 1 and verify_owed
+        if (rebased_this_round or owed_this_round) and verify_command is not None:
             vr = subprocess.run(["sh", "-c", verify_command], cwd=toplevel, capture_output=True, text=True)
             verify_state = "ran"
             if vr.returncode != 0:

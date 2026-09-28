@@ -860,6 +860,68 @@ def test_ship_rebases_when_main_advances() -> None:
         check("T-100の完了もmainに乗る", "T-100: 完了" in log, log)
 
 
+def test_ship_forces_verify_after_verify_failed_without_new_rebase() -> None:
+    print("task.py ship: VERIFY_FAILEDのあと打ち直すと、付け替えが無くても検証を飛ばさない（T-777）")
+    with tempfile.TemporaryDirectory() as tmp:
+        flag = os.path.join(tmp, "verify-ok")
+        verify_script = write(
+            os.path.join(tmp, "verify.sh"),
+            f'if [ -f "{flag}" ]; then echo ok; exit 0; else echo fail; exit 1; fi\n',
+        )
+        main_path, wt1, _wt2 = make_repo(tmp, branch="切らない", verify=f"`sh {verify_script}`")
+        commit_task(main_path, taskfile.Task("T-100", "打ち直し", "todo", "sonnet", "Y", (), BODY))
+
+        run_task(wt1, "claim", "T-100")
+        write(os.path.join(main_path, "unrelated.txt"), "x")
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "mainだけの変更")
+        _claim_work_and_done(wt1, "T-100")
+
+        r1 = run_task(wt1, "ship")
+        check("1回目はVERIFY_FAILEDで終了コード8", r1.returncode == 8 and r1.stdout.startswith("VERIFY_FAILED\t"), r1.stdout + r1.stderr)
+        check(
+            "検証の借りの印が立つ",
+            ledger.is_verify_owed(cwd=wt1),
+        )
+        check("rebaseはabortされず作業ツリーはきれい", git(wt1, "status", "--porcelain").stdout.strip() == "")
+
+        write(flag, "x")  # 検証コマンドが通る状態に直す。main はこれ以上進めない（付け替えは起きない）。
+        r2 = run_task(wt1, "ship")
+        check("打ち直しはSHIPPEDで返る", r2.returncode == 0 and r2.stdout.startswith("SHIPPED\t"), r2.stdout + r2.stderr)
+        check("rebasedはno（付け替えは起きていない）", "rebased=no" in r2.stdout, r2.stdout)
+        check("それでも検証はran（借りを飛ばさない）", "verify=ran" in r2.stdout, r2.stdout)
+        check("検証の借りの印は消える", not ledger.is_verify_owed(cwd=wt1))
+        check("main にmerge commitが無い", _no_merge_commits(main_path).strip() == "")
+
+        r3 = run_task(wt1, "ship")
+        check("送るものが無ければ今までどおりNOTHING", r3.returncode == 0 and r3.stdout.startswith("NOTHING\t"), r3.stdout + r3.stderr)
+
+
+def test_ship_stale_verify_owed_does_not_block_nothing_or_main_worktree() -> None:
+    print("task.py ship: 検証の借りの印が残っていても、main に送るものが無い・main上で起こしたときは今までどおり動く")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp, branch="切らない", verify="`false`")
+
+        # 送るものが無い（NOTHING）側: 古い印が残っていても検証コマンド（`false`）は打たれない。
+        ledger.mark_verify_owed("`false`", cwd=wt1)
+        r1 = run_task(wt1, "ship")
+        check("NOTHINGで返る（検証は打たれない）", r1.returncode == 0 and r1.stdout.startswith("NOTHING\t"), r1.stdout + r1.stderr)
+        check("古い印は消える", not ledger.is_verify_owed(cwd=wt1))
+
+        # main の作業ツリーで起こした（送る段なし）側。
+        ledger.mark_verify_owed("`false`", cwd=main_path)
+        commit_task(main_path, taskfile.Task("T-100", "本体で完結", "todo", "sonnet", "Y", (), BODY))
+        run_task(main_path, "claim", "T-100")
+        _claim_work_and_done(main_path, "T-100")
+        r2 = run_task(main_path, "ship")
+        check(
+            "SHIPPED main（送る段なし）で返る",
+            r2.returncode == 0 and r2.stdout.startswith("SHIPPED\tmain\t(送る段なし)"),
+            r2.stdout + r2.stderr,
+        )
+        check("古い印は消える", not ledger.is_verify_owed(cwd=main_path))
+
+
 def test_ship_conflict_aborts_rebase() -> None:
     print("task.py ship: 衝突すればrebase --abortして止まる")
     with tempfile.TemporaryDirectory() as tmp:
@@ -1344,6 +1406,8 @@ def main() -> None:
         test_done_commits_since_claim,
         test_ship_fast_forward,
         test_ship_rebases_when_main_advances,
+        test_ship_forces_verify_after_verify_failed_without_new_rebase,
+        test_ship_stale_verify_owed_does_not_block_nothing_or_main_worktree,
         test_ship_conflict_aborts_rebase,
         test_ship_main_dirty_stops,
         test_ship_skips_send_on_main_worktree,

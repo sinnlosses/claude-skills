@@ -618,6 +618,7 @@ def cmd_ship(toplevel: str, hooks: "ShipHooks | None" = None) -> None:
 
     if branch == base:
         # 4.4: 主ブランチを出している作業ツリーで起こしたときは送る段が無い。
+        ledger.clear_verify_owed(cwd=toplevel)
         released = hooks.release_shipped()
         print(f"SHIPPED\t{base}\t(送る段なし)\treleased={','.join(released) or '-'}")
         _print_lines(hooks.after_send())
@@ -626,6 +627,7 @@ def cmd_ship(toplevel: str, hooks: "ShipHooks | None" = None) -> None:
     ahead = _run_git(toplevel, ["rev-list", "--count", f"{base}..HEAD"])
     ahead_count = int(ahead.stdout.strip()) if ahead.returncode == 0 and ahead.stdout.strip().isdigit() else 0
     if ahead_count == 0:
+        ledger.clear_verify_owed(cwd=toplevel)
         hooks.release_shipped()
         print(f"NOTHING\t({base} に無いコミットが無い)")
         _print_lines(hooks.after_send())
@@ -639,12 +641,15 @@ def cmd_ship(toplevel: str, hooks: "ShipHooks | None" = None) -> None:
 
     old_base = _run_git(toplevel, ["rev-parse", base]).stdout.strip()
     verify_command = ship.read_verify_command(toplevel)
-    outcome = ship.attempt(toplevel, base_worktree, verify_command, base)
+    verify_owed = ledger.is_verify_owed(cwd=toplevel)
+    outcome = ship.attempt(toplevel, base_worktree, verify_command, base, verify_owed=verify_owed)
 
     if outcome.kind == "CONFLICT":
         print("CONFLICT\t" + (",".join(outcome.conflict_files) or "?"))
         raise SystemExit(7)
     if outcome.kind == "VERIFY_FAILED":
+        # 付け替え済みのまま送っていない。次の `ship` は打ち直しでも検証を飛ばさない（T-777）。
+        ledger.mark_verify_owed(outcome.verify_command or "", cwd=toplevel)
         print(f"VERIFY_FAILED\t{outcome.verify_command}")
         if outcome.verify_tail:
             print(outcome.verify_tail)
@@ -652,6 +657,10 @@ def cmd_ship(toplevel: str, hooks: "ShipHooks | None" = None) -> None:
     if outcome.kind == "RACE":
         print("RACE\t3")
         raise SystemExit(9)
+
+    # ここに来るのは `SENT` だけ（`attempt` は借りがあれば検証を通してからでないと
+    # `SENT` を返さない）。送れたので借りは無い。
+    ledger.clear_verify_owed(cwd=toplevel)
 
     branch_note = f"branch={branch}"
     if read_branch_setting(toplevel) in ("既定", "作業ブランチを切る") and FEATURE_BRANCH.fullmatch(branch):

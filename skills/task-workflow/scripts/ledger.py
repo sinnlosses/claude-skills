@@ -47,6 +47,12 @@ def git_common_dir(cwd: str | None = None) -> str:
     return _git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd)
 
 
+def git_dir(cwd: str | None = None) -> str:
+    """この作業ツリー**だけ**の git dir（共有の `git_common_dir` とは違う。連結した
+    作業ツリーでは `<共通の git dir>/worktrees/<名前>`）。`verify_owed` の置き場に使う。"""
+    return _git(["rev-parse", "--path-format=absolute", "--git-dir"], cwd)
+
+
 def git_toplevel(cwd: str | None = None) -> str:
     return _git(["rev-parse", "--show-toplevel"], cwd)
 
@@ -340,3 +346,33 @@ def write_last_id(root: str, number: int) -> None:
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(f"{number}\n")
     os.replace(tmp, os.path.join(root, LAST_ID_FILE_NAME))
+
+
+# --- verify-owed（`VERIFY_FAILED` のあと打ち直すまでの検証の借り）----------
+
+VERIFY_OWED_FILE_NAME = "task-ship-verify-owed"
+
+
+def _verify_owed_path(cwd: str | None = None) -> str:
+    """**作業ツリー固有**の git dir に置く（`claim`／`lock` の共有台帳とは別）。
+    検証を跨いだ枝を抱えているのはこの作業ツリーだけなので、共有すると
+    無関係な作業ツリーの `ship` まで検証を強制してしまう。"""
+    return os.path.join(git_dir(cwd), VERIFY_OWED_FILE_NAME)
+
+
+def mark_verify_owed(verify_command: str, cwd: str | None = None) -> None:
+    path = _verify_owed_path(cwd)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(verify_command + "\n")
+    os.replace(tmp, path)
+
+
+def is_verify_owed(cwd: str | None = None) -> bool:
+    return os.path.exists(_verify_owed_path(cwd))
+
+
+def clear_verify_owed(cwd: str | None = None) -> None:
+    path = _verify_owed_path(cwd)
+    if os.path.exists(path):
+        os.remove(path)
