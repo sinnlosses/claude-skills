@@ -589,9 +589,14 @@ Project・Status 欄・選択肢の ID は `bd kv` の `task-workflow.project` �
 
 **切り替え**（ファイル方式から Beads 方式へ、`t-<n>` から `gh-<n>` へ）は、全作業ツリーの手を止めて
 人が立ち会う。付け替えの前に `bd export` と `bd backup` を取る。`t-<n>` から `gh-<n>` へは、未完了の
-課題を `external_ref` の番号へ `bd rename` し、`bd config set issue_prefix gh`、`pending` を `deferred`
-に変え、旧い ID を `description` の末尾の1行（`旧ID: T-123`）に残す。`task-workflow.github-seen` は
-消しておき、最初の `task sync` で開いた全件を取り込む。
+課題を `external_ref` の番号へ `bd rename` し、`pending` を `deferred` に変え、旧い ID を `description` の
+末尾の1行（`旧ID: T-123`）に残し、`issue_prefix` を `gh` にして `status.custom` を `bd config unset` で外す。
+`task-workflow.github-seen` は消しておき、最初の `task sync` で開いた全件を取り込む。
+`issue_prefix` は `bd config set` では変えられず（`bd` 1.3.0 は拒む）、勧められる `bd rename-prefix` は閉じた
+`t-<n>` まで付け替えて本文の参照も書き換えるので使わない。`bd` を動かしていないときに、
+`.beads/embeddeddolt/<metadata.json の dolt_database>` で
+``dolt sql -q "update config set value='gh' where `key`='issue_prefix'"`` を打ち、`dolt commit -am <件名> --author <名前>` で
+残す（2026-09-28 に tsukumo で確かめた）。
 **置き場や ID を切り替えるコミットは、消す・付け替えるものを全部済ませた木で検証コマンドを打ってから送る。**
 
 **バックアップ**: `.beads` は git の外なので、タスクの記録は git の履歴に残らない。`task ship` の
