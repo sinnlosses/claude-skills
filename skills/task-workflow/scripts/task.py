@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """1件1ファイル＋台帳の形のタスク運用を操作する入口コマンド。
 
-使い方: task.py <status|new|claim|release|done|ship|prune|migrate|config-doctor> ...
+使い方: task.py <status|new|claim|release|done|ship|prune|migrate|config-doctor|show|edit|plan-check|verify|verify-check> ...
 
 正典は `docs/task-workflow-redesign.md`（5章が `task` コマンド、4章が状態と台帳、
 3章がタスクファイル、6章が送り出し、5.9・10章が `migrate`）。スキルからは
@@ -668,6 +668,53 @@ def _print_plan_check(shown: str, has_plan: bool, mark: str | None) -> None:
         return
     reason = "missing" if not has_plan else (mark or "unrecorded")
     print(f"PLAN_NOT_FIRST\t{shown}\t{reason}")
+
+
+# --- verify・verify-check（検証コマンドが通った中身の控え） ------------------
+
+VERIFY_TAIL_LINES = 40
+
+
+def cmd_verify(toplevel: str) -> None:
+    verify_command = ship.read_verify_command(toplevel)
+    if verify_command is None:
+        print("NOTHING\t(検証コマンドが無い)")
+        return
+    before = ledger.content_key(verify_command, cwd=toplevel)
+    log_path = ledger.verify_log_path(cwd=toplevel)
+    with open(log_path, "w", encoding="utf-8") as log:
+        r = subprocess.run(["sh", "-c", verify_command], cwd=toplevel, stdout=log, stderr=subprocess.STDOUT)
+    with open(log_path, encoding="utf-8", errors="replace") as f:
+        tail = "\n".join(f.read().splitlines()[-VERIFY_TAIL_LINES:])
+    if r.returncode != 0:
+        ledger.clear_verify_stamp(cwd=toplevel)
+        print(f"VERIFY_NOT_PASSED\t{log_path}")
+        print(tail)
+        raise SystemExit(10)
+    if ledger.content_key(verify_command, cwd=toplevel) != before:
+        ledger.clear_verify_stamp(cwd=toplevel)
+        print(f"VERIFIED_UNSTAMPED\t{log_path}")
+    else:
+        ledger.write_verify_stamp(before, cwd=toplevel)
+        print(f"VERIFIED\t{before.tree}\t{log_path}")
+    print(tail)
+
+
+def cmd_verify_check(toplevel: str) -> None:
+    verify_command = ship.read_verify_command(toplevel)
+    if verify_command is None:
+        print("NOTHING\t(検証コマンドが無い)")
+        return
+    stamp = ledger.read_verify_stamp(cwd=toplevel)
+    if stamp is None:
+        print("NOT_VERIFIED\tnone")
+        return
+    now = ledger.content_key(verify_command, cwd=toplevel)
+    if now == stamp:
+        print(f"VERIFIED_SAME\t{now.tree}")
+        return
+    reason = "command" if now.verify_command != stamp.verify_command else "head" if now.head != stamp.head else "content"
+    print(f"NOT_VERIFIED\t{reason}")
 
 
 # --- ship（5.8・6章） --------------------------------------------------------
@@ -1602,6 +1649,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_plan_check = sub.add_parser("plan-check")
     p_plan_check.add_argument("task_id")
 
+    sub.add_parser("verify")
+    sub.add_parser("verify-check")
+
     # ファイル方式は --body-file だけ（ほかはタスクファイルを直に直す）。
     p_edit = sub.add_parser("edit")
     p_edit.add_argument("task_id")
@@ -1686,6 +1736,10 @@ def main(argv: list[str] | None = None) -> None:
             cmd_edit(toplevel, args)
         elif args.command == "plan-check":
             cmd_plan_check(toplevel, args.task_id)
+        elif args.command == "verify":
+            cmd_verify(toplevel)
+        elif args.command == "verify-check":
+            cmd_verify_check(toplevel)
     except (ledger.NoBaseBranch, layout.ConfigConflict, layout.StoreSettingError, tracker.TrackerSettingError) as e:
         print(f"INVALID\t{e}")
         raise SystemExit(3)
@@ -1717,6 +1771,10 @@ def _main_beads(toplevel: str, args: argparse.Namespace) -> None:
             cmd_beads_edit(toplevel, args)
         elif args.command == "plan-check":
             cmd_beads_plan_check(toplevel, args.task_id)
+        elif args.command == "verify":
+            cmd_verify(toplevel)
+        elif args.command == "verify-check":
+            cmd_verify_check(toplevel)
         elif args.command == "adopt":
             cmd_beads_adopt(toplevel, args)
         elif args.command == "sync":

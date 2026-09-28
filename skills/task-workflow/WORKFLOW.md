@@ -255,8 +255,8 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 3. 委譲先が**いまの主ブランチで調べ直して `## やること` を書き足す**（`task edit T-xxx --body-file -`。
    作業より先に書いたかを印に残す）。前提が崩れていれば作業せず、
    `task done --dropped` にする理由を報告する
-4. 作業する（`develop/task/` 以外の `develop/` は触らない）
-5. 受け入れ: `task plan-check T-xxx`（`## やること` を作業より先に書いたか）→ 差分を読む → 整形コマンド → 検証コマンド
+4. 作業する（`develop/task/` 以外の `develop/` は触らない）。検証コマンドは `task verify` で打つ（通ると作業ツリーの中身の鍵を控える）
+5. 受け入れ: `task plan-check T-xxx`（`## やること` を作業より先に書いたか）→ 差分を読む → 整形コマンド → `task verify-check`（`VERIFIED_SAME` なら検証を省く。ほかは `task verify`）
 5a. 振り返り（`/loop` からも。`retrospect` の SKILL.md「1件だけ振り返る」）: 兆候に当たったときだけ
    `develop/draft/` にドラフトのファイルを足す
 6. `task done T-xxx --result-file -`（`status` と `## 結果` を書いて stage。印はまだ消さない）
@@ -283,9 +283,11 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 
 | 検証コマンドを打つ時点 | 誰が | なぜ |
 | --- | --- | --- |
-| 受け入れ（`task done` の前） | スキル | 作業の合否そのもの。整形コマンドもここ |
+| 受け入れ（`task done` の前） | スキル | 作業の合否そのもの。整形コマンドもここ。委譲先が `task verify` で控えた中身と同じなら省く（`task verify-check`） |
 | `ship` の中で rebase が実際に付け替えたとき | `task` | 両側の変更が初めて同じ木に乗る |
 | 主ブランチへ送ったあと | 打たない | fast-forward なので、主ブランチの木は直前に検証した木と同じ |
+
+`ship` は `task verify` の控えを読まない（付け替えで中身が変わるので、付け替えた回は控えがあっても検証する）。
 
 `VERIFY_FAILED` で終わったあとは、枝は付け替え済みのまま検証の借りが残る（作業ツリー固有の印。
 `git worktree` を消すと一緒に消える）。次に打った `ship` は、その回で付け替えが起きなくても
@@ -395,11 +397,13 @@ zsh で単語に分かれず空振りし、`;` で続けた後続のコマンド
 | `show T-xxx` | タスク1件をタスクファイルの形で出す（読むだけ。ファイル方式は作業ツリーの版、無ければ主ブランチの版） | 本文。無ければ `NOT_READY` |
 | `edit T-xxx --body-file <path\|->` | 本文を丸ごと書き換える（ファイル方式は作業ツリーのタスクファイルで、`todo`・`hold` だけ。ほかの引数は Beads 方式だけ）。着手の印の持ち主が `## やること` に初めて中身を入れたとき、その時点で作業が始まっていたか（`claim` した時点の `HEAD` より後のコミットか、タスク自身のファイルと渡した本文のファイル以外の変更があるか）を1回だけ印に残す（ファイル方式は台帳の印の `plan`、Beads 方式は metadata `task_plan`。値は `first`／`after-work`） | `EDITED`・`NOT_READY` |
 | `plan-check T-xxx` | 自分の着手の印について、`## やること` を作業より先に `task edit` で書いたかを出す（読むだけ） | `PLAN_FIRST\tT-xxx`、そうでなければ `PLAN_NOT_FIRST\tT-xxx\t<理由>`（`missing`＝空か「なし」／`after-work`＝作業が始まってから書いた／`unrecorded`＝`task edit` を通さずに書いた）。どちらも終了コード0。`NOT_OWNER` |
+| `verify` | 検証コマンドを打つ。打つ前後で作業ツリーの中身の鍵（`HEAD` の SHA・一時の index に `git add -A` して `write-tree` した木の SHA・検証コマンドの文字列。本物の index は変えない）を取り、通って前後で同じなら作業ツリー固有の git dir の `task-verify-stamp` に控える。落ちたら控えを消す。全出力は同じ場所の `task-verify.log` | `VERIFIED\t<木の SHA>\t<ログのパス>`（控えた）／`VERIFIED_UNSTAMPED\t<ログのパス>`（通ったが検証のあいだに中身が変わったので控えない）／`VERIFY_NOT_PASSED\t<ログのパス>`（終了コード10）。どれも出力の末尾40行が続く。検証コマンドが無ければ `NOTHING` |
+| `verify-check` | いまの中身の鍵を `verify` の控えと照らす（読むだけ） | `VERIFIED_SAME\t<木の SHA>`（検証を省いてよい）、そうでなければ `NOT_VERIFIED\t<理由>`（`none`＝控えが無い／`head`／`content`／`command`）。どちらも終了コード0。検証コマンドが無ければ `NOTHING` |
 | `config-doctor` | このリポジトリが今の読み取りに合っているかを点検する（**読むだけ。`--fix` は無い**）。主ブランチが何で決まったか・設定ファイルがどちらか・「## タスク運用」の3行・旧形式の残り、の4検査を必ず1行ずつ出す | `base_branch`・`config_file`・`claude_md_lines`・`legacy` の4行。各行の2語目が `OK`／`MISSING`／`MISSING_LINE`／`BAD_BRANCH`／`NO_SECTION`／`FOUND`／`INVALID` |
 
 | 終了コード | 先頭語 | 意味 | スキルがすること |
 | --- | --- | --- | --- |
-| 0 | 各成功語（`plan-check` の `PLAN_NOT_FIRST` を含む） | 成功（`PLAN_NOT_FIRST` は止める合図ではなく、受け入れで扱う知らせ） | 次へ |
+| 0 | 各成功語（`plan-check` の `PLAN_NOT_FIRST`・`verify-check` の `NOT_VERIFIED` を含む） | 成功（`PLAN_NOT_FIRST`・`NOT_VERIFIED` は止める合図ではなく、受け入れで扱う知らせ） | 次へ |
 | 1 | （traceback） | 環境の故障 | エラー出力を報告して止まる。**手で代用しない** |
 | 2 | （stderr） | 渡した引数・本文の誤り | 直して打ち直す |
 | 3 | `INVALID` | データの不備（読めないタスクファイル、移行途中、`- ブランチ:` が読めない、主ブランチが決まらない、`--check` の重複） | 理由をそのまま報告して止まる。**直しに行かない** |
@@ -409,6 +413,7 @@ zsh で単語に分かれず空振りし、`;` で続けた後続のコマンド
 | 7 | `CONFLICT` | rebase が衝突した（`--abort` 済み） | 衝突したファイルを添えて人に預ける |
 | 8 | `VERIFY_FAILED` | 付け替えのあとの検証が落ちた（送っていない） | 出力の末尾を添えて人に預ける |
 | 9 | `RACE` | `--ff-only` が3回続けて落ちた | 人に預ける |
+| 10 | `VERIFY_NOT_PASSED` | `verify` の検証コマンドが落ちた（控えは消えた） | 出力の末尾（全体はログ）を読んで直し、打ち直す |
 
 **サブコマンドを足すときは、この参照表と終了コード表も同じコミットで直す**（参照表の追随が落ちると、読み手と実装が食い違う）。
 

@@ -379,6 +379,20 @@ def test_plan_check() -> None:
               r.stdout + r.stderr + str(metadata(c)))
 
 
+def test_verify_stamp() -> None:
+    say("verify・verify-check: Beads 方式でも同じ形で控えて照らす")
+    with tempfile.TemporaryDirectory() as tmp:
+        _main, wt1, _wt2 = make_repo(tmp, verify="`echo 3 pass`")
+        r = run_task(wt1, "verify")
+        check("通れば VERIFIED", r.returncode == 0 and r.stdout.startswith("VERIFIED\t"), r.stdout + r.stderr)
+        tree = r.stdout.split("\t")[1] if r.stdout.startswith("VERIFIED\t") else "?"
+        r = run_task(wt1, "verify-check")
+        check("同じ中身なら VERIFIED_SAME", r.stdout.strip() == f"VERIFIED_SAME\t{tree}", r.stdout + r.stderr)
+        write(os.path.join(wt1, "shared.txt"), "line1\nline2\n")
+        r = run_task(wt1, "verify-check")
+        check("変えれば NOT_VERIFIED content", r.stdout.strip() == "NOT_VERIFIED\tcontent", r.stdout + r.stderr)
+
+
 def test_cycle_done_ship_and_dropped() -> None:
     say("1サイクル（claim → edit → done → ship）と見送り")
     with tempfile.TemporaryDirectory() as tmp:
@@ -930,6 +944,7 @@ def main() -> None:
             test_cycle_done_ship_and_dropped,
             test_done_commits_since_claim,
             test_plan_check,
+            test_verify_stamp,
             test_stale_markers,
             test_triage_and_adopt,
             test_tracker_github_push_only,

@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -395,5 +396,69 @@ def is_verify_owed(cwd: str | None = None) -> bool:
 
 def clear_verify_owed(cwd: str | None = None) -> None:
     path = _verify_owed_path(cwd)
+    if os.path.exists(path):
+        os.remove(path)
+
+
+# --- verify-stamp（検証コマンドが通った作業ツリーの中身の控え）------------
+
+VERIFY_STAMP_FILE_NAME = "task-verify-stamp"
+VERIFY_LOG_FILE_NAME = "task-verify.log"
+
+
+@dataclass(frozen=True)
+class ContentKey:
+    head: str
+    tree: str
+    verify_command: str
+
+
+def content_key(verify_command: str, cwd: str | None = None) -> ContentKey:
+    """いまの作業ツリーの中身の鍵。
+
+    index を一時ファイルに写して `git add -A` → `git write-tree` するので、`.gitignore` の対象でない
+    未追跡のファイルまで入り、本物の index は変わらない。
+    """
+    toplevel = git_toplevel(cwd)
+    head = head_sha_or_none(toplevel) or "-"
+    real_index = _git(["rev-parse", "--path-format=absolute", "--git-path", "index"], toplevel)
+    with tempfile.TemporaryDirectory() as tmp:
+        temp_index = os.path.join(tmp, "index")
+        if os.path.exists(real_index):
+            shutil.copyfile(real_index, temp_index)
+        env = {**os.environ, "GIT_INDEX_FILE": temp_index}
+        for args in (["add", "-A"], ["write-tree"]):
+            r = subprocess.run(["git", *args], cwd=toplevel, env=env, capture_output=True, text=True)
+            if r.returncode != 0:
+                raise GitCommandError(f"git {' '.join(args)} が失敗（{r.returncode}）: {r.stderr.strip()}")
+        tree = r.stdout.strip()
+    return ContentKey(head, tree, verify_command)
+
+
+def verify_log_path(cwd: str | None = None) -> str:
+    return os.path.join(git_dir(cwd), VERIFY_LOG_FILE_NAME)
+
+
+def write_verify_stamp(key: ContentKey, cwd: str | None = None) -> None:
+    path = os.path.join(git_dir(cwd), VERIFY_STAMP_FILE_NAME)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(f"{key.head}\n{key.tree}\n{key.verify_command}\n")
+    os.replace(tmp, path)
+
+
+def read_verify_stamp(cwd: str | None = None) -> ContentKey | None:
+    path = os.path.join(git_dir(cwd), VERIFY_STAMP_FILE_NAME)
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        lines = f.read().split("\n")
+    if len(lines) < 3:
+        return None
+    return ContentKey(lines[0], lines[1], lines[2])
+
+
+def clear_verify_stamp(cwd: str | None = None) -> None:
+    path = os.path.join(git_dir(cwd), VERIFY_STAMP_FILE_NAME)
     if os.path.exists(path):
         os.remove(path)

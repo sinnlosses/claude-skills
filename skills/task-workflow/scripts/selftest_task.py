@@ -862,6 +862,116 @@ def test_edit_and_plan_check() -> None:
               and r.stdout.strip() == "NOT_READY\tT-104\tdone", r.stdout + r.stderr)
 
 
+# --- task.py: verify・verify-check -------------------------------------------
+
+VERIFY_SCRIPT = (
+    'echo "3 pass"\n'
+    'if [ -f ignored/touch ]; then echo x > out.txt; fi\n'
+    'if [ -f ignored/fail ]; then echo fail; exit 1; fi\n'
+)
+
+
+def test_verify_stamp() -> None:
+    print("task.py verify・verify-check: 検証が通った中身の鍵を控え、同じなら省いてよいと判定する")
+    with tempfile.TemporaryDirectory() as tmp:
+        _main, wt1, wt2 = make_repo(tmp, branch="切らない", verify="`sh verify.sh`")
+        write(os.path.join(wt1, "verify.sh"), VERIFY_SCRIPT)
+        write(os.path.join(wt1, ".gitignore"), "ignored/\n")
+        write(os.path.join(wt1, "pnpm-lock.yaml"), "lockfileVersion: 9\n")
+        git(wt1, "add", "-A")
+        git(wt1, "commit", "-q", "-m", "検証の足場")
+
+        def verify_check(cwd: str = wt1) -> str:
+            r = run_task(cwd, "verify-check")
+            if r.returncode != 0:
+                raise RuntimeError(f"verify-check が失敗: {r.stdout}{r.stderr}")
+            return r.stdout.strip()
+
+        check("控えが無ければ NOT_VERIFIED none", verify_check() == "NOT_VERIFIED\tnone")
+
+        write(os.path.join(wt1, "staged.txt"), "stage\n")
+        git(wt1, "add", "staged.txt")
+        write(os.path.join(wt1, "staged.txt"), "stage\nworktree\n")
+        write(os.path.join(wt1, "shared.txt"), "line1\nline2\n")
+        write(os.path.join(wt1, "untracked.txt"), "u\n")
+        index_path = git(wt1, "rev-parse", "--path-format=absolute", "--git-path", "index").stdout.strip()
+
+        def index_state() -> tuple[bytes, str, str]:
+            with open(index_path, "rb") as f:
+                raw = f.read()
+            return raw, git(wt1, "ls-files", "--stage").stdout, git(wt1, "diff", "--cached", "--name-status").stdout
+
+        before = index_state()
+        r = run_task(wt1, "verify")
+        first = r.stdout.splitlines()[0] if r.stdout else ""
+        check("通れば VERIFIED と木の SHA とログのパス（終了コード0）", r.returncode == 0 and first.startswith("VERIFIED\t")
+              and len(first.split("\t")) == 3 and os.path.exists(first.split("\t")[2]), r.stdout + r.stderr)
+        check("出力の末尾を続ける", "3 pass" in r.stdout, r.stdout)
+        check("本物の index（中身・stage）は変わらない", index_state() == before)
+        tree = first.split("\t")[1]
+        check("控えた中身と同じなら VERIFIED_SAME", verify_check() == f"VERIFIED_SAME\t{tree}")
+
+        write(os.path.join(wt1, "ignored", "cache.bin"), "x\n")
+        check("gitignore の対象を足しても鍵は変わらない", verify_check() == f"VERIFIED_SAME\t{tree}")
+
+        cases = (
+            ("追跡中のファイルの変更", "shared.txt", "line1\nline2\nline3\n"),
+            ("stage 済みのファイルの作業ツリー側の変更", "staged.txt", "stage\n"),
+            ("未追跡のファイル", "untracked.txt", "u2\n"),
+            ("未追跡のファイルの追加", "new.txt", "n\n"),
+            ("lock ファイルの変更", "pnpm-lock.yaml", "lockfileVersion: 10\n"),
+        )
+        for label, name, content in cases:
+            path = os.path.join(wt1, name)
+            original = open(path, encoding="utf-8").read() if os.path.exists(path) else None
+            write(path, content)
+            check(f"{label}で鍵が変わる（NOT_VERIFIED content）", verify_check() == "NOT_VERIFIED\tcontent")
+            if original is None:
+                os.remove(path)
+            else:
+                write(path, original)
+            check(f"{label}を戻せば VERIFIED_SAME", verify_check() == f"VERIFIED_SAME\t{tree}")
+
+        os.remove(os.path.join(wt1, "shared.txt"))
+        check("追跡中のファイルの削除で鍵が変わる", verify_check() == "NOT_VERIFIED\tcontent")
+        write(os.path.join(wt1, "shared.txt"), "line1\nline2\n")
+        check("index はここまでの照合でも変わらない", index_state() == before)
+        check("別の作業ツリーは控えを共有しない", verify_check(wt2) == "NOT_VERIFIED\tnone")
+
+        write(os.path.join(wt1, "ignored", "fail"), "x\n")
+        r = run_task(wt1, "verify")
+        check("落ちれば VERIFY_NOT_PASSED（終了コード10）と出力の末尾", r.returncode == 10
+              and r.stdout.startswith("VERIFY_NOT_PASSED\t") and "fail" in r.stdout, r.stdout + r.stderr)
+        check("落ちた回は控えを消す", verify_check() == "NOT_VERIFIED\tnone")
+        os.remove(os.path.join(wt1, "ignored", "fail"))
+        r = run_task(wt1, "verify")
+        check("打ち直して通れば同じ木で控える", r.returncode == 0 and r.stdout.startswith(f"VERIFIED\t{tree}\t"), r.stdout)
+
+        write(os.path.join(wt1, "ignored", "touch"), "x\n")
+        r = run_task(wt1, "verify")
+        check("検証のあいだに中身が変われば VERIFIED_UNSTAMPED（控えない）", r.returncode == 0
+              and r.stdout.startswith("VERIFIED_UNSTAMPED\t"), r.stdout + r.stderr)
+        check("VERIFIED_UNSTAMPED のあとは控えが無い", verify_check() == "NOT_VERIFIED\tnone")
+        os.remove(os.path.join(wt1, "ignored", "touch"))
+        os.remove(os.path.join(wt1, "out.txt"))
+
+        run_task(wt1, "verify")
+        git(wt1, "commit", "-q", "--allow-empty", "-m", "空")
+        check("HEAD が動けば NOT_VERIFIED head", verify_check() == "NOT_VERIFIED\thead")
+
+        run_task(wt1, "verify")
+        config = os.path.join(wt1, "CLAUDE.md")
+        write(config, open(config, encoding="utf-8").read().replace("`sh verify.sh`", "`sh ./verify.sh`"))
+        check("検証コマンドが変われば NOT_VERIFIED command", verify_check() == "NOT_VERIFIED\tcommand")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        _main, wt1, _wt2 = make_repo(tmp, branch="切らない")
+        r1 = run_task(wt1, "verify")
+        r2 = run_task(wt1, "verify-check")
+        check("検証コマンドが無ければ verify・verify-check とも NOTHING", r1.returncode == 0 and r2.returncode == 0
+              and r1.stdout.startswith("NOTHING\t") and r2.stdout.startswith("NOTHING\t"), r1.stdout + r2.stdout)
+
+
 # --- task.py: ship（5.8・6章） -----------------------------------------------
 
 
@@ -917,11 +1027,13 @@ def test_ship_rebases_when_main_advances() -> None:
         git(main_path, "commit", "-q", "-m", "mainだけの変更")
 
         _claim_work_and_done(wt1, "T-100")
+        r = run_task(wt1, "verify")
+        check("付け替え前の中身を控える", r.stdout.startswith("VERIFIED\t"), r.stdout + r.stderr)
 
         r = run_task(wt1, "ship")
         check("SHIPPEDで返る", r.returncode == 0 and r.stdout.startswith("SHIPPED\t"), r.stdout + r.stderr)
         check("rebasedはyes", "rebased=yes" in r.stdout, r.stdout)
-        check("verifyはran", "verify=ran" in r.stdout, r.stdout)
+        check("verifyはran（控えがあっても付け替えたら打つ）", "verify=ran" in r.stdout, r.stdout)
         check("main にmerge commitが無い", _no_merge_commits(main_path).strip() == "")
 
         log = git(main_path, "log", "--oneline", "main").stdout
@@ -1464,6 +1576,7 @@ def main() -> None:
         test_done_single_worktree,
         test_done_commits_since_claim,
         test_edit_and_plan_check,
+        test_verify_stamp,
         test_ship_fast_forward,
         test_ship_rebases_when_main_advances,
         test_ship_forces_verify_after_verify_failed_without_new_rebase,
