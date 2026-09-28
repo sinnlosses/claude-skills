@@ -55,6 +55,8 @@ SHIP_LABELS = {"done": "ship:done", "dropped": "ship:dropped"}
 JIRA_CLOSE_LABEL = "jira:close"
 LAST_ID_KEY = "task-workflow.last-id"
 CLAIM_BRANCH_KEY = "task_branch"
+# claim した時点の HEAD の SHA（`task done` が委譲先のコミットを知らせるのに使う）。
+CLAIM_HEAD_KEY = "task_claim_head"
 RESULT_HEADING = taskfile.RESULT_HEADING
 
 # 本文の節のうち、`description` 以外へ入るもの。

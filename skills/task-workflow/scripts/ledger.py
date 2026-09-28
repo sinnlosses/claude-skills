@@ -59,6 +59,12 @@ def is_clean(cwd: str | None = None) -> bool:
     return _git(["status", "--porcelain"], cwd) == ""
 
 
+def head_sha_or_none(cwd: str | None = None) -> str | None:
+    """`git rev-parse HEAD`。引けなければ `None`（`try_claim` が `head` を控えずに済ませる）。"""
+    r = subprocess.run(["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
 # --- 主ブランチ（`main`・`master`・`trunk` …） -----------------------------
 
 BASE_BRANCH_CANDIDATES = ("main", "master", "trunk")
@@ -248,15 +254,23 @@ def claim_dir(root: str, task_id: str) -> str:
     return os.path.join(root, CLAIM_DIR_NAME, task_id)
 
 
-def try_claim(root: str, task_id: str, worktree: str, branch: str) -> bool:
-    """`mkdir claim/T-xxx` が不可分な取り合いの錠そのもの（4.2）。"""
+def try_claim(root: str, task_id: str, worktree: str, branch: str, head: str | None = None) -> bool:
+    """`mkdir claim/T-xxx` が不可分な取り合いの錠そのもの（4.2）。
+
+    `head` は claim した時点の `HEAD` の SHA（`task done` が委譲先のコミットを知らせるのに使う。
+    `git rev-parse HEAD` が引けなかったときは `None` のままにし、owner に `head=` を書かない
+    （その印は古い形と同じに読める）。
+    """
     _ensure_dirs(root)
     d = claim_dir(root, task_id)
     try:
         os.mkdir(d)
     except FileExistsError:
         return False
-    _write_owner_file(d, {"worktree": worktree, "branch": branch, "claimed_at": now_iso()})
+    lines = {"worktree": worktree, "branch": branch, "claimed_at": now_iso()}
+    if head is not None:
+        lines["head"] = head
+    _write_owner_file(d, lines)
     return True
 
 

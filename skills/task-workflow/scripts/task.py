@@ -426,7 +426,8 @@ def cmd_claim(toplevel: str, task_id: str) -> None:
 
     root = ledger.ledger_root(cwd=toplevel)
     branch_after_sync = ledger.current_branch(cwd=toplevel)
-    if not ledger.try_claim(root, task_id, toplevel, branch_after_sync):
+    head = ledger.head_sha_or_none(cwd=toplevel)
+    if not ledger.try_claim(root, task_id, toplevel, branch_after_sync, head):
         d = ledger.claim_dir(root, task_id)
         owner = ledger.read_owner(d) or {}
         age = ledger.owner_age_seconds(d)
@@ -534,6 +535,32 @@ def cmd_done(toplevel: str, task_id: str, dropped: bool, result_path: str) -> No
     relpath = os.path.join(layout.TASK_DIR, f"{task_id}.md")
     _run_git(toplevel, ["add", relpath])
     print(f"DONE\t{task_id}\t{relpath}\tstaged")
+    _print_commits_since_claim(toplevel, task_id, owner.get("head"))
+
+
+def _commits_since_claim(toplevel: str, head: str | None) -> list[str]:
+    """`head`（claim 時の HEAD）から今の HEAD までにできたコミット（古い順、短縮ハッシュ）。
+
+    `head` が無い（控えの無い古い印。ファイル方式は owner の `head=`、Beads 方式は metadata の
+    `task_claim_head`）か `git log` が引けなければ空のまま返す（`task done` はそれを「委譲先の
+    コミットは無い」と同じに扱い、落とさない）。
+    """
+    if not head:
+        return []
+    r = _run_git(toplevel, ["log", "--format=%h", "--reverse", f"{head}..HEAD"])
+    if r.returncode != 0:
+        return []
+    return [line for line in r.stdout.splitlines() if line]
+
+
+def _print_commits_since_claim(toplevel: str, shown_id: str, head: str | None) -> None:
+    """claim から今までに委譲先が作ったコミットがあれば `COMMITS_SINCE_CLAIM` の行で知らせる。
+
+    `next-task` の手順6（受け入れる）向けの合図で、`DONE` の判定・終了コードは変えない。
+    """
+    commits = _commits_since_claim(toplevel, head)
+    if commits:
+        print(f"COMMITS_SINCE_CLAIM\t{shown_id}\t{','.join(commits)}")
 
 
 # --- ship（5.8・6章） --------------------------------------------------------
@@ -1143,11 +1170,11 @@ def cmd_beads_claim(toplevel: str, task_id: str) -> None:
     # `bd update --claim` は依存を見ないので、上で依存を確かめてから取る。取り合いの勝ち負けは Beads が決める。
     actor = _actor(toplevel)
     branch_after_sync = ledger.current_branch(cwd=toplevel)
-    r = beads.run(
-        toplevel,
-        ["update", bd_id, "--claim", "--set-metadata", f"{beads.CLAIM_BRANCH_KEY}={branch_after_sync}"],
-        actor,
-    )
+    claim_args = ["update", bd_id, "--claim", "--set-metadata", f"{beads.CLAIM_BRANCH_KEY}={branch_after_sync}"]
+    head = ledger.head_sha_or_none(cwd=toplevel)
+    if head is not None:
+        claim_args += ["--set-metadata", f"{beads.CLAIM_HEAD_KEY}={head}"]
+    r = beads.run(toplevel, claim_args, actor)
     if r.returncode != 0:
         again = beads.show(toplevel, bd_id)
         if again is not None and again.status == "in_progress":
@@ -1212,6 +1239,9 @@ def cmd_beads_done(toplevel: str, task_id: str, dropped: bool, result_path: str)
         toplevel, ["update", bd_id, "--add-label", beads.SHIP_LABELS[kind], "--remove-label", other], actor
     )
     print(f"DONE\t{shown}\tbeads:{bd_id}\tship で閉じる")
+    metadata = issue.raw.get("metadata")
+    head = metadata.get(beads.CLAIM_HEAD_KEY) if isinstance(metadata, dict) else None
+    _print_commits_since_claim(toplevel, shown, head)
     _print_lines(pulled + trk.after([bd_id]))
 
 

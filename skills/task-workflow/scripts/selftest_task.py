@@ -752,6 +752,47 @@ def test_done_single_worktree() -> None:
         check("--droppedでdroppedになる", task2 is not None and task2.status == "dropped")
 
 
+def test_done_commits_since_claim() -> None:
+    print("task.py done: claim 後のコミットを COMMITS_SINCE_CLAIM で知らせる（控えの無い印は出さない）")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp)
+        commit_task(main_path, taskfile.Task("T-100", "コミットを知らせる", "todo", "sonnet", "Y", (), BODY))
+        commit_task(main_path, taskfile.Task("T-101", "控えの無い印", "todo", "sonnet", "Y", (), BODY))
+
+        run_task(wt1, "claim", "T-100")
+        write(os.path.join(wt1, "illicit.txt"), "x\n")
+        git(wt1, "add", "-A")
+        git(wt1, "commit", "-q", "-m", "illicit")
+        sha = git(wt1, "rev-parse", "--short", "HEAD").stdout.strip()
+        result_path = write(os.path.join(wt1, "result.md"), "bun run check: 1 pass\n")
+        r = run_task(wt1, "done", "T-100", "--result-file", result_path)
+        lines = r.stdout.splitlines()
+        check(
+            "claim 後のコミットは COMMITS_SINCE_CLAIM で続けて知らせる",
+            r.returncode == 0
+            and lines[0] == "DONE\tT-100\tdevelop/task/T-100.md\tstaged"
+            and lines[1:] == [f"COMMITS_SINCE_CLAIM\tT-100\t{sha}"],
+            r.stdout,
+        )
+
+        run_task(wt2, "claim", "T-101")
+        root = ledger.ledger_root(cwd=wt2)
+        owner_path = os.path.join(ledger.claim_dir(root, "T-101"), "owner")
+        with open(owner_path, encoding="utf-8") as f:
+            kept = [line for line in f.read().splitlines() if not line.startswith("head=")]
+        write(owner_path, "\n".join(kept) + "\n")
+        write(os.path.join(wt2, "illicit2.txt"), "x\n")
+        git(wt2, "add", "-A")
+        git(wt2, "commit", "-q", "-m", "illicit2")
+        result_path2 = write(os.path.join(wt2, "result2.md"), "bun run check: 1 pass\n")
+        r2 = run_task(wt2, "done", "T-101", "--result-file", result_path2)
+        check(
+            "控え（head=）の無い印はコミットがあっても落ちず、知らせない",
+            r2.returncode == 0 and r2.stdout.strip() == "DONE\tT-101\tdevelop/task/T-101.md\tstaged",
+            r2.stdout,
+        )
+
+
 # --- task.py: ship（5.8・6章） -----------------------------------------------
 
 
@@ -1300,6 +1341,7 @@ def main() -> None:
         test_new_avoids_history_ids,
         test_taskfile_set_result_section,
         test_done_single_worktree,
+        test_done_commits_since_claim,
         test_ship_fast_forward,
         test_ship_rebases_when_main_advances,
         test_ship_conflict_aborts_rebase,

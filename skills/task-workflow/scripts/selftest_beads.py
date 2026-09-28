@@ -302,6 +302,41 @@ def test_claim_race_owner_and_release() -> None:
         check("汚れた作業ツリーでは DIRTY", r.returncode == 4 and r.stdout.startswith("DIRTY"), r.stdout)
 
 
+def test_done_commits_since_claim() -> None:
+    say("done: claim 後のコミットを COMMITS_SINCE_CLAIM で知らせる（控えの無い印は出さない）")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp)
+        a = new(main_path, "コミットを知らせる")
+        b = new(main_path, "控えの無い印")
+
+        run_task(wt1, "claim", a)
+        write(os.path.join(wt1, "illicit.txt"), "x\n")
+        git(wt1, "add", "-A")
+        git(wt1, "commit", "-q", "-m", f"{a}: 作業")
+        sha = git(wt1, "rev-parse", "--short", "HEAD").stdout.strip()
+        r = run_task(wt1, "done", a, "--result-file", "-", stdin="- 検証: なし\n- 振り返り: 兆候なし\n")
+        lines = r.stdout.splitlines()
+        check(
+            "claim 後のコミットは COMMITS_SINCE_CLAIM で続けて知らせる",
+            r.returncode == 0
+            and lines == [f"DONE\t{a}\tbeads:{beads.to_bd_id(a)}\tship で閉じる", f"COMMITS_SINCE_CLAIM\t{a}\t{sha}"],
+            r.stdout,
+        )
+
+        run_task(wt2, "claim", b)
+        bd_id_b = beads.to_bd_id(b)
+        bd(wt2, "update", bd_id_b, "--unset-metadata", beads.CLAIM_HEAD_KEY)
+        write(os.path.join(wt2, "illicit2.txt"), "x\n")
+        git(wt2, "add", "-A")
+        git(wt2, "commit", "-q", "-m", f"{b}: 作業")
+        r2 = run_task(wt2, "done", b, "--result-file", "-", stdin="- 検証: なし\n- 振り返り: 兆候なし\n")
+        check(
+            "控え（task_claim_head）の無い印はコミットがあっても落ちず、知らせない",
+            r2.returncode == 0 and r2.stdout.strip() == f"DONE\t{b}\tbeads:{bd_id_b}\tship で閉じる",
+            r2.stdout,
+        )
+
+
 def test_cycle_done_ship_and_dropped() -> None:
     say("1サイクル（claim → edit → done → ship）と見送り")
     with tempfile.TemporaryDirectory() as tmp:
@@ -855,6 +890,7 @@ def main() -> None:
             test_new_status_and_numbering,
             test_claim_race_owner_and_release,
             test_cycle_done_ship_and_dropped,
+            test_done_commits_since_claim,
             test_stale_markers,
             test_triage_and_adopt,
             test_tracker_github_push_only,
