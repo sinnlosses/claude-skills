@@ -44,6 +44,15 @@ def write(path: str, body: str) -> str:
     return path
 
 
+# SKILL.md 手順4「ドラフトに積む」の雛形をそのまま写したもの（角括弧の穴だけ実物に差し替える）。
+DRAFT_ITEM_TEMPLATE = """# 検証コマンドが不安定（振り返り: T-302, T-318）
+
+- 札: 黄 揺れ（3回目）
+- 根拠: pnpm run check を2回打ち直して通った
+- 出し先: docs/coding-standards.md「テスト」節
+"""
+
+
 def test_parse_and_tally() -> None:
     print("tally.parse / tally.tally")
     text = (
@@ -75,6 +84,8 @@ def test_parse_and_tally() -> None:
     )
     check("見出しの深さを問わず、後ろの（N回目）は札に含めない", rows == [("揺れ", ["T-500"]), ("制約違反", ["T-600"])], str(rows))
     check("1トークンの旧い記述は数えない", "揺れ" in occ and len(occ["揺れ"]) == 2 and "T-050" not in [t for g in occ["揺れ"] for t in g], str(occ))
+    rows = tally.parse(DRAFT_ITEM_TEMPLATE)
+    check("SKILL.md 手順4 の雛形をそのまま写した入力を読める", rows == [("揺れ", ["T-302", "T-318"])], str(rows))
 
 
 def test_cli() -> None:
