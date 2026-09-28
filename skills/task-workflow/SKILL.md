@@ -11,7 +11,6 @@ user-invocable: false
 | 未着手タスクを1件進める | `/next-task` |
 | 指示メモをタスクに分解する | `/plan-tasks` |
 | 一覧を見る（読み取り専用） | `/list-tasks` |
-| 終えたタスクを振り返る | `/retrospect` |
 | プロジェクトにタスク運用を用意する | `/setup-tasks` |
 
 置き場は既定のファイル方式と、設定の行 `- タスクの置き場: beads` で選ぶ Beads 方式（`bd`）の2つで、

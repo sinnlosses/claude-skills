@@ -30,9 +30,8 @@ Claude Code のユーザー単位スキル（`~/.claude/skills/`）のソース�
 - 自作（9件）: `architecture-proposal`（様式とディレクトリ構造の提案書を書く）、
   `comment-audit`（コメントを種類で判定して消す・縮める・正典へ移す）、
   `maintenance-docs`（`docs/` と CLAUDE.md がスキルの記載とズレていないか点検して直す）、
-  `retrospect`（`/next-task` の中で1件ごとに振り返って兆候に当たったときだけ、手で呼んだときは
-  どのコミットまで振り返ったかを記録して未振り返りのタスクから、次に効く改善を取り出して
-  指示メモのドラフトに積む）と、
+  `retrospect`（`/next-task` の中で1件ごとに振り返り、兆候に当たったときだけ次に効く改善を
+  取り出して指示メモのドラフトに積む。正典・参照専用）と、
   `develop/` 配下でタスクを管理する運用の `task-workflow`（正典・参照専用）
   `setup-tasks` `next-task` `plan-tasks` `list-tasks`
 

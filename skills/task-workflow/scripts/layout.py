@@ -30,9 +30,6 @@ LEGACY_SECTION_DRAFT = "## エージェントのドラフト"
 # エージェントのドラフト（1件1ファイル。正典「指示メモ」）
 DRAFT_DIR = "develop/draft"
 
-# develop/retrospective.md（正典「振り返り」）
-RETROSPECTIVE_PATH = "develop/retrospective.md"
-
 # docs/history/tasks.md（旧形式の履歴・採番の下限。正典5.3）
 HISTORY_TASKS_PATH = "docs/history/tasks.md"
 

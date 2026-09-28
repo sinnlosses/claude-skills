@@ -38,7 +38,6 @@
 | `develop/task/T-xxx.md` | タスク1件1ファイル（正典。`done`・`dropped` も同じ場所に残し、**振り返りが済んだものが10件溜まったら `task prune` でまとめて消す**（移す先は無い。本文は git の履歴から読む）） |
 | `develop/direction.md` | まだタスクになっていないユーザーの指示（`## ユーザーから` の節。下の「指示メモ」）。**新形式の目印**も兼ねる |
 | `develop/draft/<YYYY-MM-DD>-<要約>.md` | まだタスクになっていないエージェントのドラフト（1件1ファイル。下の「指示メモ」） |
-| `develop/retrospective.md` | 手で呼ぶ `/retrospect`（まとめての振り返り）がどこまで振り返ったかの記録。1件ごとの振り返りは書かない（印は `## 結果` の `- 振り返り:` の行） |
 | `docs/history/direction.md` | 指示の履歴（タスク化した指示を日付見出しの下に移す） |
 | `docs/history/tasks.md`・`docs/history/progress.md` | 旧形式の時代の履歴。**読むだけで書き足さない** |
 | 台帳 `$(git rev-parse --path-format=absolute --git-common-dir)/task-workflow/` | 着手の印（`claim/T-xxx/owner`）・採番の錠（`lock/`）・最後の番号（`last-id`）。コミットしない。全作業ツリーで1つ |
@@ -264,8 +263,8 @@ Beads 方式の `task edit` も枠を検査する（`## やること` は書い�
    触ったファイルを個別に `git add`）
 7a. `task prune`（振り返り済みの `done`・`dropped` が10件以上溜まっていれば `git rm` して stage。
    届かなければ `NOTHING` で何もしない）。`PRUNED` なら**別の1コミット**
-   （件名 `振り返り済みのタスクファイルを消す（N件）`。タスクIDを置かない——`scan.py` が件名のIDで
-   割り付けるので、置くとそのタスクの材料に削除が混ざる）。いま完了にしたタスクは印があるので次の回で消える
+   （件名 `振り返り済みのタスクファイルを消す（N件）`。複数タスクをまとめて消す1コミットなので
+   タスクIDを置かない）。いま完了にしたタスクは印があるので次の回で消える
 8. `task ship`（主ブランチへ送り、印を消す。7a のコミットも一緒に送る）
 
 ## 送り出し
@@ -306,8 +305,8 @@ Beads 方式の `task edit` も枠を検査する（`## やること` は書い�
 - 検証コマンドの通過件数（増減が分かる形。`1204 pass / 0 fail（+9）`）
 - 生成物・検証ログへの具体的な参照、よそのリポジトリのコミットハッシュ
 - 1件ごとの振り返りの印（`/next-task` を通したタスク）: `- 振り返り: 兆候なし` か
-  `- 振り返り: <当たった兆候>（ドラフト N件）`。**行頭の `- 振り返り:` は機械が読む**（`retrospect` の
-  `scan.py` が「1件ごとに振り返り済み」と判定する）ので形を変えない
+  `- 振り返り: <当たった兆候>（ドラフト N件）`。**行頭の `- 振り返り:` は機械が読む**（`task prune` が
+  この行の有無で「1件ごとに振り返り済み（`reviewed`）」と判定する）ので形を変えない
 - **自分の完了のコミットのハッシュは書けない**（`## 結果` がそのコミットに入り、rebase で変わる）。
   そのタスクのコミットは `git log --grep=T-xxx` で引く
 
@@ -337,7 +336,7 @@ Beads 方式の `task edit` も枠を検査する（`## やること` は書い�
 | 置き場 | 書き手 | タスク化してよい条件 |
 | --- | --- | --- |
 | `develop/direction.md` の `## ユーザーから` | ユーザー（ファイル入口） | いつでも（`/loop` の `/next-task` からも） |
-| `develop/draft/` のファイル（エージェントのドラフト） | エージェント（作業中の「これも直したい」、`/retrospect`、`/next-task` の1件ごとの振り返り。最後のものは `/loop` からも、兆候に当たったときだけ積む） | **対話セッションでユーザーの承認を得たものだけ**。`/loop` からはタスク化しない |
+| `develop/draft/` のファイル（エージェントのドラフト） | エージェント（作業中の「これも直したい」、`/next-task` の1件ごとの振り返り。後者は `/loop` からも、兆候に当たったときだけ積む） | **対話セッションでユーザーの承認を得たものだけ**。`/loop` からはタスク化しない |
 
 - **ドラフトは1件1ファイル。積むのはファイルを足すこと、タスクにしたら消すのはファイルを
   `git rm` すること。** 1つのファイルの末尾に積むと、並行する作業ツリーの「末尾を消す」と
@@ -390,7 +389,7 @@ zsh で単語に分かれず空振りし、`;` で続けた後続のコマンド
 | `release T-xxx [--force]` | 印を消すだけ（ファイルは戻さない）。`--force` は人が取り残しを片付けるとき | `RELEASED`・`NOT_CLAIMED`・`NOT_OWNER` |
 | `done T-xxx [--dropped] --result-file <path\|->` | `status` と `## 結果` を書いて stage（コミットしない・印は残す）。`claim` した時点の `HEAD` より後にコミットがあれば `DONE` に続けて知らせる（控えの無い古い印では出さない） | `DONE`（`COMMITS_SINCE_CLAIM` が続くことがある）・`NOT_OWNER` |
 | `ship` | rebase → （付け替えたら）検証 → ff-only で送る → 印を消す → 作業ブランチから降りる | `SHIPPED`・`NOTHING`・`MAIN_DIRTY`・`CONFLICT`・`VERIFY_FAILED`・`RACE` |
-| `prune [--dry-run] [--min N]` | `HEAD` で `done`・`dropped`・印なし、かつ振り返り済み（`## 結果` に `- 振り返り:` の行がある＝`reviewed`／`develop/retrospective.md` の基準点の版で既に `done`・`dropped`＝`retrospect`）のタスクファイルを `git rm` して stage（コミットしない）。対象が `--min`（既定10）件に届かなければ何もしない。`--dry-run` は一覧だけ（汚れていても打てる） | 対象ごとに `PRUNE\tT-xxx\t<reviewed\|retrospect>`、最後に `PRUNED\t<N>`／`PLAN\t<N>`（`--dry-run`）。対象が無いか `--min` 件に届かなければ `NOTHING`。`DIRTY`・`INVALID`（基準点のハッシュが無い） |
+| `prune [--dry-run] [--min N]` | `HEAD` で `done`・`dropped`・印なし、かつ振り返り済み（`## 結果` に `- 振り返り:` の行がある＝`reviewed`）のタスクファイルを `git rm` して stage（コミットしない）。対象が `--min`（既定10）件に届かなければ何もしない。`--dry-run` は一覧だけ（汚れていても打てる） | 対象ごとに `PRUNE\tT-xxx\treviewed`、最後に `PRUNED\t<N>`／`PLAN\t<N>`（`--dry-run`）。対象が無いか `--min` 件に届かなければ `NOTHING`。`DIRTY` |
 | `migrate [--dry-run]` | 旧形式を変換する（下の「旧形式からの移行」） | `WRITE`・`MOVE`・`LEFTOVER`・`REMOVE`・`PLAN`/`MIGRATED` |
 | `show T-xxx` | タスク1件をタスクファイルの形で出す（読むだけ。ファイル方式は作業ツリーの版、無ければ主ブランチの版） | 本文。無ければ `NOT_READY` |
 | `config-doctor` | このリポジトリが今の読み取りに合っているかを点検する（**読むだけ。`--fix` は無い**）。主ブランチが何で決まったか・設定ファイルがどちらか・「## タスク運用」の3行・旧形式の残り、の4検査を必ず1行ずつ出す | `base_branch`・`config_file`・`claude_md_lines`・`legacy` の4行。各行の2語目が `OK`／`MISSING`／`MISSING_LINE`／`BAD_BRANCH`／`NO_SECTION`／`FOUND`／`INVALID` |
@@ -400,7 +399,7 @@ zsh で単語に分かれず空振りし、`;` で続けた後続のコマンド
 | 0 | 各成功語 | 成功 | 次へ |
 | 1 | （traceback） | 環境の故障 | エラー出力を報告して止まる。**手で代用しない** |
 | 2 | （stderr） | 渡した引数・本文の誤り | 直して打ち直す |
-| 3 | `INVALID` | データの不備（読めないタスクファイル、移行途中、`- ブランチ:` が読めない、主ブランチが決まらない、`--check` の重複、`develop/retrospective.md` の基準点がリポジトリに無い） | 理由をそのまま報告して止まる。**直しに行かない** |
+| 3 | `INVALID` | データの不備（読めないタスクファイル、移行途中、`- ブランチ:` が読めない、主ブランチが決まらない、`--check` の重複） | 理由をそのまま報告して止まる。**直しに行かない** |
 | 4 | `TAKEN`・`NOT_READY`・`DIRTY`・`MAIN_DIRTY`・`UNSHIPPED`・`LOCKED`・`NOT_OWNER` | いまの状態では進めない | 各スキルの表のとおり（別の1件を選ぶか止まる） |
 | 5 | `LEGACY` | 旧形式 | 下の「旧形式からの移行」を案内して止まる |
 | 6 | `MISSING` | タスク運用を始めていない | `/setup-tasks` を案内して止まる |

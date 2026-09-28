@@ -718,8 +718,6 @@ def _leave_feature_branch(toplevel: str, branch: str, claimed_branch: Callable[[
 
 # --- prune（5.10） ----------------------------------------------------------
 
-# develop/retrospective.md の中で機械が読む1行（retrospect/scripts/scan.py と同じ形）。
-RETROSPECT_LINE = re.compile(r"^最後に振り返ったコミット:\s*`([0-9a-f]{7,40})`")
 # 1件ごとの振り返りが済んだ印。`## 結果` の中のこの形の行（WORKFLOW.md「結果の書き方と知見の置き場」）。
 REVIEWED_LINE = re.compile(r"^- 振り返り:")
 # 消せるものがこの件数に届くまでは消さない。毎サイクル1件ずつ消すと削除だけのコミットが
@@ -730,20 +728,13 @@ PRUNE_MIN_DEFAULT = 10
 def cmd_prune(toplevel: str, dry_run: bool, minimum: int) -> None:
     """振り返りが済んだ done/dropped のタスクファイルを `git rm` して stage する（コミットしない）。
 
-    判定は `HEAD` の版で done/dropped・台帳に印が無い・次のどちらか:
-    `reviewed` = `## 結果` に `- 振り返り:` の行がある（1件ごとの振り返り済み）、
-    `retrospect` = `develop/retrospective.md` の基準点の版で既に done/dropped（まとめての振り返りが
-    読み終えた）。印のあるタスクを除くのは、`ship` が主ブランチの版で done を見て印を消すため。
-    対象が `minimum` 件に届かなければ何もしない（`NOTHING`）。
+    判定は `HEAD` の版で done/dropped・台帳に印が無い・`## 結果` に `- 振り返り:` の行がある
+    （`reviewed` ＝1件ごとの振り返り済み）。印のあるタスクを除くのは、`ship` が主ブランチの版で
+    done を見て印を消すため。対象が `minimum` 件に届かなければ何もしない（`NOTHING`）。
     """
     if not dry_run and not ledger.is_clean(cwd=toplevel):
         print("DIRTY")
         raise SystemExit(4)
-
-    since, err = _retrospect_base(toplevel)
-    if err is not None:
-        print(f"INVALID\t{err}")
-        raise SystemExit(3)
 
     claims = set(ledger.list_claims(ledger.ledger_root(cwd=toplevel)))
     targets: list[tuple[str, str]] = []
@@ -752,8 +743,6 @@ def cmd_prune(toplevel: str, dry_run: bool, minimum: int) -> None:
             continue
         if _has_review_line(task.body):
             targets.append((tid, "reviewed"))
-        elif since is not None and _status_at(toplevel, since, tid) in ("done", "dropped"):
-            targets.append((tid, "retrospect"))
 
     if not targets:
         print("NOTHING\t(消せるタスクファイルが無い)")
@@ -773,21 +762,6 @@ def cmd_prune(toplevel: str, dry_run: bool, minimum: int) -> None:
     print(f"PRUNED\t{len(targets)}")
 
 
-def _retrospect_base(toplevel: str) -> tuple[str | None, str | None]:
-    """`(基準点のハッシュ, INVALIDの理由)`。記録ファイルや1行が無ければ基準点なし（`reviewed` だけで判定）。"""
-    path = os.path.join(toplevel, layout.RETROSPECTIVE_PATH)
-    if not os.path.exists(path):
-        return None, None
-    with open(path, encoding="utf-8") as f:
-        m = next((m for m in (RETROSPECT_LINE.match(l.strip()) for l in f) if m), None)
-    if m is None:
-        return None, None
-    since = m.group(1)
-    if _run_git(toplevel, ["cat-file", "-e", f"{since}^{{commit}}"]).returncode != 0:
-        return None, f"{layout.RETROSPECTIVE_PATH} の基準点 {since} がこのリポジトリに無い"
-    return since, None
-
-
 def _tasks_at(toplevel: str, rev: str) -> dict[str, taskfile.Task]:
     r = _run_git(toplevel, ["ls-tree", "--name-only", rev, f"{layout.TASK_DIR}/"])
     tasks: dict[str, taskfile.Task] = {}
@@ -800,14 +774,6 @@ def _tasks_at(toplevel: str, rev: str) -> dict[str, taskfile.Task]:
         if err is None and parsed is not None and parsed.id == stem:
             tasks[stem] = parsed
     return tasks
-
-
-def _status_at(toplevel: str, rev: str, task_id: str) -> str | None:
-    shown = _run_git(toplevel, ["show", f"{rev}:{layout.TASK_DIR}/{task_id}.md"])
-    if shown.returncode != 0:
-        return None
-    parsed, err = taskfile.parse(shown.stdout)
-    return parsed.status if err is None and parsed is not None else None
 
 
 def _has_review_line(body: str) -> bool:

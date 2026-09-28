@@ -39,7 +39,6 @@ import taskfile  # noqa: E402
 
 TASK_PY = os.path.join(HERE, "task.py")
 INIT_PY = os.path.join(HERE, "init.py")
-SCAN_PY = os.path.join(HERE, "..", "..", "retrospect", "scripts", "scan.py")
 MATERIAL_PY = os.path.join(HERE, "..", "..", "retrospect", "scripts", "material.py")
 BODY = ("## 目的・背景\nx\n\n## 決まっていること（蒸し返さない）\n\n## 解くべき論点\nなし\n\n## やること\n\n"
         "## 完了条件\n- 通る\n\n## 注意\nz\n\n## 参考情報\n")
@@ -393,10 +392,6 @@ def test_cycle_done_ship_and_dropped() -> None:
               str(issue and issue.labels))
 
         # retrospect の材料（Beads の comment と版）
-        scan = subprocess.run([sys.executable, SCAN_PY, ".", "--since", git(main_path, "rev-list", "--max-parents=0", "HEAD").stdout.strip()],
-                              cwd=main_path, capture_output=True, text=True, env=env())
-        check("scan.py は Beads の ## 結果 で振り返り済みを判定する", f"reviewed\t{a},{c}" in scan.stdout
-              or f"reviewed\t{c},{a}" in scan.stdout, scan.stdout + scan.stderr)
         mat = subprocess.run([sys.executable, MATERIAL_PY, ".", a], cwd=main_path, capture_output=True, text=True, env=env())
         check("material.py は Beads の本文と版の差を出す", f"出典\tBeads {beads.to_bd_id(a)}" in mat.stdout
               and "+1. 書く" in mat.stdout, mat.stdout + mat.stderr)
