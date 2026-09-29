@@ -135,7 +135,7 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 ファイルは本文の節の検査を受けない。
 
 **読み取りの見本**（Python の `scripts/taskfile.py` と、それを読む各プロジェクトの読み手
-（tsukumo の `src/shared/task-summary.ts` など）の**両方のテストに写す**。片方だけ直して黙って
+（例: TypeScript で front matter を読む要約関数）の**両方のテストに写す**。片方だけ直して黙って
 ずれるのを防ぐ。見本の正典はこの表）:
 
 | 入力（front matter の該当行） | 読んだ結果 |
@@ -451,8 +451,7 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 錠（着手の印・採番）と本文・履歴を Beads（`bd` 1.3.0 で確かめた）に置き、`tw` は Beads と
 トラッカーと git をつなぐ薄い包みになる。**ファイル方式と併存し、設定の行が無いプロジェクトは
 ファイル方式のまま**（`.beads` があっても見ない）。サブコマンド・出力の先頭語・終了コードは
-ファイル方式と同じで、スキルは下の「サイクルで変わるところ」だけを読み替える。設計の経緯と
-Beads の挙動の実測は tsukumo の `docs/research/github-projects.md`（双方向の同期は節「双方向の同期で確かめたこと」）。
+ファイル方式と同じで、スキルは下の「サイクルで変わるところ」だけを読み替える。
 
 **ID はトラッカーで決まる。** トラッカーが `github` なら **GitHub の Issue 番号がタスクID**で、`tw` の
 入出力とコミットの件名は `GH-<番号>`（ゼロ埋めしない）、Beads の中は `gh-<番号>`。`なし`・`jira` なら
@@ -604,7 +603,7 @@ Project・Status 欄・選択肢の ID は `bd kv` の `task-workflow.project` �
 `t-<n>` まで付け替えて本文の参照も書き換えるので使わない。`bd` を動かしていないときに、
 `.beads/embeddeddolt/<metadata.json の dolt_database>` で
 ``dolt sql -q "update config set value='gh' where `key`='issue_prefix'"`` を打ち、`dolt commit -am <件名> --author <名前>` で
-残す（2026-09-28 に tsukumo で確かめた）。
+残す（2026-09-28 に確かめた）。
 **置き場や ID を切り替えるコミットは、消す・付け替えるものを全部済ませた木で検証コマンドを打ってから送る。**
 
 **バックアップ**: `.beads` は git の外なので、タスクの記録は git の履歴に残らない。`tw ship` の
