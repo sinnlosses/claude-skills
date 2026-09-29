@@ -241,6 +241,11 @@ def cmd_status(toplevel: str, show_all: bool, check: bool) -> None:
         problems += [
             f"{tid}:タスクファイルと {layout.HISTORY_TASKS_PATH} の両方にある" for tid in tasks if tid in history
         ]
+        for tid, t in tasks.items():
+            if t.status in ("todo", "hold"):
+                error = taskfile.validate_body(taskfile.strip_result_section(t.body))
+                if error is not None:
+                    problems.append(f"{tid}:{error}")
         if problems:
             print("INVALID\t" + "; ".join(problems))
             raise SystemExit(3)
@@ -517,6 +522,11 @@ def cmd_done(toplevel: str, task_id: str, dropped: bool, result_path: str) -> No
     task, err = taskfile.read_task_file(path)
     if err is not None or task is None:
         print(f"INVALID\t{err or '読めない'}")
+        raise SystemExit(3)
+
+    error = taskfile.validate_body(taskfile.strip_result_section(task.body))
+    if error is not None:
+        print(f"INVALID\t{error}")
         raise SystemExit(3)
 
     result = read_body(result_path).strip()

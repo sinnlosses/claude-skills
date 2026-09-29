@@ -216,18 +216,22 @@ def set_result_section(body: str, content: str) -> str:
     改めて末尾に置き直す（順の入れ替えは起きない）。
     """
     content = content.strip("\n")
-    lines = body.split("\n")
-    start = next((i for i, l in enumerate(lines) if l == RESULT_HEADING), None)
-    if start is not None:
-        end = next(
-            (i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")),
-            len(lines),
-        )
-        lines = lines[:start] + lines[end:]
-        body = "\n".join(lines)
-    body = body.rstrip("\n")
+    body = strip_result_section(body).rstrip("\n")
     prefix = f"{body}\n\n" if body else ""
     return f"{prefix}{RESULT_HEADING}\n\n{content}\n"
+
+
+def strip_result_section(body: str) -> str:
+    """本文から `## 結果` 節を丸ごと外す（無ければそのまま）。"""
+    lines = body.split("\n")
+    start = next((i for i, l in enumerate(lines) if l == RESULT_HEADING), None)
+    if start is None:
+        return body
+    end = next(
+        (i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")),
+        len(lines),
+    )
+    return "\n".join(lines[:start] + lines[end:])
 
 
 def task_path(task_dir: str, task_id: str) -> str:

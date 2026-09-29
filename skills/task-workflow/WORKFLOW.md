@@ -386,11 +386,11 @@ zsh で単語に分かれず空振りし、`;` で続けた後続のコマンド
 
 | サブコマンド | すること | 主な出力 |
 | --- | --- | --- |
-| `status [--all] [--check]` | 一覧（done/dropped は件数だけ。`--all` で行も）。`--check` は検証コマンド向けの厳しい判定 | 行 `id/status/difficulty/loopable/dependencies/着手可否/印/summary`、`---` の後に `counts`・`ready`・`todo_loopable`・`stale`・`invalid`・（残っていれば）`legacy_progress` |
+| `status [--all] [--check]` | 一覧（done/dropped は件数だけ。`--all` で行も）。`--check` は検証コマンド向けの厳しい判定（`todo`・`hold` は本文の7節の枠も検査する） | 行 `id/status/difficulty/loopable/dependencies/着手可否/印/summary`、`---` の後に `counts`・`ready`・`todo_loopable`・`stale`・`invalid`・（残っていれば）`legacy_progress` |
 | `new --summary … --difficulty … --loopable Y\|N [--deps T-001,…] [--hold] --body-file <path\|->` | 錠の中で採番してファイルを作る（コミットしない） | `CREATED`・`LOCKED` |
 | `claim T-xxx` | clean・未送りなしを確かめ、主ブランチへ追い付き、印を立て、設定なら枝を切る | `CLAIMED`・`TAKEN`・`NOT_READY`・`DIRTY`・`UNSHIPPED` |
 | `release T-xxx [--force]` | 印を消すだけ（ファイルは戻さない）。`--force` は人が取り残しを片付けるとき | `RELEASED`・`NOT_CLAIMED`・`NOT_OWNER` |
-| `done T-xxx [--dropped] --result-file <path\|->` | `status` と `## 結果` を書いて stage（コミットしない・印は残す）。`claim` した時点の `HEAD` より後にコミットがあれば `DONE` に続けて知らせる（控えの無い古い印では出さない） | `DONE`（`COMMITS_SINCE_CLAIM` が続くことがある）・`NOT_OWNER` |
+| `done T-xxx [--dropped] --result-file <path\|->` | `status` と `## 結果` を書いて stage（コミットしない・印は残す）。本文が枠（`## 結果` を除く7節）と違えば書かずに `INVALID`（終了コード3）。`claim` した時点の `HEAD` より後にコミットがあれば `DONE` に続けて知らせる（控えの無い古い印では出さない） | `DONE`（`COMMITS_SINCE_CLAIM` が続くことがある）・`NOT_OWNER`・`INVALID` |
 | `ship` | rebase → （付け替えたら）検証 → ff-only で送る → 印を消す → 作業ブランチから降りる | `SHIPPED`・`NOTHING`・`MAIN_DIRTY`・`CONFLICT`・`VERIFY_FAILED`・`RACE` |
 | `prune [--dry-run] [--min N]` | `HEAD` で `done`・`dropped`・印なし、かつ振り返り済み（`## 結果` に `- 振り返り:` の行がある＝`reviewed`）のタスクファイルを `git rm` して stage（コミットしない）。対象が `--min`（既定10）件に届かなければ何もしない。`--dry-run` は一覧だけ（汚れていても打てる） | 対象ごとに `PRUNE\tT-xxx\treviewed`、最後に `PRUNED\t<N>`／`PLAN\t<N>`（`--dry-run`）。対象が無いか `--min` 件に届かなければ `NOTHING`。`DIRTY` |
 | `migrate [--dry-run]` | 旧形式を変換する（下の「旧形式からの移行」） | `WRITE`・`MOVE`・`LEFTOVER`・`REMOVE`・`PLAN`/`MIGRATED` |

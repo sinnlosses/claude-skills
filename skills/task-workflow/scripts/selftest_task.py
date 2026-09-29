@@ -752,6 +752,32 @@ def test_done_single_worktree() -> None:
         check("--droppedでdroppedになる", task2 is not None and task2.status == "dropped")
 
 
+def test_body_frame_check() -> None:
+    print("task.py done・status --check: 本文の枠を検査する")
+    bad = BODY.replace("## 注意\n\n## 参考情報\n", "## 参考情報\n\n## 注意\n")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp)
+        commit_task(main_path, taskfile.Task("T-100", "枠が崩れた", "todo", "sonnet", "Y", (), bad))
+        commit_task(main_path, taskfile.Task("T-101", "枠が崩れた完了済み", "done", "sonnet", "Y", (), bad))
+        r = run_task(main_path, "status", "--check")
+        check(
+            "status --check は todo の崩れだけを invalid に数える（done は見ない）",
+            r.returncode == 3 and "T-100:" in r.stdout and "T-101" not in r.stdout,
+            r.stdout,
+        )
+
+        run_task(wt1, "claim", "T-100")
+        result_path = write(os.path.join(tmp, "result.md"), "結果\n")
+        task_path = os.path.join(wt1, "develop", "task", "T-100.md")
+        with open(task_path, encoding="utf-8") as f:
+            before = f.read()
+        r = run_task(wt1, "done", "T-100", "--result-file", result_path)
+        with open(task_path, encoding="utf-8") as f:
+            after = f.read()
+        check("done は枠の違う本文を INVALID（終了コード3）で拒む", r.returncode == 3 and r.stdout.startswith("INVALID\t"), r.stdout)
+        check("拒んだときファイルを書き換えない", before == after)
+
+
 def test_done_commits_since_claim() -> None:
     print("task.py done: claim 後のコミットを COMMITS_SINCE_CLAIM で知らせる（控えの無い印は出さない）")
     with tempfile.TemporaryDirectory() as tmp:
@@ -1574,6 +1600,7 @@ def main() -> None:
         test_new_avoids_history_ids,
         test_taskfile_set_result_section,
         test_done_single_worktree,
+        test_body_frame_check,
         test_done_commits_since_claim,
         test_edit_and_plan_check,
         test_verify_stamp,
