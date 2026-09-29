@@ -1,15 +1,20 @@
 #!/bin/sh
 # このリポジトリの検証コマンド。`/next-task` が受け入れ判定に使う。
 #
-# 1. install.sh の構文
-# 2. task-workflow のスクリプトの自己テスト
-# 3. retrospect のスクリプトの自己テスト
-# 4. リポジトリ全体の整合（frontmatter・README の索引・参照先の実在）
+# 1. install.sh・uninstall.sh・scripts/links.sh の構文
+# 2. install.sh・uninstall.sh の自己テスト
+# 3. task-workflow のスクリプトの自己テスト
+# 4. retrospect のスクリプトの自己テスト
+# 5. リポジトリ全体の整合（frontmatter・README の索引・参照先の実在）
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 
-echo "== install.sh の構文 =="
-sh -n "$here/install.sh" && echo "  ok"
+echo "== install.sh・uninstall.sh・scripts/links.sh の構文 =="
+sh -n "$here/install.sh" && sh -n "$here/uninstall.sh" && sh -n "$here/scripts/links.sh" && echo "  ok"
+
+echo
+echo "== install.sh・uninstall.sh の自己テスト =="
+sh "$here/scripts/selftest_links.sh"
 
 echo
 echo "== task-workflow scripts の自己テスト =="

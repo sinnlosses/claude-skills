@@ -10,6 +10,12 @@ Claude Code のユーザー単位スキル（`~/.claude/skills/`）のソース�
 意図を裏切らないため）。ここを直接 `~/.claude/skills` にしないのは、Claude Code が
 `~/.claude/skills/synced/` を claude.ai 同期用に予約していて、git 管理下に混ざるのを避けるため。
 
+`./uninstall.sh [--dest DIR] [--bin-dir DIR] [スキル名...]` は張ったものを外す。張る先の決め方と
+リンクの判定は `scripts/links.sh` を `install.sh` と共有し、外すのは**このリポジトリを指すリンクだけ**
+（実ファイル・他所を指すリンクは触らず警告する）。スキル名を省けば全スキルと `agents/` のリンクと `tw`
+を外し、渡せばそのスキルだけ（`task-workflow` を含むときは `tw` も。エージェント定義は残す）。
+外したスキルに依存するスキルが張る先に残るなら警告する。
+
 `agents/` にはサブエージェントの定義（1ファイル1エージェント）を置き、`./install.sh` が同じ安全策で
 `~/.claude/agents/`（`CLAUDE_CONFIG_DIR` があればその下の `agents/`）へ張る。スキル名の絞り込みは
 効かず常に全件が対象。
@@ -104,10 +110,12 @@ Claude Code のユーザー単位スキル（`~/.claude/skills/`）のソース�
 ./check.sh
 ```
 
-1. `install.sh` の構文、2. `skills/task-workflow/scripts/` の自己テスト
+1. `install.sh`・`uninstall.sh`・`scripts/links.sh` の構文、2. 一時ディレクトリを張る先にした
+`install.sh`・`uninstall.sh` の自己テスト（`scripts/selftest_links.sh`。全件で張って外すとこのリポジトリを
+指すリンクだけが消えること、名前を渡した外し方と依存の警告を確かめる）、3. `skills/task-workflow/scripts/` の自己テスト
 （`selftest.py` が旧形式の読み取りと `init.py`、`selftest_task.py` が `tw` コマンドを一時リポジトリと
 作業ツリー2本で通す。`selftest_beads.py` は Beads 方式を本物の `bd` と偽の `gh`・トラッカー同期で通し、
-`bd` が無ければ飛ばす）、3. リポジトリの整合
+`bd` が無ければ飛ばす）、4. リポジトリの整合
 （`scripts/check_repo.py`。frontmatter の `name` とディレクトリ名の一致、この README の
 由来一覧と `skills/` の一致、`${CLAUDE_SKILL_DIR}` で書かれた参照先の実在、スキル名の
 相互参照の実在、`docs/` に書くスキル（`architecture-proposal` `domain-modeling` `research`。
