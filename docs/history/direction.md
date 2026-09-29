@@ -2,6 +2,13 @@
 
 ## 2026-09-29
 
+### ユーザーから
+
+- `next-task` と `plan-tasks` の「このプロジェクトの設定」を読む `` !`sed … CLAUDE.md` `` が CLAUDE.md しか見ていない。正典（WORKFLOW.md「ファイル配置と設定ファイル（AGENTS.md → CLAUDE.md の順）」）どおり AGENTS.md → CLAUDE.md の順で節を持つ最初のファイルを読むようにする。サブディレクトリで呼ばれても読めるよう、リポジトリのルート基準にする。節が無いときに非0で終わらないガードは保つ
+- `next-task` の委譲の指示文から、特定の環境・プロジェクトに寄った前提を外して汎用にする: 「他リポジトリなら `ghq` の下を見る」「`ghq list` の下を探す」（ghq を使わない環境もある）、「CLAUDE.md のコメントの条に従い」（条が無いプロジェクトもある。禁止事項は指示文に書いてあるので条の存在を前提にしない）、`pnpm link --global` の例・「macOS には `timeout` が無い」・「CSS を足したら計算済みのスタイルで確かめる」（特定プロジェクト由来。一般化した言い方にするか、プロジェクト側の CLAUDE.md に回す）
+- `task-workflow` の WORKFLOW.md が tsukumo の具体的なファイル（`src/shared/task-summary.ts`、`docs/research/github-projects.md`、「tsukumo で確かめた」）を名指ししている。正典は利用側の特定リポジトリに依存しない書き方にする（例示にとどめる・一般化する）
+- `test-audit` の CAMPAIGN.md が原典 openclaw の Telegram キャンペーン（`extensions/telegram`、レーン名、QA/ライブのハーネス）を軸に書かれていて、他プロジェクトでは読み替えが重い。手順と完了の条件は汎用の言葉で書き、openclaw の実例は例示として従に回す
+
 ### エージェントのドラフト（承認: 「節の並びの検査, edit で順の誤りを警告, task を PATH のコマンドに」「tw (Recommended)」）
 
 #### タスクファイルの節の並びを `task` に検査させる（振り返り: T-028）
