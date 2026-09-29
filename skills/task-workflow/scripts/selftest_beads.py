@@ -35,6 +35,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import beads  # noqa: E402
+import layout  # noqa: E402
 import taskfile  # noqa: E402
 
 TASK_PY = os.path.join(HERE, "task.py")
@@ -955,6 +956,28 @@ def _run_one(test) -> list[str]:
     return _local.lines
 
 
+def test_id_forms() -> None:
+    """ID の形: `T-<n>`・`GH-<n>`・Jira のキー（`PROJ-123`）を読み、前の2つを Jira のキーと取り違えない。"""
+    forms = {"T-123": "t-123", "GH-5": "gh-5", "PROJ-123": "proj-123", "AB2_C-7": "ab2_c-7"}
+    for shown, inner in forms.items():
+        check(f"{shown} は Beads の中で {inner} と行き来する",
+              beads.to_bd_id(shown) == inner and beads.to_task_id(inner) == shown and beads.is_numbered(inner))
+        check(f"{shown} は --deps・retrospect の引数・ブランチ・文中の検索が受ける",
+              layout.ANY_ID_PATTERN.match(shown) is not None
+              and layout.FEATURE_BRANCH_PATTERN.fullmatch(f"feature/{shown}") is not None
+              and (layout.ID_SEARCH_PATTERN.search(f"{shown}: 直す") or [None])[0] == shown)
+    for bad in ("T-12", "P-123", "proj-123", "PROJ-", "1AB-3", "PROJ-12a"):
+        check(f"{bad} は ID の形でない", layout.ANY_ID_PATTERN.match(bad) is None)
+    check("T-<n>・GH-<n> は Jira の枝で読まれない（番号の意味が変わらない）",
+          beads.id_number("t-123") == 123 and beads.id_number("gh-5") is None and beads.id_number("proj-123") is None
+          and beads.BD_ID_PATTERN.match("t-123").group(3) is None and beads.BD_ID_PATTERN.match("gh-5").group(3) is None)
+    check("仮の ID・取り込んだままの ID は番号付きでない",
+          not any(beads.is_numbered(i) for i in ("gh-new-wt-1700000000", "gh-1790123-1-4dfc", "t-12")))
+    ordered = sorted(["PROJ-2", "GH-new-x", "ABC-9", "GH-5", "T-123", "PROJ-1", "T-045"], key=beads.sort_key)
+    check("status の並びは T → GH → Jira のキー（キー名・番号）→ 仮の ID",
+          ordered == ["T-045", "T-123", "GH-5", "ABC-9", "PROJ-1", "PROJ-2", "GH-new-x"], repr(ordered))
+
+
 def main() -> None:
     only = sys.argv[1:]  # テストの関数名を渡すとそれだけを走らせる（手で直すとき）
     if shutil.which("bd") is None:
@@ -971,6 +994,7 @@ def main() -> None:
         BASE_ENV.pop("BEADS_ACTOR", None)
         BASE_ENV.pop("GITHUB_TOKEN", None)
         tests = (
+            test_id_forms,
             test_setup_and_config_doctor,
             test_file_mode_untouched_by_beads_dir,
             test_new_status_and_numbering,

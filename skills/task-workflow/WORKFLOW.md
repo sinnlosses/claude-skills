@@ -457,6 +457,10 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 入出力とコミットの件名は `GH-<番号>`（ゼロ埋めしない）、Beads の中は `gh-<番号>`。`なし`・`jira` なら
 `tw` が採番し、外は `T-<n>`（3桁以上）、Beads の中は `t-<n>`。どちらの方式かは Beads の `issue_prefix`
 （`gh` か `t`）で決め、`tw` は両方の形を読む（切り替えの途中は `t-<n>` と `gh-<n>` が混ざる）。
+加えて **Jira のキー**（`PROJ-123`。プロジェクトキーは2文字以上・英大文字始まり `[A-Z][A-Z0-9_]+-\d+`、
+Beads の中は `proj-123`）も同じ ID として読む。読む形はトラッカーで切り替えず常に3つを受け、`T-<n>`・
+`GH-<n>` を先に当てるので Jira のキーとは取り違えない。`status` の並びは `T-<n>` → `GH-<n>` → Jira のキー
+（キー名・番号の順）→ 仮の ID。`tw` が採番する番号（`last-id` の候補）に Jira のキーは数えない。
 ファイル方式・過去の `T-xxx`（git の履歴と `docs/history/`）は動かさない。
 
 **設定の行**（「## タスク運用」節の任意行。どれも無いのが既定）:
@@ -483,7 +487,7 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 
 | ファイル方式 | Beads 方式 |
 | --- | --- |
-| タスクID `T-123` | `github`: 外は `GH-5`、Beads の中は `gh-5`（Issue 番号）。`なし`・`jira`: 外は `T-123`、Beads の中は `t-123`（接頭辞は小文字だけ） |
+| タスクID `T-123` | `github`: 外は `GH-5`、Beads の中は `gh-5`（Issue 番号）。`なし`・`jira`: 外は `T-123`、Beads の中は `t-123`（接頭辞は小文字だけ）。Jira のキーの課題は外が `PROJ-123`、中が `proj-123` |
 | 採番の錠（`lock/`）と `last-id` | `github`: GitHub の採番（下の「GitHub との双方向」の登録）。`なし`・`jira`: `bd create --id t-<n>`（同じ番号は1つしか作れない。負けたら次の番号で打ち直し、20回で `LOCKED`）。最後の番号は `bd kv` の `task-workflow.last-id`。候補は Beads の番号・`bd kv`・主ブランチの `develop/task/` と `docs/history/tasks.md`・台帳の `last-id` の最大 |
 | 着手の印（`mkdir claim/T-xxx`） | `bd update --claim`（actor は作業ツリーの名前）。`claim` した時点の枝は metadata `task_branch` |
 | `NOT_OWNER` | `done`・`release` の前に assignee が自分かを見る（`bd close` も actor が違えば拒む） |
@@ -588,7 +592,7 @@ Project・Status 欄・選択肢の ID は `bd kv` の `task-workflow.project` �
 
 | | `github` | `jira` |
 | --- | --- | --- |
-| タスクID | Issue 番号（`GH-5`） | `tw` の採番（`T-123`）。Jira のキーは `external_ref` |
+| タスクID | Issue 番号（`GH-5`） | `tw` の採番（`T-123`）。Jira のキー（`PROJ-123`）の形も読めるが、今の `tw` は付け替えない（キーは `external_ref`） |
 | 登録 | Issue を先に作って番号を得る | Beads だけに作る（Jira に書かない） |
 | 同期の向き | 双方向（取り込みは `tw` が番号で選ぶ） | 取り込みだけ（`bd jira sync --pull`） |
 | 状態を変える場所 | どちらでも（GitHub で閉じたら見送り） | Beads。Jira で閉じるのは人（`jira_close`） |

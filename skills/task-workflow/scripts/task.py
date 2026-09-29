@@ -1114,9 +1114,9 @@ def _actor(toplevel: str) -> str:
 
 
 def _bd_task_id(task_id: str) -> str:
-    """`T-123`・`GH-5`・Beads の ID（仮の `gh-new-…`・取り込んだままの `gh-1790…-1-4dfc`）を受ける。"""
-    if not re.fullmatch(r"(?i:t|gh)-[0-9a-z.-]+", task_id):
-        print(f"usage: {task_id!r} が T-999・GH-5 の形式でない", file=sys.stderr)
+    """`T-123`・`GH-5`・`PROJ-123`・Beads の ID（仮の `gh-new-…`・取り込んだままの `gh-1790…-1-4dfc`）を受ける。"""
+    if not re.fullmatch(r"(?i:t|gh)-[0-9a-z.-]+|(?i:[a-z][a-z0-9_]+)-\d+", task_id):
+        print(f"usage: {task_id!r} が T-999・GH-5・PROJ-123 の形式でない", file=sys.stderr)
         raise SystemExit(2)
     return beads.to_bd_id(task_id)
 
@@ -1236,7 +1236,7 @@ def cmd_beads_new(toplevel: str, args: argparse.Namespace) -> None:
     deps = tuple(d for d in (x.strip() for x in args.deps.split(",")) if d) if args.deps else ()
     for d in deps:
         if not layout.ANY_ID_PATTERN.match(d):
-            print(f"usage: --deps の {d!r} が T-999・GH-5 の形式でない", file=sys.stderr)
+            print(f"usage: --deps の {d!r} が T-999・GH-5・PROJ-123 の形式でない", file=sys.stderr)
             raise SystemExit(2)
     body = read_body(args.body_file)
     error = taskfile.validate_new_body(body)

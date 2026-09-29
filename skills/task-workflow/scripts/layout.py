@@ -38,7 +38,9 @@ ID_FRAGMENT = r"T-\d{3,}"
 ID_PATTERN = re.compile(rf"^{ID_FRAGMENT}$")  # 全体一致（front matter の id・--deps の各要素）
 # Beads 方式でトラッカーが github なら、タスクID は Issue 番号の `GH-<n>`（ゼロ埋めしない。正典「Beads 方式」）。
 GH_ID_FRAGMENT = r"GH-\d+"
-ANY_ID_FRAGMENT = rf"(?:{ID_FRAGMENT}|{GH_ID_FRAGMENT})"
+# Jira のキー（`PROJ-123`。プロジェクトキーは2文字以上・英大文字始まり）。
+JIRA_ID_FRAGMENT = r"[A-Z][A-Z0-9_]+-\d+"
+ANY_ID_FRAGMENT = rf"(?:{ID_FRAGMENT}|{GH_ID_FRAGMENT}|{JIRA_ID_FRAGMENT})"
 ANY_ID_PATTERN = re.compile(rf"^{ANY_ID_FRAGMENT}$")  # Beads 方式の --deps・retrospect の引数
 ID_SEARCH_PATTERN = re.compile(rf"\b{ANY_ID_FRAGMENT}\b")  # 文中から拾う（コミット件名・トランスクリプト）
 HISTORY_HEADING_PATTERN = re.compile(rf"^## ({ID_FRAGMENT})\b", re.MULTILINE)  # docs/history/tasks.md の見出し

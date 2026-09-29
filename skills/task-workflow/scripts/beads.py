@@ -6,7 +6,7 @@
 タスクID の対応: Beads の中の ID の接頭辞は小文字だけなので、外に見せる ID は大文字にする
 （コミットの件名・`retrospect` の割り付けと同じ形）。Beads の `issue_prefix` が `gh` なら GitHub の
 Issue 番号（`gh-5` ↔ `GH-5`）、`t` なら `task` の採番（`t-123` ↔ `T-123`）で、読むときは両方を受ける
-（切り替えの途中は混ざる）。`gh` の登録の途中の仮の ID（`gh-new-<作業ツリー>-<時刻>`）と、数字でない ID
+（切り替えの途中は混ざる）。Jira のキーも同じく `proj-123` ↔ `PROJ-123`。`gh` の登録の途中の仮の ID（`gh-new-<作業ツリー>-<時刻>`）と、数字でない ID
 （トラッカーから取り込んだ `gh-1790…-1-4dfc` など）はそのまま見せる。
 
 `Task` への写し方（WORKFLOW.md「Beads 方式」の対応表）:
@@ -40,7 +40,7 @@ BD = "bd"
 # `issue_prefix` の値。`gh` は GitHub の Issue 番号、`t` は `task` の採番。
 PREFIX_GITHUB = "gh"
 PREFIX_LOCAL = "t"
-BD_ID_PATTERN = re.compile(r"^(?:t-(\d{3,})|gh-(\d+))$")
+BD_ID_PATTERN = re.compile(r"^(?:t-(\d{3,})|gh-(\d+)|([a-z][a-z0-9_]+)-(\d+))$")
 PROVISIONAL_PREFIX = "gh-new-"
 HOLD_STATUS = "deferred"
 # 切り替え前の hold（独自の状態 `pending:frozen`）。読むだけで、書くのは `deferred`。
@@ -108,11 +108,15 @@ def is_provisional(bd_id: str) -> bool:
 
 
 def sort_key(task_id: str) -> tuple[int, int, str]:
-    """`status` の並び。`T-<n>` → `GH-<n>` → そのほか（仮の ID）。"""
+    """`status` の並び。`T-<n>` → `GH-<n>` → Jira のキー（キー名の順）→ そのほか（仮の ID）。"""
     m = BD_ID_PATTERN.match(task_id.lower())
     if m is None:
-        return (2, 0, task_id)
-    return (0, int(m.group(1)), "") if m.group(1) else (1, int(m.group(2)), "")
+        return (3, 0, task_id)
+    if m.group(1):
+        return (0, int(m.group(1)), "")
+    if m.group(2):
+        return (1, int(m.group(2)), "")
+    return (2, 0, f"{m.group(3)}-{int(m.group(4)):012d}")
 
 
 def read_prefix(toplevel: str) -> str:
