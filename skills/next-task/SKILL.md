@@ -8,16 +8,16 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 `task-workflow` のタスク運用のコマンド（正典「`tw` コマンドの参照」）。
 **`tw` の代わりに台帳やタスクファイルを手で操作しない。**
 
-## このプロジェクトの設定（CLAUDE.md の「## タスク運用」節）
+## このプロジェクトの設定（設定ファイル AGENTS.md → CLAUDE.md の「## タスク運用」節）
 
-!`sed -n '/^## タスク運用/,/^## /p' CLAUDE.md 2>/dev/null | grep . || echo '（「## タスク運用」節が無い。CLAUDE.md の他の節に書かれた検証コマンドを探す。無ければ /setup-tasks で節を用意する）'`
+!`r=$(git rev-parse --show-toplevel 2>/dev/null); n=; for f in AGENTS.md CLAUDE.md; do [ -n "$r" ] && [ -f "$r/$f" ] && s=$(sed -n '/^## タスク運用/,/^## /p' "$r/$f" | grep .) && [ -n "$s" ] && { n=$f; break; }; done; if [ -n "$n" ]; then echo "（$n から読んだ）"; echo "$s"; else echo '（「## タスク運用」節が無い。AGENTS.md・CLAUDE.md の他の節に書かれた検証コマンドを探す。無ければ /setup-tasks で節を用意する）'; fi`
 
 節に `- タスクの置き場: beads` があれば **Beads 方式**（正典「Beads 方式」）で、下の手順の
 「Beads 方式では」の注記に読み替える（行が無ければファイル方式で、注記は飛ばす）。Beads 方式でトラッカーが
 `github` なら、タスクID は Issue 番号の `GH-<n>` のことがある（`tw status` の1列目の形のまま使い、下の
 `T-xxx` とコミットの件名の `T-xxx:` をそう読み替える）。
 以下の**検証コマンド**・**整形コマンド**はこの節の値に読み替える。`なし` なら打たず、`## 完了条件`
-だけで受け入れを判定してその旨を報告に書く。節が無くても「なし」と決めつけない（CLAUDE.md の
+だけで受け入れを判定してその旨を報告に書く。節が無くても「なし」と決めつけない（AGENTS.md・CLAUDE.md の
 別の節に「変更後は必ず〜を通す」とあることが多い）。
 
 ## 手順

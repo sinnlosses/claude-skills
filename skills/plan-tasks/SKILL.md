@@ -12,9 +12,9 @@ description: "develop/direction.md に書かれたユーザーからの指示（
 ときに無人でこの手順を読む場合で、そのとき扱ってよいのは `## ユーザーから`（ファイル入口）
 だけ（以下「無人のとき」）。
 
-## このプロジェクトの設定（CLAUDE.md の「## タスク運用」節）
+## このプロジェクトの設定（設定ファイル AGENTS.md → CLAUDE.md の「## タスク運用」節）
 
-!`sed -n '/^## タスク運用/,/^## /p' CLAUDE.md 2>/dev/null | grep . || echo '（「## タスク運用」節が無い。CLAUDE.md の他の節に書かれた検証コマンドを探す。無ければ /setup-tasks で節を用意する）'`
+!`r=$(git rev-parse --show-toplevel 2>/dev/null); n=; for f in AGENTS.md CLAUDE.md; do [ -n "$r" ] && [ -f "$r/$f" ] && s=$(sed -n '/^## タスク運用/,/^## /p' "$r/$f" | grep .) && [ -n "$s" ] && { n=$f; break; }; done; if [ -n "$n" ]; then echo "（$n から読んだ）"; echo "$s"; else echo '（「## タスク運用」節が無い。AGENTS.md・CLAUDE.md の他の節に書かれた検証コマンドを探す。無ければ /setup-tasks で節を用意する）'; fi`
 
 節に `- タスクの置き場: beads` があれば **Beads 方式**（正典「Beads 方式」）で、下の「Beads 方式では」の
 注記に読み替える（トラッカーが `github` なら、タスクID は `tw new` が返す Issue 番号の `GH-<n>` で、
