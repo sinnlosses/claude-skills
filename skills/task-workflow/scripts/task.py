@@ -625,6 +625,8 @@ def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
     if state is not None:
         ledger.write_plan_mark(root, task_id, state)
     print(f"EDITED\t{task_id}")
+    if state == PLAN_AFTER_WORK:
+        print(f"PLAN_AFTER_WORK\t{task_id}\t作業の後に書いた")
 
 
 def cmd_plan_check(toplevel: str, task_id: str) -> None:
@@ -1467,6 +1469,7 @@ def cmd_beads_edit(toplevel: str, args: argparse.Namespace) -> None:
         raise SystemExit(4)
     cmd = ["update", bd_id]
     stdin = None
+    state = None
     if args.body_file:
         body = read_body(args.body_file)
         error = taskfile.validate_body(body)
@@ -1504,6 +1507,8 @@ def cmd_beads_edit(toplevel: str, args: argparse.Namespace) -> None:
     if r.returncode != 0:
         raise beads.BeadsError(f"bd update が失敗: {(r.stderr or r.stdout).strip()}")
     print(f"EDITED\t{shown}")
+    if state == PLAN_AFTER_WORK:
+        print(f"PLAN_AFTER_WORK\t{shown}\t作業の後に書いた")
     _print_lines(pulled + trk.after([bd_id]))
 
 

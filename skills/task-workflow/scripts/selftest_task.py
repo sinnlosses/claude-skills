@@ -856,7 +856,9 @@ def test_edit_and_plan_check() -> None:
         r = run_task(wt1, "plan-check", "T-101")
         check("書かずに作業へ進むと PLAN_NOT_FIRST missing", r.returncode == 0
               and r.stdout.strip() == "PLAN_NOT_FIRST\tT-101\tmissing", r.stdout + r.stderr)
-        run_task(wt1, "edit", "T-101", "--body-file", "-", stdin=planned)
+        r = run_task(wt1, "edit", "T-101", "--body-file", "-", stdin=planned)
+        check("作業のあとで書くと EDITED に続けて PLAN_AFTER_WORK を出す（終了コード0）", r.returncode == 0
+              and r.stdout.splitlines() == ["EDITED\tT-101", "PLAN_AFTER_WORK\tT-101\t作業の後に書いた"], r.stdout + r.stderr)
         r = run_task(wt1, "plan-check", "T-101")
         check("作業のあとで書くと PLAN_NOT_FIRST after-work", r.returncode == 0
               and r.stdout.strip() == "PLAN_NOT_FIRST\tT-101\tafter-work", r.stdout + r.stderr)
@@ -881,6 +883,9 @@ def test_edit_and_plan_check() -> None:
 
         r = run_task(wt1, "edit", "T-103", "--summary", "x")
         check("ファイル方式の edit は --body-file のほかは終了コード2", r.returncode == 2, r.stdout + r.stderr)
+        r = run_task(wt1, "edit", "T-103", "--body-file", "-", stdin="---\nid: T-103\n---\n\n" + planned)
+        check("edit は front matter 付きを剥がし方つきで拒む（終了コード2）",
+              r.returncode == 2 and "front matter" in r.stderr and "## " in r.stderr, r.stdout + r.stderr)
         r = run_task(wt1, "edit", "T-103", "--body-file", "-", stdin=planned + "\n## 結果\n\nx\n")
         check("edit は ## 結果 を拒む（終了コード2）", r.returncode == 2, r.stdout + r.stderr)
         r = run_task(wt1, "edit", "T-104", "--body-file", "-", stdin=planned)

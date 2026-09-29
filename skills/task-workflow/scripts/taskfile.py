@@ -172,6 +172,8 @@ def validate_body(body: str) -> str | None:
     見出しは行頭の `## ` だけを数える（本文の説明文で節名に言及するのは許す）。
     """
     preamble, sections = _frame_sections(body)
+    if body.startswith("---"):
+        return "本文の先頭に front matter がある（front matter は除き、最初の `## ` 見出しから渡す）"
     if preamble.strip():
         return "本文の最初の見出しより前に文がある"
     headings = tuple(h for h, _ in sections)
