@@ -100,14 +100,17 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
      `tw edit T-xxx --body-file -` に渡す」
    - 「**最初に、いまのコードで前提を調べ直して `## やること` の中身を書き、`tw edit` で渡す**（見出しは
      登録時から枠にある。空か「なし」を置き換える。`tw edit` が、そのとき作業が始まっていたかを
-     記録し、受け入れで機械的に確かめられる。作業の後だと `EDITED` の次に `PLAN_AFTER_WORK` の行が出る。
-     front matter は付けず `## ` の見出しから渡す）。前提が崩れていて作業が要らないと分かったら、
+     記録し、受け入れで機械的に確かめられる。front matter は付けず `## ` の見出しから渡す）。
+     `tw edit` は単独のコマンドで打ち、作業とまとめない。作業の後の初回の記入は書き込まれずに
+     `WORK_BEFORE_PLAN` で拒まれる。そのときは差分を退けずに `--after-work` を付けて打ち直し、
+     そのことを報告に書く。前提が崩れていて作業が要らないと分かったら、
      作業せず `dropped` にすべき理由を報告する」
    - 「`## 目的・背景` がファイルの存在・パス・行番号を主張していたら、`## やること` を書く前に実物で
      確かめる（別のリポジトリのファイルなら、そのリポジトリの実物を見る）。違っていたら直さず『前提が誤り』と報告する」
    - 「検証コマンドは `tw verify` で打って通す（通ると作業ツリーの中身の鍵が控えられ、受け入れで
-     中身が同じなら検証を省ける。落ちたら `VERIFY_NOT_PASSED` とログのパスが出る）。通したあとに
-     ファイルを変えたら打ち直す」
+     中身が同じなら検証を省ける。落ちたら `VERIFY_NOT_PASSED` とログのパスが出る。`## やること` が
+     空のまま作業があると検証コマンドを打たずに `PLAN_MISSING` が出るので、書いて `tw edit --after-work`
+     で渡してから打ち直す）。通したあとにファイルを変えたら打ち直す」
    - 「`develop/task/T-xxx.md` 以外の `develop/` を触らない。コミットしない
      （`git add -A` もしない）。`tw show`・`tw edit`・`tw verify` のほかの `tw` コマンドは打たない」
    - 「完了条件が後段のタスクの本文を直す・分けるよう求めていても、後段には手を付けず申し送りだけ
@@ -143,7 +146,8 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
      仕組みで立てられないので渡さない）: 「サブエージェントの中では別のエージェント
      （fork を含む）を立てず、レーンを順に自分で読む」
 
-   `loopable: N` のタスク（ユーザーが直接呼んだとき）は委譲せずメインで行う。着手して初めて
+   `loopable: N` のタスク（ユーザーが直接呼んだとき）は委譲せずメインで行う（`## やること` を作業より
+   先に `tw edit` で書くのは委譲先と同じ。`tw edit`・`tw verify` の関門も同じく掛かる）。着手して初めて
    ユーザーの判断が要ると分かったら、front matter を `loopable: N` に直し、`tw release T-xxx`
    して預ける（直した1行は手順7と同じ形でコミットして `tw ship`。Beads 方式では
    `tw edit T-xxx --loopable N` と `tw release T-xxx` だけで、コミットは要らない）。判断が重いと分かったら
@@ -174,9 +178,9 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    | `tw plan-check` の出力 | すること |
    | --- | --- |
    | `PLAN_FIRST` | 次へ（委譲先が作業より先に `## やること` を `tw edit` で書いた） |
-   | `PLAN_NOT_FIRST\tT-xxx\tmissing` | 委譲先が `## やること` を書かずに終えた。差分から中身を書き起こして `tw edit` で渡す |
+   | `PLAN_NOT_FIRST\tT-xxx\tmissing` | 委譲先が `## やること` を書かずに終えた。差分から中身を書き起こして `tw edit T-xxx --after-work` で渡す（差分があれば `--after-work` が無いと `WORK_BEFORE_PLAN` で拒まれる。差分が無い `dropped` なら付けなくても通る） |
    | `PLAN_NOT_FIRST\tT-xxx\tafter-work` | 作業を始めてから書いた。中身が差分と合っているかを照らし、合わなければ直して `tw edit` で渡す |
-   | `PLAN_NOT_FIRST\tT-xxx\tunrecorded` | `tw edit` を通さずに書いた（順は分からない）。`after-work` と同じく差分と照らす |
+   | `PLAN_NOT_FIRST\tT-xxx\tunrecorded` | `tw edit` を通さずに書いた（順は分からない）。`after-work` と同じく差分と照らし、直すときは `tw edit T-xxx --after-work` で渡す |
    | `NOT_OWNER` | 自分の作業ツリーの印が無い（人が `tw release --force` した、など）。ID を添えて終了する |
 
    `PLAN_NOT_FIRST` はどの理由でも、理由の語を一言メモしておく（手順6aで兆候「受け入れのときに
@@ -185,7 +189,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    | `tw verify-check` の出力 | すること |
    | --- | --- |
    | `VERIFIED_SAME\t<木の SHA>` | 検証コマンドを打たずに次へ（委譲先が `tw verify` で通した中身と、整形のあとの中身が同じ） |
-   | `NOT_VERIFIED\t<理由>` | `tw verify` を打つ（`none`＝委譲先が控えていない・最後の検証が落ちた／`content`＝整形や受け入れの直しで中身が変わった／`head`／`command`）。`VERIFIED`・`VERIFIED_UNSTAMPED` は通った。`VERIFY_NOT_PASSED` なら出力の末尾とログを読んで直し、打ち直す |
+   | `NOT_VERIFIED\t<理由>` | `tw verify` を打つ（`none`＝委譲先が控えていない・最後の検証が落ちた／`content`＝整形や受け入れの直しで中身が変わった／`head`／`command`）。`VERIFIED`・`VERIFIED_UNSTAMPED` は通った。`VERIFY_NOT_PASSED` なら出力の末尾とログを読んで直し、打ち直す。`PLAN_MISSING` なら上の `missing` の行のとおり書いてから打ち直す |
    | `NOTHING` | 検証コマンドが無い。完了条件を目視で確かめる |
 
    受け入れで作業ツリーを直したら、`tw verify-check` から打ち直す。`tw ship` が付け替えたときの

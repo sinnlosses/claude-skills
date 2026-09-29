@@ -827,7 +827,7 @@ def test_edit_and_plan_check() -> None:
     planned = BODY.replace("## やること\n", "## やること\n1. 書く\n")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp)
-        for tid in ("T-100", "T-101", "T-102", "T-103"):
+        for tid in ("T-100", "T-101", "T-102", "T-103", "T-105"):
             commit_task(main_path, taskfile.Task(tid, "やることの順", "todo", "sonnet", "Y", (), BODY))
         commit_task(main_path, taskfile.Task("T-104", "閉じたもの", "done", "sonnet", "Y", (), BODY + "\n## 結果\n\nx\n"))
         task_file = lambda tid: os.path.join(wt1, "develop", "task", f"{tid}.md")  # noqa: E731
@@ -843,7 +843,9 @@ def test_edit_and_plan_check() -> None:
         check("ファイル方式の edit が本文を書き換える", r.returncode == 0 and r.stdout.strip() == "EDITED\tT-100"
               and task is not None and "1. 書く" in task.body and task.status == "todo", r.stdout + r.stderr)
         write(os.path.join(wt1, "work.txt"), "x\n")
-        run_task(wt1, "edit", "T-100", "--body-file", "-", stdin=planned.replace("1. 書く", "1. 書き直す"))
+        r = run_task(wt1, "edit", "T-100", "--body-file", "-", stdin=planned.replace("1. 書く", "1. 書き直す"))
+        check("一度書いたあとの書き直しは作業の後でも拒まない", r.returncode == 0
+              and r.stdout.strip() == "EDITED\tT-100", r.stdout + r.stderr)
         r = run_task(wt1, "plan-check", "T-100")
         check("作業より先に書けば PLAN_FIRST（渡した本文のファイル・後の書き直しは数えない）",
               r.returncode == 0 and r.stdout.strip() == "PLAN_FIRST\tT-100", r.stdout + r.stderr)
@@ -857,7 +859,14 @@ def test_edit_and_plan_check() -> None:
         check("書かずに作業へ進むと PLAN_NOT_FIRST missing", r.returncode == 0
               and r.stdout.strip() == "PLAN_NOT_FIRST\tT-101\tmissing", r.stdout + r.stderr)
         r = run_task(wt1, "edit", "T-101", "--body-file", "-", stdin=planned)
-        check("作業のあとで書くと EDITED に続けて PLAN_AFTER_WORK を出す（終了コード0）", r.returncode == 0
+        task, _ = taskfile.read_task_file(task_file("T-101"))
+        check("作業のあとの初回の記入は WORK_BEFORE_PLAN で拒み、書き込まない（終了コード4）", r.returncode == 4
+              and r.stdout.startswith("WORK_BEFORE_PLAN\tT-101\t") and "--after-work" in r.stdout
+              and task is not None and not taskfile.has_plan(task.body), r.stdout + r.stderr)
+        r = run_task(wt1, "plan-check", "T-101")
+        check("拒んだあとは印を残さない（missing のまま）", r.stdout.strip() == "PLAN_NOT_FIRST\tT-101\tmissing", r.stdout)
+        r = run_task(wt1, "edit", "T-101", "--after-work", "--body-file", "-", stdin=planned)
+        check("--after-work なら書き込み、EDITED に続けて PLAN_AFTER_WORK を出す（終了コード0）", r.returncode == 0
               and r.stdout.splitlines() == ["EDITED\tT-101", "PLAN_AFTER_WORK\tT-101\t作業の後に書いた"], r.stdout + r.stderr)
         r = run_task(wt1, "plan-check", "T-101")
         check("作業のあとで書くと PLAN_NOT_FIRST after-work", r.returncode == 0
@@ -873,11 +882,21 @@ def test_edit_and_plan_check() -> None:
               and r.stdout.strip() == "PLAN_NOT_FIRST\tT-102\tunrecorded", r.stdout + r.stderr)
         reset("T-102")
 
+        run_task(wt1, "claim", "T-105")
+        r = run_task(wt1, "edit", "T-105", "--after-work", "--body-file", "-", stdin=planned)
+        r2 = run_task(wt1, "plan-check", "T-105")
+        check("作業の前なら --after-work を付けても first", r.returncode == 0 and r.stdout.strip() == "EDITED\tT-105"
+              and r2.stdout.strip() == "PLAN_FIRST\tT-105", r.stdout + r2.stdout + r.stderr)
+        reset("T-105")
+
         run_task(wt1, "claim", "T-103")
         write(os.path.join(wt1, "work.txt"), "x\n")
         git(wt1, "add", "work.txt")
         git(wt1, "commit", "-q", "-m", "作業")
-        run_task(wt1, "edit", "T-103", "--body-file", "-", stdin=planned)
+        r = run_task(wt1, "edit", "T-103", "--body-file", "-", stdin=planned)
+        check("claim 後にコミットしてからの初回の記入も拒む", r.returncode == 4
+              and r.stdout.startswith("WORK_BEFORE_PLAN\tT-103\t"), r.stdout + r.stderr)
+        run_task(wt1, "edit", "T-103", "--after-work", "--body-file", "-", stdin=planned)
         r = run_task(wt1, "plan-check", "T-103")
         check("claim 後にコミットしてから書いても after-work", r.stdout.strip() == "PLAN_NOT_FIRST\tT-103\tafter-work", r.stdout)
 
@@ -891,6 +910,41 @@ def test_edit_and_plan_check() -> None:
         r = run_task(wt1, "edit", "T-104", "--body-file", "-", stdin=planned)
         check("done のタスクは NOT_READY（終了コード4）", r.returncode == 4
               and r.stdout.strip() == "NOT_READY\tT-104\tdone", r.stdout + r.stderr)
+
+
+def test_verify_refuses_unplanned_work() -> None:
+    print("task.py verify: 着手中のタスクの ## やること が空のまま作業が始まっていたら検証を打たない")
+    planned = BODY.replace("## やること\n", "## やること\n1. 書く\n")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp, branch="切らない", verify="`echo verified`")
+        for tid in ("T-110", "T-111"):
+            commit_task(main_path, taskfile.Task(tid, "検証の関門", "todo", "sonnet", "Y", (), BODY))
+
+        run_task(wt1, "claim", "T-110")
+        r = run_task(wt1, "verify")
+        check("作業が始まっていなければ（dropped の報告など）空でも打つ", r.returncode == 0
+              and r.stdout.startswith("VERIFIED\t"), r.stdout + r.stderr)
+
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        r = run_task(wt1, "verify")
+        r2 = run_task(wt1, "verify-check")
+        check("空のまま作業があれば PLAN_MISSING（終了コード10）で、検証コマンドを打たず控えを消す", r.returncode == 10
+              and r.stdout.startswith("PLAN_MISSING\tT-110\t") and "--after-work" in r.stdout
+              and "verified" not in r.stdout and r2.stdout.strip() == "NOT_VERIFIED\tnone", r.stdout + r2.stdout + r.stderr)
+
+        r = run_task(wt2, "verify")
+        check("別の作業ツリーの着手には掛からない", r.returncode == 0 and r.stdout.startswith("VERIFIED\t"), r.stdout + r.stderr)
+
+        run_task(wt1, "edit", "T-110", "--after-work", "--body-file", "-", stdin=planned)
+        r = run_task(wt1, "verify")
+        check("書けば打つ", r.returncode == 0 and r.stdout.startswith("VERIFIED\t"), r.stdout + r.stderr)
+
+        r = run_task(wt2, "claim", "T-111")
+        write(os.path.join(wt2, "work.txt"), "x\n")
+        result_path = write(os.path.join(tmp, "result.md"), "検証OK\n")
+        run_task(wt2, "done", "T-111", "--result-file", result_path)
+        r = run_task(wt2, "verify")
+        check("done の後は空でも打つ", r.returncode == 0 and r.stdout.startswith("VERIFIED\t"), r.stdout + r.stderr)
 
 
 # --- task.py: verify・verify-check -------------------------------------------
@@ -1608,6 +1662,7 @@ def main() -> None:
         test_body_frame_check,
         test_done_commits_since_claim,
         test_edit_and_plan_check,
+        test_verify_refuses_unplanned_work,
         test_verify_stamp,
         test_ship_fast_forward,
         test_ship_rebases_when_main_advances,

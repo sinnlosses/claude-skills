@@ -580,7 +580,7 @@ PLAN_AFTER_WORK = "after-work"
 def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
     """ファイル方式の `edit`。本文だけを書き換え、`## やること` を初めて書いた時点の判定を印に残す。"""
     if any([args.summary, args.difficulty, args.loopable, args.status]) or not args.body_file:
-        print("usage: ファイル方式の edit は --body-file だけ（ほかはタスクファイルを直に直す）", file=sys.stderr)
+        print("usage: ファイル方式の edit は --body-file（と --after-work）だけ（ほかはタスクファイルを直に直す）", file=sys.stderr)
         raise SystemExit(2)
     task_id = args.task_id
     if not taskfile.ID_PATTERN.match(task_id):
@@ -614,6 +614,7 @@ def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
     ):
         own = f"{layout.TASK_DIR}/{task_id}.md"
         state = _plan_state(toplevel, owner.get("head"), args.body_file, own)
+        _refuse_plan_after_work(task_id, state, args.after_work)
 
     rendered = taskfile.render(
         taskfile.Task(task.id, task.summary, task.status, task.difficulty, task.loopable, task.dependencies, body)
@@ -625,6 +626,33 @@ def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
     print(f"EDITED\t{task_id}")
     if state == PLAN_AFTER_WORK:
         print(f"PLAN_AFTER_WORK\t{task_id}\t作業の後に書いた")
+
+
+def _refuse_plan_after_work(shown: str, state: str, after_work: bool) -> None:
+    if state == PLAN_AFTER_WORK and not after_work:
+        print(
+            f"WORK_BEFORE_PLAN\t{shown}\t書き込んでいない。作業が始まっている。"
+            f"作業の後と承知で書くなら --after-work を付けて打ち直す"
+        )
+        raise SystemExit(4)
+
+
+def _file_unplanned_work(toplevel: str) -> list[str]:
+    """この作業ツリーが印を持つ着手中のタスクのうち、`## やること` が空のまま作業が始まっているもの。"""
+    root = ledger.ledger_root(cwd=toplevel)
+    task_dir = os.path.join(toplevel, layout.TASK_DIR)
+    found: list[str] = []
+    for task_id in ledger.list_claims(root):
+        owner = ledger.read_owner(ledger.claim_dir(root, task_id))
+        if owner is None or owner.get("worktree") != toplevel:
+            continue
+        task, err = taskfile.read_task_file(taskfile.task_path(task_dir, task_id))
+        if err is not None or task is None or task.status not in ("todo", "hold") or taskfile.has_plan(task.body):
+            continue
+        own = f"{layout.TASK_DIR}/{task_id}.md"
+        if _plan_state(toplevel, owner.get("head"), "-", own) == PLAN_AFTER_WORK:
+            found.append(task_id)
+    return found
 
 
 def cmd_plan_check(toplevel: str, task_id: str) -> None:
@@ -685,11 +713,20 @@ def _print_plan_check(shown: str, has_plan: bool, mark: str | None) -> None:
 VERIFY_TAIL_LINES = 40
 
 
-def cmd_verify(toplevel: str) -> None:
+def cmd_verify(toplevel: str, unplanned_work: Callable[[], list[str]]) -> None:
     verify_command = ship.read_verify_command(toplevel)
     if verify_command is None:
         print("NOTHING\t(検証コマンドが無い)")
         return
+    unplanned = unplanned_work()
+    if unplanned:
+        ledger.clear_verify_stamp(cwd=toplevel)
+        for shown in unplanned:
+            print(
+                f"PLAN_MISSING\t{shown}\t検証コマンドを打っていない。"
+                f"先に ## やること を書いて tw edit {shown} --after-work --body-file - で渡し、打ち直す"
+            )
+        raise SystemExit(10)
     before = ledger.content_key(verify_command, cwd=toplevel)
     log_path = ledger.verify_log_path(cwd=toplevel)
     with open(log_path, "w", encoding="utf-8") as log:
@@ -1486,6 +1523,7 @@ def cmd_beads_edit(toplevel: str, args: argparse.Namespace) -> None:
             and not metadata.get(beads.PLAN_KEY)
         ):
             state = _plan_state(toplevel, metadata.get(beads.CLAIM_HEAD_KEY), args.body_file, None)
+            _refuse_plan_after_work(shown, state, args.after_work)
             cmd += ["--set-metadata", f"{beads.PLAN_KEY}={state}"]
     if args.summary:
         if "\n" in args.summary or not args.summary.strip():
@@ -1508,6 +1546,21 @@ def cmd_beads_edit(toplevel: str, args: argparse.Namespace) -> None:
     if state == PLAN_AFTER_WORK:
         print(f"PLAN_AFTER_WORK\t{shown}\t作業の後に書いた")
     _print_lines(pulled + trk.after([bd_id]))
+
+
+def _beads_unplanned_work(toplevel: str) -> list[str]:
+    actor = _actor(toplevel)
+    found: list[str] = []
+    for issue in beads.list_issues(toplevel):
+        if issue.status != "in_progress" or issue.assignee != actor or beads.ship_mark(issue) is not None:
+            continue
+        if not taskfile.is_blank(str(issue.raw.get("notes") or "")):
+            continue
+        metadata = issue.raw.get("metadata")
+        head = metadata.get(beads.CLAIM_HEAD_KEY) if isinstance(metadata, dict) else None
+        if _plan_state(toplevel, head, "-", None) == PLAN_AFTER_WORK:
+            found.append(beads.to_task_id(issue.bd_id))
+    return found
 
 
 def cmd_beads_plan_check(toplevel: str, task_id: str) -> None:
@@ -1673,6 +1726,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_edit.add_argument("--difficulty", default=None, choices=taskfile.DIFFICULTY_VALUES)
     p_edit.add_argument("--loopable", default=None, choices=taskfile.LOOPABLE_VALUES)
     p_edit.add_argument("--status", default=None, choices=("todo", "hold"))
+    p_edit.add_argument("--after-work", dest="after_work", action="store_true")
 
     # 以下は Beads 方式だけ。
 
@@ -1750,7 +1804,7 @@ def main(argv: list[str] | None = None) -> None:
         elif args.command == "plan-check":
             cmd_plan_check(toplevel, args.task_id)
         elif args.command == "verify":
-            cmd_verify(toplevel)
+            cmd_verify(toplevel, lambda: _file_unplanned_work(toplevel))
         elif args.command == "verify-check":
             cmd_verify_check(toplevel)
     except (ledger.NoBaseBranch, layout.ConfigConflict, layout.StoreSettingError, tracker.TrackerSettingError) as e:
@@ -1785,7 +1839,7 @@ def _main_beads(toplevel: str, args: argparse.Namespace) -> None:
         elif args.command == "plan-check":
             cmd_beads_plan_check(toplevel, args.task_id)
         elif args.command == "verify":
-            cmd_verify(toplevel)
+            cmd_verify(toplevel, lambda: _beads_unplanned_work(toplevel))
         elif args.command == "verify-check":
             cmd_verify_check(toplevel)
         elif args.command == "adopt":

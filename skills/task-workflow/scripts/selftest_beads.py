@@ -366,7 +366,14 @@ def test_plan_check() -> None:
         r = run_task(wt2, "plan-check", b)
         check("書かずに作業へ進むと PLAN_NOT_FIRST missing", r.returncode == 0
               and r.stdout.strip() == f"PLAN_NOT_FIRST\t{b}\tmissing", r.stdout + r.stderr)
-        run_task(wt2, "edit", b, "--body-file", "-", stdin=planned)
+        r = run_task(wt2, "edit", b, "--body-file", "-", stdin=planned)
+        check("作業のあとの初回の記入は WORK_BEFORE_PLAN で拒み、書き込まない（終了コード4）", r.returncode == 4
+              and r.stdout.startswith(f"WORK_BEFORE_PLAN\t{b}\t") and "--after-work" in r.stdout
+              and beads.PLAN_KEY not in metadata(b), r.stdout + r.stderr + str(metadata(b)))
+        r = run_task(wt2, "edit", b, "--after-work", "--body-file", "-", stdin=planned)
+        check("--after-work なら書き込み、EDITED に続けて PLAN_AFTER_WORK を出す", r.returncode == 0
+              and r.stdout.splitlines()[:2] == [f"EDITED\t{b}", f"PLAN_AFTER_WORK\t{b}\t作業の後に書いた"],
+              r.stdout + r.stderr)
         r = run_task(wt2, "plan-check", b)
         check("作業のあとで書くと PLAN_NOT_FIRST after-work", r.returncode == 0
               and r.stdout.strip() == f"PLAN_NOT_FIRST\t{b}\tafter-work", r.stdout + r.stderr)
@@ -391,6 +398,33 @@ def test_verify_stamp() -> None:
         write(os.path.join(wt1, "shared.txt"), "line1\nline2\n")
         r = run_task(wt1, "verify-check")
         check("変えれば NOT_VERIFIED content", r.stdout.strip() == "NOT_VERIFIED\tcontent", r.stdout + r.stderr)
+
+
+def test_verify_refuses_unplanned_work() -> None:
+    say("verify: 着手中のタスクの ## やること が空のまま作業が始まっていたら検証を打たない")
+    planned = BODY.replace("## やること\n", "## やること\n1. 書く\n")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp, verify="`echo verified`")
+        a = new(main_path, "関門")
+        b = new(main_path, "done の後")
+        run_task(wt1, "claim", a)
+        r = run_task(wt1, "verify")
+        check("作業が始まっていなければ空でも打つ", r.returncode == 0 and r.stdout.startswith("VERIFIED\t"),
+              r.stdout + r.stderr)
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        r = run_task(wt1, "verify")
+        r2 = run_task(wt1, "verify-check")
+        check("空のまま作業があれば PLAN_MISSING（終了コード10）で、検証コマンドを打たず控えを消す", r.returncode == 10
+              and r.stdout.startswith(f"PLAN_MISSING\t{a}\t") and "verified" not in r.stdout
+              and r2.stdout.strip() == "NOT_VERIFIED\tnone", r.stdout + r2.stdout + r.stderr)
+        run_task(wt1, "edit", a, "--after-work", "--body-file", "-", stdin=planned)
+        r = run_task(wt1, "verify")
+        check("書けば打つ", r.returncode == 0 and r.stdout.startswith("VERIFIED\t"), r.stdout + r.stderr)
+
+        run_task(wt2, "claim", b)
+        work_and_done(wt2, b)
+        r = run_task(wt2, "verify")
+        check("done の後は空でも打つ", r.returncode == 0 and r.stdout.startswith("VERIFIED\t"), r.stdout + r.stderr)
 
 
 def test_cycle_done_ship_and_dropped() -> None:
@@ -945,6 +979,7 @@ def main() -> None:
             test_done_commits_since_claim,
             test_plan_check,
             test_verify_stamp,
+            test_verify_refuses_unplanned_work,
             test_stale_markers,
             test_triage_and_adopt,
             test_tracker_github_push_only,
