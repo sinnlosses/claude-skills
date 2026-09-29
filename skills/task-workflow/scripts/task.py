@@ -1591,8 +1591,15 @@ def cmd_beads_adopt(toplevel: str, args: argparse.Namespace) -> None:
         raise SystemExit(4)
     actor = _actor(toplevel)
     new_id = old
+    key = tracker.jira_key(issue) if trk.tracker.kind == "jira" else None
+    if key is not None:
+        renamed, lines = tracker.jira_rename(toplevel, [old])
+        if key != old and old not in renamed:
+            _print_lines(pulled + lines)
+            raise SystemExit(3)
+        new_id = key
     # github（`issue_prefix` が `gh`）は取り込みの時点で Issue 番号の ID になっているので番号を振らない。
-    if not beads.is_numbered(old) and not trk.bidirectional:
+    elif not beads.is_numbered(old) and not trk.bidirectional:
         number = _next_number(toplevel, _beads_snapshot(toplevel))
         for _ in range(NEW_ATTEMPTS):
             new_id = beads.format_bd_id(number)

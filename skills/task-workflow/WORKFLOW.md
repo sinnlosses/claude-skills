@@ -455,7 +455,8 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 
 **ID はトラッカーで決まる。** トラッカーが `github` なら **GitHub の Issue 番号がタスクID**で、`tw` の
 入出力とコミットの件名は `GH-<番号>`（ゼロ埋めしない）、Beads の中は `gh-<番号>`。`なし`・`jira` なら
-`tw` が採番し、外は `T-<n>`（3桁以上）、Beads の中は `t-<n>`。どちらの方式かは Beads の `issue_prefix`
+`tw` が採番し、外は `T-<n>`（3桁以上）、Beads の中は `t-<n>`。ただし `jira` で取り込んだ課題は
+**Jira のキーがタスクID**（外は `PROJ-123`、Beads の中は `proj-123`。下の「トラッカー」）。どちらの方式かは Beads の `issue_prefix`
 （`gh` か `t`）で決め、`tw` は両方の形を読む（切り替えの途中は `t-<n>` と `gh-<n>` が混ざる）。
 加えて **Jira のキー**（`PROJ-123`。プロジェクトキーは2文字以上・英大文字始まり `[A-Z][A-Z0-9_]+-\d+`、
 Beads の中は `proj-123`）も同じ ID として読む。読む形はトラッカーで切り替えず常に3つを受け、`T-<n>`・
@@ -487,7 +488,7 @@ Beads の中は `proj-123`）も同じ ID として読む。読む形はトラ�
 
 | ファイル方式 | Beads 方式 |
 | --- | --- |
-| タスクID `T-123` | `github`: 外は `GH-5`、Beads の中は `gh-5`（Issue 番号）。`なし`・`jira`: 外は `T-123`、Beads の中は `t-123`（接頭辞は小文字だけ）。Jira のキーの課題は外が `PROJ-123`、中が `proj-123` |
+| タスクID `T-123` | `github`: 外は `GH-5`、Beads の中は `gh-5`（Issue 番号）。`なし`・`jira`: 外は `T-123`、Beads の中は `t-123`（接頭辞は小文字だけ）。`jira` で取り込んだ課題は外が `PROJ-123`、中が `proj-123` |
 | 採番の錠（`lock/`）と `last-id` | `github`: GitHub の採番（下の「GitHub との双方向」の登録）。`なし`・`jira`: `bd create --id t-<n>`（同じ番号は1つしか作れない。負けたら次の番号で打ち直し、20回で `LOCKED`）。最後の番号は `bd kv` の `task-workflow.last-id`。候補は Beads の番号・`bd kv`・主ブランチの `develop/task/` と `docs/history/tasks.md`・台帳の `last-id` の最大 |
 | 着手の印（`mkdir claim/T-xxx`） | `bd update --claim`（actor は作業ツリーの名前）。`claim` した時点の枝は metadata `task_branch` |
 | `NOT_OWNER` | `done`・`release` の前に assignee が自分かを見る（`bd close` も actor が違えば拒む） |
@@ -526,8 +527,9 @@ Beads の中は `proj-123`）も同じ ID として読む。読む形はトラ�
 - **振り分け前**（番号でない ID か、`difficulty`・`loopable` の label が無い課題。トラッカーから
   取り込んだもの）: `status` の `着手可否` が `TRIAGE` で、末尾の `triage` 行に出る。`claim` は
   `NOT_READY\tT-xxx\tTRIAGE`。人の確認つきで `tw adopt <ID> --difficulty … --loopable … --body-file …`
-  （label を付け、`## 完了条件` を書き起こす。`jira` は番号も振る。`github` は取り込みの時点で
-  `gh-<Issue 番号>` になっているので番号は変えない）してから着手する
+  （label を付け、`## 完了条件` を書き起こす。`jira` はキーの無い課題にだけ番号を振り、キーのある課題は
+  キーの ID のまま（まだなら付け替える。行き先が既にあれば `TRACKER\tINVALID` の行を出して終了コード3で、
+  番号も振らない）。`github` は取り込みの時点で `gh-<Issue 番号>` になっているので番号は変えない）してから着手する
 - **`status` の末尾**: `invalid` の次に `triage\t<件数>\t<ID>` が必ず、`jira` なら `jira_close` 行が付く
 
 **トラッカー**（錠と本文は Beads が持ち、トラッカーは写し。**失敗はタスクの操作を止めない**——
@@ -538,7 +540,7 @@ Beads の中は `proj-123`）も同じ ID として読む。読む形はトラ�
 | 方式 | すること | しないこと |
 | --- | --- | --- |
 | `github` | `issue_prefix` が `gh` なら双方向（下の「GitHub との双方向」）、`t` なら Beads から送るだけ。1件だけを触る操作（`new`・`claim`・`release`・`edit`・`adopt`・`done`）はその1件だけを `bd github push <ID>` で、`ship`・`sync` は全件を `bd github sync --push-only` で送る。そのあと Project の Status 欄を `gh api graphql` で書く（`deferred` → `Pending`、`open` → `Todo`、`in_progress` → `In progress`、閉じた → `Done`、`cancelled` → `Cancel`。Project に無い Issue は足す）。`bd` は Status 欄を触らない。token は `GITHUB_TOKEN` が無ければ `gh auth token` | 引数なしの `bd github sync`・`--pull-only`（`bd` の増分の取り込みは取りこぼす）。`gh project` のコマンド（`item-list` は入れ子の上限で1回約101点かかり、どれも持ち主の照会を足す）。Status 欄を読んで合わせる（人が Project で変えた Status は、次にその課題の Beads の状態が変わるまで戻らない） |
-| `jira` | `tw sync` で `bd jira sync --pull` だけ。ローカルで閉じた Jira の課題（`external_ref` あり）には label `jira:close` を付け、`status` の `jira_close` 行に出す。人が Jira で閉じたら `tw jira-closed T-xxx` で外す | Jira へ書く（`--push`・引数なしの `sync`）。状態は人が Jira で変える |
+| `jira` | `tw sync`（と各操作のあと）で `bd jira sync --pull` だけ。取り込んだ課題の ID は `issue_prefix` の hash（`t-aby`。数字だけにもなりうる）なので、`external_ref`（`https://<site>/browse/PROJ-123`）のキーと ID が違う振り分け前の課題を `bd rename` で `proj-123` にする（行き先が既にあれば付け替えず `TRACKER\tINVALID\t<ID>\t<行き先> が既にある（付け替えない）`。`bd rename` は接頭辞が `issue_prefix` と違っても通り、次の取り込みは `external_ref` で同じ課題に当てる）。ローカルで閉じた Jira の課題（`external_ref` あり）には label `jira:close` を付け、`status` の `jira_close` 行に出す。人が Jira で閉じたら `tw jira-closed T-xxx` で外す | Jira へ書く（`--push`・引数なしの `sync`）。状態は人が Jira で変える |
 | `なし` | 何もしない（`tw sync` は `NOTHING`） | ― |
 
 **Status 欄の控え**（GraphQL の枠は1時間に5000点・アカウント単位で、点数は要求の上限で数えられる）:
@@ -549,7 +551,8 @@ Project・Status 欄・選択肢の ID は `bd kv` の `task-workflow.project` �
 超えるとき（最初の1回）は Project を `items(first: 100)` の `id`・`content.url`・`fieldValueByName("Status")`
 だけで一巡して控えを埋める。Issue の読み書きと取り込む番号を選ぶ一覧は REST で、GraphQL の枠を食わない。
 
-**Jira の方式は本物の Jira で試していない**（サイトとトークンが要る）。`bd jira sync --pull` が
+**Jira の方式は本物の Jira で試していない**（サイトとトークンが要る）。取り込んだ課題の ID・`external_ref` の形と、
+付け替えたあとの取り込みが同じ課題に当たることは、`jira.url` を手元の偽の HTTP サーバへ向けた `bd` で確かめた（2026-09-29）。`bd jira sync --pull` が
 ローカルで閉じた課題をどう扱うか（開き直すか）は未確認で、試すときは人に用意を頼む。
 
 **GitHub との双方向**（`github` のとき。`bd` 1.3.0 の実測に合わせた形）:
@@ -592,7 +595,7 @@ Project・Status 欄・選択肢の ID は `bd kv` の `task-workflow.project` �
 
 | | `github` | `jira` |
 | --- | --- | --- |
-| タスクID | Issue 番号（`GH-5`） | `tw` の採番（`T-123`）。Jira のキー（`PROJ-123`）の形も読めるが、今の `tw` は付け替えない（キーは `external_ref`） |
+| タスクID | Issue 番号（`GH-5`） | 取り込んだ課題は Jira のキー（`PROJ-123`。取り込みの直後に `external_ref` のキーへ付け替える）、ローカルで `tw new` した課題は `tw` の採番（`T-123`）で、混ざる |
 | 登録 | Issue を先に作って番号を得る | Beads だけに作る（Jira に書かない） |
 | 同期の向き | 双方向（取り込みは `tw` が番号で選ぶ） | 取り込みだけ（`bd jira sync --pull`） |
 | 状態を変える場所 | どちらでも（GitHub で閉じたら見送り） | Beads。Jira で閉じるのは人（`jira_close`） |
@@ -608,6 +611,11 @@ Project・Status 欄・選択肢の ID は `bd kv` の `task-workflow.project` �
 `.beads/embeddeddolt/<metadata.json の dolt_database>` で
 ``dolt sql -q "update config set value='gh' where `key`='issue_prefix'"`` を打ち、`dolt commit -am <件名> --author <名前>` で
 残す（2026-09-28 に確かめた）。
+`jira` で `T-<n>` の ID のまま取り込み済みの課題は、振り分け前（label が無い）なら次の `tw sync` で
+キーの ID へ付け替わる。`adopt` 済みの `T-<n>` は `tw` が付け替えない（作業ブランチとコミットの件名が
+`T-<n>` を指す）。キーへ揃えるなら、全作業ツリーの手を止めて `bd export` と `bd backup` を取ってから、未完了の
+ものを `bd rename t-<n> <キーの小文字>` し、旧い ID を `description` の末尾の1行（`旧ID: T-123`）に残す。
+閉じたものは付け替えない。
 **置き場や ID を切り替えるコミットは、消す・付け替えるものを全部済ませた木で検証コマンドを打ってから送る。**
 
 **バックアップ**: `.beads` は git の外なので、タスクの記録は git の履歴に残らない。`tw ship` の
@@ -624,7 +632,7 @@ Project・Status 欄・選択肢の ID は `bd kv` の `task-workflow.project` �
 | --- | --- | --- |
 | `show T-xxx` | タスク1件をタスクファイルの形で出す（読むだけ） | 本文。無ければ `NOT_READY` |
 | `edit T-xxx [--body-file …] [--after-work] [--summary …] [--difficulty …] [--loopable Y\|N] [--status todo\|hold]` | 本文と属性を直す。`--status` は着手前（`open`・`deferred`）だけ。`## やること` の初回の記入の扱いはファイル方式と同じ | `EDITED`・`NOT_READY`・`WORK_BEFORE_PLAN` |
-| `adopt <ID> --difficulty … --loopable … [--summary …] --body-file …` | 振り分け前の課題に label と本文を付ける（`jira` は番号も） | `ADOPTED\t<元のID>\t<ID>` |
+| `adopt <ID> --difficulty … --loopable … [--summary …] --body-file …` | 振り分け前の課題に label と本文を付ける（`jira` はキーの無い課題に番号も） | `ADOPTED\t<元のID>\t<ID>` |
 | `sync` | トラッカーと同期する（`github` は双方向、`jira` は取り込み、打ち直しも兼ねる） | `TRACKER\tOK\|FAILED\t…`・`NOTHING` |
 | `backup` | バックアップを取る | `BACKUP\tOK\|FAILED\t<置き場>` |
 | `jira-closed T-xxx…` | `jira:close` を外す | `CLEARED` |

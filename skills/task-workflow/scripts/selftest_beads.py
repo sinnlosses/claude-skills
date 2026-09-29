@@ -659,18 +659,29 @@ class FakeGitHub:
 
 
 def _fake_bin(tmp: str) -> str:
-    """偽の `bd`（jira の sync だけ受け、残りは本物へ）と、偽の `gh`（呼ばれ方を記録し、`api` は偽の GitHub へ転送）。"""
+    """偽の `bd`（jira の sync だけ受けて `<FAKE_BD_LOG>.jira` の課題を作り、残りは本物へ）と、
+    偽の `gh`（呼ばれ方を記録し、`api` は偽の GitHub へ転送）。"""
     bin_dir = os.path.join(tmp, "bin")
     real_bd = shutil.which("bd") or "bd"
     write(os.path.join(bin_dir, "bd"), f"""#!{sys.executable}
-import os, sys
+import os, subprocess, sys
 REAL = {real_bd!r}
 args = sys.argv[1:]
 core = [a for i, a in enumerate(args) if a != "--actor" and (i == 0 or args[i - 1] != "--actor")]
 if core[:1] == ["jira"] and "sync" in core:
     with open(os.environ["FAKE_BD_LOG"], "a") as f:
         f.write(" ".join(core) + "\\n")
-    sys.exit(1 if os.environ.get("FAKE_BD_SYNC_FAIL") else 0)
+    if os.environ.get("FAKE_BD_SYNC_FAIL"):
+        sys.exit(1)
+    pending = os.environ["FAKE_BD_LOG"] + ".jira"
+    if os.path.exists(pending):
+        with open(pending) as f:
+            for line in f.read().splitlines():
+                bd_id, title, ref = line.split("\\t")
+                subprocess.run([REAL, "create", "--id", bd_id, "--title", title, "--external-ref", ref, "--silent"],
+                               check=True, capture_output=True)
+        os.remove(pending)
+    sys.exit(0)
 os.execv(REAL, [REAL] + args)
 """)
     write(os.path.join(bin_dir, "gh"), f"""#!{sys.executable}
@@ -923,6 +934,65 @@ def test_tracker_jira() -> None:
             del _local.env
 
 
+def test_tracker_jira_rename() -> None:
+    say("トラッカー jira: 取り込んだ課題を Jira のキーの ID へ付け替える")
+    with tempfile.TemporaryDirectory() as tmp:
+        _local.env = _with_fakes(tmp)
+        try:
+            main_path, wt1, _ = make_repo(tmp, extra="- トラッカー: jira\n")
+            site = "https://x.atlassian.net/browse/"
+            local = new(main_path, "ローカルの課題")
+            adopted = new(main_path, "キーのある adopt 済みの課題")
+            bd(main_path, "update", beads.to_bd_id(adopted), "--external-ref", f"{site}PROJ-11")
+            bd(main_path, "create", "--id", "t-x1a", "--title", "前に取り込んだ", "--external-ref", f"{site}PROJ-7", "--silent")
+            bd(main_path, "dep", "add", beads.to_bd_id(local), "t-x1a")
+            bd(main_path, "comments", "add", "t-x1a", "Jira から来た")
+            bd(main_path, "create", "--id", "proj-8", "--title", "先にある", "--force", "--silent")
+            write(env()["FAKE_BD_LOG"] + ".jira", f"t-x1b\t行き先が既にある\t{site}PROJ-8\n"
+                  f"t-456\t数字だけの hash\t{site}PROJ-9\n")
+            r = run_task(main_path, "sync")
+            ids = {i.bd_id for i in beads.list_issues(main_path)}
+            check("tw sync の取り込みのあと、振り分け前の課題は external_ref のキーの ID になる（数字だけの hash も）",
+                  r.returncode == 0 and {"proj-7", "proj-9", "t-x1b", "proj-8"} <= ids
+                  and not {"t-x1a", "t-456"} & ids, r.stdout + repr(ids))
+            check("行き先が既にあれば付け替えず INVALID の行",
+                  "TRACKER\tINVALID\tt-x1b\tPROJ-8 が既にある（付け替えない）" in r.stdout, r.stdout)
+            issue = beads.show(main_path, beads.to_bd_id(local))
+            comments = beads.comments(main_path, "proj-7")
+            check("依存・comment・版が付いてくる", issue is not None and issue.dependencies == ("proj-7",)
+                  and [c.get("text") for c in comments] == ["Jira から来た"]
+                  and beads.history(main_path, "proj-7") != [], repr(issue and issue.dependencies) + repr(comments))
+            check("ローカルの T-xxx と adopt 済みの T-xxx は付け替えない",
+                  {beads.to_bd_id(local), beads.to_bd_id(adopted)} <= ids, repr(ids))
+            r = run_task(main_path, "status")
+            check("付け替えた課題は Jira のキーで triage に出る", "PROJ-7" in tail_line(r.stdout, "triage")
+                  and "PROJ-9" in tail_line(r.stdout, "triage"), r.stdout)
+
+            r = run_task(wt1, "adopt", "PROJ-7", "--difficulty", "haiku", "--loopable", "N", "--body-file", "-", stdin=BODY)
+            check("adopt はキーの課題に番号を振らない", r.returncode == 0 and r.stdout.startswith("ADOPTED\tPROJ-7\tPROJ-7"),
+                  r.stdout + r.stderr)
+            bd(main_path, "create", "--id", "t-x1c", "--title", "付け替え前", "--external-ref", f"{site}PROJ-10", "--silent")
+            r = run_task(wt1, "adopt", "t-x1c", "--difficulty", "haiku", "--loopable", "N", "--body-file", "-", stdin=BODY)
+            check("adopt はキーの ID へ付け替える", r.returncode == 0 and r.stdout.startswith("ADOPTED\tt-x1c\tPROJ-10"),
+                  r.stdout + r.stderr)
+            r = run_task(wt1, "adopt", "t-x1b", "--difficulty", "haiku", "--loopable", "N", "--body-file", "-", stdin=BODY)
+            ids = {i.bd_id for i in beads.list_issues(main_path)}
+            check("行き先が既にあれば adopt は INVALID で番号も振らない（終了コード3）", r.returncode == 3
+                  and "TRACKER\tINVALID\tt-x1b" in r.stdout and "t-x1b" in ids and "ADOPTED" not in r.stdout,
+                  r.stdout + r.stderr + repr(ids))
+
+            run_task(wt1, "claim", "PROJ-7")
+            work_and_done(wt1, "PROJ-7")
+            r = run_task(wt1, "ship")
+            r = run_task(main_path, "status")
+            check("閉じたキーの課題は jira_close に出る", tail_line(r.stdout, "jira_close") == "jira_close\t1\tPROJ-7", r.stdout)
+            run_task(main_path, "jira-closed", "PROJ-7")
+            r = run_task(main_path, "status")
+            check("jira-closed PROJ-7 で外れる", tail_line(r.stdout, "jira_close") == "jira_close\t0\t-", r.stdout)
+        finally:
+            del _local.env
+
+
 def test_backup() -> None:
     say("バックアップ（git の外の決まった場所）")
     with tempfile.TemporaryDirectory() as tmp:
@@ -1009,6 +1079,7 @@ def main() -> None:
             test_tracker_github_push_only,
             test_tracker_github_bidirectional,
             test_tracker_jira,
+            test_tracker_jira_rename,
             test_backup,
         )
         tests = tuple(t for t in tests if not only or t.__name__ in only)

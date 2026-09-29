@@ -8,7 +8,8 @@
   `bd github pull <番号>…`）、`t` なら Beads から送るだけ。1件の操作はその1件だけを送り、`ship`・`sync` は
   全件を送る。そのあと Project の Status 欄を `gh api graphql` で書く（`bd` は Status 欄を触らない）。
   `bd` へ渡す token は `GITHUB_TOKEN` が無ければ `gh auth token` から取る
-- `jira`: `bd jira sync --pull` だけ。Jira には書かない（`--push` と引数なしの `sync` は打たない）
+- `jira`: `bd jira sync --pull` だけ。Jira には書かない（`--push` と引数なしの `sync` は打たない）。取り込んだ
+  振り分け前の課題は `external_ref` の Jira のキーの ID（`proj-123`）へ付け替える
 - `なし`: 何もしない
 
 GraphQL の枠（1時間に5000点、アカウント単位）は要求の上限で数えられる。`gh project item-list` は
@@ -41,6 +42,7 @@ STATUS_OPTIONS = {
 ISSUE_URL = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/issues/(\d+)$")
 ISSUE_NUMBER = re.compile(r"^(?:gh-|#)?(\d+)$")
 GH_ID = re.compile(r"^gh-(\d+)$")
+JIRA_REF = re.compile(rf"^(?:\S*/browse/)?({layout.JIRA_ID_FRAGMENT})$")
 
 # `bd kv` の控え。値はどれも JSON。
 PROJECT_KEY = "task-workflow.project"  # {"project": "<owner>/<番号>", "id", "field", "options": {名前: ID}}
@@ -561,7 +563,45 @@ def _jira_pull(toplevel: str) -> list[str]:
     r = _bd(toplevel, ["jira", "sync", "--pull"], os.environ.copy())
     if r.returncode != 0:
         return [f"TRACKER\tFAILED\tjira\tbd jira sync --pull: {_tail(r)}"]
-    return ["TRACKER\tOK\tjira\tpulled"]
+    _renamed, lines = jira_rename(toplevel)
+    return lines + ["TRACKER\tOK\tjira\tpulled"]
+
+
+def jira_key(issue: beads.Issue) -> str | None:
+    """`external_ref`（`https://<site>/browse/PROJ-123` かキーそのもの）の Jira のキーの Beads の ID（`proj-123`）。"""
+    m = JIRA_REF.match((issue.external_ref or "").strip())
+    return beads.to_bd_id(m.group(1)) if m else None
+
+
+def jira_rename(toplevel: str, bd_ids: list[str] | None = None) -> tuple[dict[str, str], list[str]]:
+    """Jira のキーのある課題を `external_ref` のキーの ID へ付け替える。`{元: 先}` と出力の行を返す。
+
+    `bd_ids` が無ければ振り分け前（`difficulty`・`loopable` の label が無い）の課題すべて。
+    """
+    issues = beads.list_issues(toplevel)
+    taken = {i.bd_id for i in issues}
+    renamed: dict[str, str] = {}
+    lines: list[str] = []
+    for issue in issues:
+        target = jira_key(issue)
+        if target is None or target == issue.bd_id:
+            continue
+        if bd_ids is None:
+            if any(l.startswith((beads.DIFFICULTY_LABEL, beads.LOOPABLE_LABEL)) for l in issue.labels):
+                continue
+        elif issue.bd_id not in bd_ids:
+            continue
+        shown = beads.to_task_id(issue.bd_id)
+        if target in taken:
+            lines.append(f"TRACKER\tINVALID\t{shown}\t{beads.to_task_id(target)} が既にある（付け替えない）")
+            continue
+        r = beads.run(toplevel, ["rename", issue.bd_id, target], os.path.basename(toplevel))
+        if r.returncode != 0:
+            lines.append(f"TRACKER\tINVALID\t{shown}\tbd rename: {_tail(r)}")
+            continue
+        taken.add(target)
+        renamed[issue.bd_id] = target
+    return renamed, lines
 
 
 # --- 小道具 ---------------------------------------------------------------------------
