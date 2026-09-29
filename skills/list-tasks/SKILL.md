@@ -1,6 +1,6 @@
 ---
 name: list-tasks
-description: "task status の出力から、develop/task/ に登録されている未完了タスクの一覧をテーブル1つで表示し、着手できるものがあれば次の1件を推薦する。ユーザーが「タスク一覧を見せて」「今どのタスクが残ってる？」「次は何をやるべき？」「誰が何を作業中？」と言ったときに使う。読み取り専用で、タスクの実行も登録もしない。旧形式（develop/tasks.json）なら移行の案内だけ出す。"
+description: "tw status の出力から、develop/task/ に登録されている未完了タスクの一覧をテーブル1つで表示し、着手できるものがあれば次の1件を推薦する。ユーザーが「タスク一覧を見せて」「今どのタスクが残ってる？」「次は何をやるべき？」「誰が何を作業中？」と言ったときに使う。読み取り専用で、タスクの実行も登録もしない。旧形式（develop/tasks.json）なら移行の案内だけ出す。"
 ---
 
 未完了タスクを**テーブル1つに要約し、次の1件を推薦する**。**何も書き換えない・実行しない**（実行は
@@ -8,7 +8,7 @@ description: "task status の出力から、develop/task/ に登録されてい�
 タスクファイルは開かない（要約は `summary` にある）。
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py status
+tw status
 ```
 
 行の列は `id / status / difficulty / loopable / dependencies / 着手可否 / 印 / summary`（`id` は `T-xxx`。
@@ -18,12 +18,11 @@ Beads 方式でトラッカーが `github` なら Issue 番号の `GH-<n>` も�
 
 ## 表示のしかた
 
-0. **依存を確かめる**: `${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py` が無ければ、
-   `task-workflow` スキルが張られていないとして `MISSING` を報告して終了する（`install.sh` で
-   `task-workflow` も一緒に張るよう案内する。以下の `task status` はこの `task.py` を指す）。
+0. **依存を確かめる**: `command -v tw` が何も返さなければ、`tw` が PATH に張られていないとして
+   `MISSING` を報告して終了する（`task-workflow` を含めて `./install.sh` を打ち直すよう案内する）。
 
 1. 終了コードが0でなければ表を出さずに終わる: 5（`LEGACY`）は「旧形式（`develop/tasks.json`）。
-   正典「旧形式からの移行」の手順で `task migrate --dry-run` から移す」、6（`MISSING`）は「タスク運用を
+   正典「旧形式からの移行」の手順で `tw migrate --dry-run` から移す」、6（`MISSING`）は「タスク運用を
    始めていない（`/setup-tasks`）」、3 は `INVALID` の理由、1 はエラー出力をそのまま添える。
    **タスクファイルを読んで代用しない。**
 
@@ -53,12 +52,12 @@ Beads 方式でトラッカーが `github` なら Issue 番号の `GH-<n>` も�
 3. テーブルの下に**1行**: 件数（todo／作業中／判断待ち／done／dropped。`counts` から）、`ready` の
    件数、`todo_loopable` の `N` が1件以上なら「うち `/loop` では進まない N 件」。
    続けて、あるものだけ1行ずつ:
-   - `stale` が1件以上: 「取り残しの印: T-xxx（STALE:gone …）。片付けるのは人（`task release T-xxx --force`）」
+   - `stale` が1件以上: 「取り残しの印: T-xxx（STALE:gone …）。片付けるのは人（`tw release T-xxx --force`）」
    - `invalid` が1件以上: 「読めないタスクファイル: T-xxx」
    - `long_summary` に当たるもの（80桁を超える `summary`）: 「`summary` が長すぎる: T-xxx」
    - `legacy_progress`: 「移行の残り: `develop/progress.md`（未解決 n / 注意 m）。振り分けたら消す」
-   - `triage` が1件以上: 「振り分け待ち: <ID>（`/plan-tasks` で `task adopt` する）」
-   - `jira_close` が1件以上: 「Jira で閉じてほしいもの: T-xxx（閉じたら `task jira-closed T-xxx`）」
+   - `triage` が1件以上: 「振り分け待ち: <ID>（`/plan-tasks` で `tw adopt` する）」
+   - `jira_close` が1件以上: 「Jira で閉じてほしいもの: T-xxx（閉じたら `tw jira-closed T-xxx`）」
 
 ## オススメの提示
 
@@ -81,4 +80,4 @@ Beads 方式でトラッカーが `github` なら Issue 番号の `GH-<n>` も�
 ## 出さないもの
 
 タスク本文と `## 結果`、2件目以降の実行計画、推薦したタスクの進め方（本文を読んでいないので中身の
-話はできない）。特定のタスクを読みたいと言われたら `develop/task/T-xxx.md` を1つ開く（Beads 方式では `task show T-xxx`。このスキルの範囲外）。
+話はできない）。特定のタスクを読みたいと言われたら `develop/task/T-xxx.md` を1つ開く（Beads 方式では `tw show T-xxx`。このスキルの範囲外）。

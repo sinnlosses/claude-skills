@@ -42,7 +42,7 @@ TASK_SECTION_STEMS = {"検証コマンド": "検証", "整形コマンド": "整
 DEVELOP_FILES = ("tasks.json", "progress.md", "direction.md")
 # 新形式（`develop/task/` の1件1ファイル）で在ったら旧形式の残りと見なすファイル。
 # `task-workflow` の `cmd_config_doctor` の検査4（`develop/tasks.json`・`develop/progress.md`）
-# と同じ組・同じ案内（`task migrate --dry-run`）に揃える（T-030）。
+# と同じ組・同じ案内（`tw migrate --dry-run`）に揃える（T-030）。
 DEVELOP_LEGACY_FILES = ("tasks.json", "progress.md")
 
 # `docs/history/` は当時の記述をそのまま残すアーカイブなので、どの検査の対象にもしない。
@@ -360,7 +360,7 @@ def main() -> int:
         legacy_present = [f for f in DEVELOP_LEGACY_FILES if os.path.exists(os.path.join(root, "develop", f))]
         if legacy_present:
             leftover = "・".join(f"develop/{f}" for f in legacy_present)
-            note(5, f"{leftover} が残っている（旧形式の残り。`task migrate --dry-run` で移行を確かめる）")
+            note(5, f"{leftover} が残っている（旧形式の残り。`tw migrate --dry-run` で移行を確かめる）")
         elif not task_dir_present:
             note(5, "「## タスク運用」節はあるが develop/task/ が無い")
 

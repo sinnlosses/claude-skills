@@ -12,6 +12,7 @@
 - `docs/` に書くスキルが、索引 `docs/README.md` に1行足す指示を持っていること
 - スクリプトのパスが `${CLAUDE_SKILL_DIR}` 形で書かれ、実在するファイルを指していること
 - 同梱スクリプトが構文として読めること
+- `tw` の指す `task.py` が実行でき、スキルの Markdown が `task.py` を `python3` で呼ぶ形や `` `task …` `` の略記で書いていないこと
 - 兄弟スキルの `scripts/` を `sys.path` に足して `import` しているなら、`REQUIRES` にその
   兄弟スキル名があること
 """
@@ -147,6 +148,30 @@ def check_script_paths(names: list[str]) -> None:
                     fail(f"{os.path.relpath(md, ROOT)}: {bad} は ${{CLAUDE_SKILL_DIR}} で書く")
             if re.search(r"python3 [^\n`]*/Users/", body):
                 fail(f"{os.path.relpath(md, ROOT)}: スクリプトの実行に絶対パスを埋めている")
+
+
+TW_TARGET = os.path.join(SKILLS, "task-workflow", "scripts", "task.py")
+
+
+def check_tw_entry(names: list[str]) -> None:
+    if not os.path.exists(TW_TARGET):
+        fail(f"{os.path.relpath(TW_TARGET, ROOT)} が無い（install.sh の tw の張り先）")
+    else:
+        if not os.access(TW_TARGET, os.X_OK):
+            fail(f"{os.path.relpath(TW_TARGET, ROOT)} に実行ビットが無い（tw から起こせない）")
+        if not read(TW_TARGET).startswith("#!/usr/bin/env python3\n"):
+            fail(f"{os.path.relpath(TW_TARGET, ROOT)} の1行目が #!/usr/bin/env python3 でない")
+    long_form = re.compile(r"python3 [^\n`]*task-workflow/scripts/task\.py")
+    old_abbrev = re.compile(r"`task[ `]")
+    for n in names:
+        for md in markdown_files(n):
+            body = read(md)
+            rel = os.path.relpath(md, ROOT)
+            for i, line in enumerate(body.splitlines(), 1):
+                if long_form.search(line):
+                    fail(f"{rel}:{i}: task.py を python3 で呼んでいる（tw で書く）")
+                if old_abbrev.search(line):
+                    fail(f"{rel}:{i}: `task …` の略記が残っている（tw で書く）")
 
 
 def check_cross_references(names: list[str]) -> None:
@@ -424,6 +449,7 @@ def main() -> None:
     check_frontmatter(names)
     check_readme_index(names)
     check_script_paths(names)
+    check_tw_entry(names)
     check_cross_references(names)
     check_requires(names)
     check_sibling_imports(names)

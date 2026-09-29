@@ -51,7 +51,7 @@ def main() -> None:
     root = args[0] if args else "develop"
 
     if os.path.exists(os.path.join(root, "tasks.json")):
-        print(f"LEGACY\t{os.path.join(root, 'tasks.json')}\ttask migrate --dry-run")
+        print(f"LEGACY\t{os.path.join(root, 'tasks.json')}\ttw migrate --dry-run")
         raise SystemExit(5)
 
     os.makedirs(root, exist_ok=True)

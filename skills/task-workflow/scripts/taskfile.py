@@ -178,7 +178,7 @@ def validate_body(body: str) -> str | None:
         return "本文の最初の見出しより前に文がある"
     headings = tuple(h for h, _ in sections)
     if RESULT_HEADING in headings:
-        return f"{RESULT_HEADING} は task done が書く（本文に入れない）"
+        return f"{RESULT_HEADING} は tw done が書く（本文に入れない）"
     if headings != SECTION_HEADINGS:
         return "本文の見出しが枠と違う（この順に1つずつ置く）: " + "、".join(SECTION_HEADINGS)
     contents = dict(sections)

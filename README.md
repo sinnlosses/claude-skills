@@ -14,6 +14,11 @@ Claude Code のユーザー単位スキル（`~/.claude/skills/`）のソース�
 `~/.claude/agents/`（`CLAUDE_CONFIG_DIR` があればその下の `agents/`）へ張る。スキル名の絞り込みは
 効かず常に全件が対象。
 
+`task-workflow` が対象なら、`./install.sh` はタスク運用のコマンド `tw`（`skills/task-workflow/scripts/task.py`
+へのシンボリックリンク）も `--bin-dir DIR`（無ければ `~/.local/bin`）に張る。`--dest`・`CLAUDE_CONFIG_DIR`
+の影響は受けない。既にある実ファイル・他所を指すリンクの `tw` は触らず警告し、張る先が PATH に無い・
+別の `tw` が先に見つかるときも警告する（PATH への追加はシェルの設定で行う）。
+
 ## 由来
 
 全24スキル。`skills/` にあるものが全てで、この一覧がその索引。
@@ -58,11 +63,11 @@ Claude Code のユーザー単位スキル（`~/.claude/skills/`）のソース�
 ## プロジェクト側に要るもの
 
 タスク系スキルを使うプロジェクトは、`develop/direction.md` を置き（タスクは `develop/task/` に
-1件1ファイルで `task new` が作る）、検証コマンド・整形コマンド・ブランチの3行を CLAUDE.md の
+1件1ファイルで `tw new` が作る）、検証コマンド・整形コマンド・ブランチの3行を CLAUDE.md の
 「## タスク運用」節に書く。**用意するのは `/setup-tasks`**（既にあるファイルは上書きしない）。
 置き場と節の形は `skills/task-workflow/WORKFLOW.md`「ファイル配置と設定ファイル（AGENTS.md → CLAUDE.md の順）」。旧形式
 （`develop/tasks.json`）のプロジェクトでは、タスク系のスキルが `LEGACY` で止まって
-`task migrate` を案内する（同「旧形式からの移行」）。「## タスク運用」節に
+`tw migrate` を案内する（同「旧形式からの移行」）。「## タスク運用」節に
 `- タスクの置き場: beads` を足したプロジェクトは、錠と本文・履歴を Beads に置く（同「Beads 方式」）。
 
 `docs/` 系は逆に、**新規プロジェクトでは何も作らない**（遅延作成。最初に書くべき内容ができた
@@ -100,14 +105,15 @@ Claude Code のユーザー単位スキル（`~/.claude/skills/`）のソース�
 ```
 
 1. `install.sh` の構文、2. `skills/task-workflow/scripts/` の自己テスト
-（`selftest.py` が旧形式の読み取りと `init.py`、`selftest_task.py` が `task` コマンドを一時リポジトリと
+（`selftest.py` が旧形式の読み取りと `init.py`、`selftest_task.py` が `tw` コマンドを一時リポジトリと
 作業ツリー2本で通す。`selftest_beads.py` は Beads 方式を本物の `bd` と偽の `gh`・トラッカー同期で通し、
 `bd` が無ければ飛ばす）、3. リポジトリの整合
 （`scripts/check_repo.py`。frontmatter の `name` とディレクトリ名の一致、この README の
 由来一覧と `skills/` の一致、`${CLAUDE_SKILL_DIR}` で書かれた参照先の実在、スキル名の
 相互参照の実在、`docs/` に書くスキル（`architecture-proposal` `domain-modeling` `research`。
 `check_repo.py` の `DOCS_WRITING_SKILLS`）が索引 `docs/README.md` に1行足す指示を
-持っていること、`agents/*.md` の frontmatter の `name` とファイル名の一致・`description` の有無）。
+持っていること、`agents/*.md` の frontmatter の `name` とファイル名の一致・`description` の有無、`tw` の張り先の
+`task.py` が実行できることとスキルに `task.py` の長い呼び方・`` `task …` `` の略記が残っていないこと）。
 **由来の一覧が索引なので、スキルを足したり消したりしたらここも直す**
 （直し忘れは `./check.sh` が落として教える）。標準ライブラリだけで動く。
 

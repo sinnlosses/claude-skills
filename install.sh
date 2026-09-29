@@ -15,6 +15,9 @@
 #   （対象外のスキルを消さないため）。エージェント定義の掃除は絞り込みの対象が無いので常に走る
 # - **対象を絞ったときは依存も見る**（`skills/<name>/REQUIRES` に1行で書かれた兄弟スキル名）。
 #   張る先に依存先が無ければ警告するだけで、自動では足さない（絞り込みの意図を守るため）
+# - `task-workflow` が対象なら、`task.py` を指す1語のコマンド `tw` を `--bin-dir DIR`（無ければ
+#   `$HOME/.local/bin`）に張る。`--dest`・`CLAUDE_CONFIG_DIR` の影響は受けない。実ファイル・他所を
+#   指すリンクは触らず警告し、張る先が PATH に無い・別の `tw` が先に見つかるときも警告する
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 
@@ -25,6 +28,7 @@ else
   dest="$HOME/.claude/skills"
   agents_dest="$HOME/.claude/agents"
 fi
+bin_dest="$HOME/.local/bin"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -39,6 +43,19 @@ while [ $# -gt 0 ]; do
       ;;
     --dest=*)
       dest="${1#--dest=}"
+      shift
+      ;;
+    --bin-dir)
+      shift
+      if [ $# -eq 0 ]; then
+        echo "--bin-dir には値が要ります" >&2
+        exit 2
+      fi
+      bin_dest="$1"
+      shift
+      ;;
+    --bin-dir=*)
+      bin_dest="${1#--bin-dir=}"
       shift
       ;;
     --)
@@ -121,6 +138,42 @@ else
       fi
     done < "$req"
   done
+fi
+
+link_tw=1
+if [ "$filtered" -eq 1 ]; then
+  link_tw=0
+  for want in "$@"; do
+    [ "$want" = "task-workflow" ] && link_tw=1 && break
+  done
+fi
+if [ "$link_tw" -eq 1 ]; then
+  tw_target="$here/skills/task-workflow/scripts/task.py"
+  link="$bin_dest/tw"
+  mkdir -p "$bin_dest"
+  if [ -e "$link" ] && [ ! -L "$link" ]; then
+    echo "skipped tw （$link が実ファイル/実ディレクトリ。触らない）" >&2
+    warned=1
+  elif [ -L "$link" ] && [ "$(readlink "$link")" != "$tw_target" ]; then
+    echo "skipped tw （$link は別の場所 $(readlink "$link") を指している）" >&2
+    warned=1
+  else
+    ln -sfn "$tw_target" "$link"
+    echo "linked tw -> $link"
+    case ":$PATH:" in
+      *":$bin_dest:"*)
+        found=$(command -v tw || true)
+        if [ -n "$found" ] && [ "$found" != "$link" ]; then
+          echo "warning: PATH で先に見つかる tw は $found （$link より前にある）" >&2
+          warned=1
+        fi
+        ;;
+      *)
+        echo "warning: $bin_dest が PATH に無い。シェルの設定で PATH に足してください" >&2
+        warned=1
+        ;;
+    esac
+  fi
 fi
 
 # agents/ 配下の各エージェント定義（1ファイル1つ）を張る。スキル名の絞り込みは効かず常に全件。

@@ -1,12 +1,12 @@
 ---
 name: next-task
-description: "develop/task/（Beads 方式なら Beads）の未着手タスクを1件選び、task コマンドで着手の印を立て、difficulty のモデルのサブエージェントに委譲し、受け入れてから作業とタスクファイルを1コミットにして main へ送る。ユーザーが「次のタスクを進めて」「タスクをやって」と言ったとき、または /loop と組み合わせて全タスク完了までの自動進行に使う。旧形式（develop/tasks.json）のプロジェクトでは移行の案内を出して止まる。"
+description: "develop/task/（Beads 方式なら Beads）の未着手タスクを1件選び、tw コマンドで着手の印を立て、difficulty のモデルのサブエージェントに委譲し、受け入れてから作業とタスクファイルを1コミットにして main へ送る。ユーザーが「次のタスクを進めて」「タスクをやって」と言ったとき、または /loop と組み合わせて全タスク完了までの自動進行に使う。旧形式（develop/tasks.json）のプロジェクトでは移行の案内を出して止まる。"
 ---
 
 タスクを1サイクルぶん前に進めて終わる（全件進めたいときは `/loop /next-task`。続行/停止は `/loop` が
-決める）。ルールは `task-workflow` スキルの `WORKFLOW.md`（以下「正典」）。以下の `task` は
-`python3 ${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py` の略（変数に入れず、毎回そのまま打つ）。
-**`task` の代わりに台帳やタスクファイルを手で操作しない。**
+決める）。ルールは `task-workflow` スキルの `WORKFLOW.md`（以下「正典」）。`tw` は
+`task-workflow` のタスク運用のコマンド（正典「`tw` コマンドの参照」）。
+**`tw` の代わりに台帳やタスクファイルを手で操作しない。**
 
 ## このプロジェクトの設定（CLAUDE.md の「## タスク運用」節）
 
@@ -14,7 +14,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 
 節に `- タスクの置き場: beads` があれば **Beads 方式**（正典「Beads 方式」）で、下の手順の
 「Beads 方式では」の注記に読み替える（行が無ければファイル方式で、注記は飛ばす）。Beads 方式でトラッカーが
-`github` なら、タスクID は Issue 番号の `GH-<n>` のことがある（`task status` の1列目の形のまま使い、下の
+`github` なら、タスクID は Issue 番号の `GH-<n>` のことがある（`tw status` の1列目の形のまま使い、下の
 `T-xxx` とコミットの件名の `T-xxx:` をそう読み替える）。
 以下の**検証コマンド**・**整形コマンド**はこの節の値に読み替える。`なし` なら打たず、`## 完了条件`
 だけで受け入れを判定してその旨を報告に書く。節が無くても「なし」と決めつけない（CLAUDE.md の
@@ -22,16 +22,15 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 
 ## 手順
 
-0. **依存を確かめる**: `${CLAUDE_SKILL_DIR}/../task-workflow/scripts/task.py` が無ければ、
-   `task-workflow` スキルが張られていないとして `MISSING` を報告して終了する（`install.sh` で
-   `task-workflow` も一緒に張るよう案内する。以下の `task` はこの `task.py` を指す）。
+0. **依存を確かめる**: `command -v tw` が何も返さなければ、`tw` が PATH に張られていないとして
+   `MISSING` を報告して終了する（`task-workflow` を含めて `./install.sh` を打ち直すよう案内する）。
 
-1. **見渡す**: `task status`（Beads 方式でトラッカーが `jira`・`github` なら、先に `task sync` で取り込む。
+1. **見渡す**: `tw status`（Beads 方式でトラッカーが `jira`・`github` なら、先に `tw sync` で取り込む。
    `TRACKER\tFAILED` は報告に添えて先へ進む）。終了コードで分かれる:
 
    | 終了コード | すること |
    | --- | --- |
-   | 5 `LEGACY` | **旧形式**。「このプロジェクトは `develop/tasks.json` の旧形式。正典「旧形式からの移行」の手順で、`main` を出している作業ツリーから `task migrate --dry-run` を打って移す（全作業ツリーの手を止めてから。スキルは移さない）」と案内して終了する |
+   | 5 `LEGACY` | **旧形式**。「このプロジェクトは `develop/tasks.json` の旧形式。正典「旧形式からの移行」の手順で、`main` を出している作業ツリーから `tw migrate --dry-run` を打って移す（全作業ツリーの手を止めてから。スキルは移さない）」と案内して終了する |
    | 6 `MISSING` | タスク運用を始めていない。`/setup-tasks` を案内して終了する |
    | 1・3 | エラー出力か `INVALID` の理由をそのまま報告して終了する（直しに行かない） |
 
@@ -44,7 +43,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 
 2. **取り残しを見る**: 行の `着手可否` が `CLAIMED` で、印の列の作業ツリー名が自分
    （`basename "$(git rev-parse --show-toplevel)"`）なら、前のセッションが途中で落ちている。
-   着手せず、ID と「`task release T-xxx` で捨てる／作業ツリーを見て人が続ける」の2択を添えて
+   着手せず、ID と「`tw release T-xxx` で捨てる／作業ツリーを見て人が続ける」の2択を添えて
    終了する（正典「status と着手の印」）。`stale` 行の他人の印は触らない（片付けるのは人）。
 
 3. **選ぶ**: `着手可否` が `READY` の行から1件。**`/loop` から回っているときは `loopable: N` を
@@ -54,7 +53,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    （選んだら手順3aへ）。候補が無ければ、この順に試す:
    1. `## ユーザーから` に中身がある → `plan-tasks` スキルの手順を**ファイル入口の分だけ**行う
       （`/loop` からでもよい。会話入口とドラフト（`develop/draft/`）には触らない）
-   2. 登録したら `task status` を取り直してこの手順3をやり直す。それでも無ければ、
+   2. 登録したら `tw status` を取り直してこの手順3をやり直す。それでも無ければ、
       「進められるタスクが無い」と、残りの `HOLD`（人の判断待ち）と `N` の ID を添えて終了する
 
 3a. **`HOLD` を決める**（手順3で `HOLD` を選んだときだけ。**委譲せずメインで行う**。サブエージェントは
@@ -66,13 +65,13 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    3. 決まったら、`status: hold` を `status: todo` に直し、答えを
       `## 決まっていること（蒸し返さない）` に日付と「ユーザー決定」を添えて書く（「なし」なら
       置き換える）。このファイルだけを `T-xxx: 判断を焼く` の件名で
-      コミットし、`task ship` で送る（正典「送り出し」。`hold` の切り替えのコミットも同じ `ship`）。
-      **Beads 方式では**、`task show T-xxx` の本文に答えを書き足して
-      `task edit T-xxx --status todo --body-file -` で渡す（コミットも `ship` も要らない）
+      コミットし、`tw ship` で送る（正典「送り出し」。`hold` の切り替えのコミットも同じ `ship`）。
+      **Beads 方式では**、`tw show T-xxx` の本文に答えを書き足して
+      `tw edit T-xxx --status todo --body-file -` で渡す（コミットも `ship` も要らない）
    4. 手順4へ進む（決めた答えが本文にあるので、ここからは通常のタスクと同じく委譲してよい）。
       「やらない」と決まったときも同じく `todo` に戻し、手順4の `claim` のあと手順7で `--dropped` にする
 
-4. **着手の印を立てる**: `task claim T-xxx`。
+4. **着手の印を立てる**: `tw claim T-xxx`。
 
    | 出力 | すること |
    | --- | --- |
@@ -84,7 +83,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 
 4a. **作業ツリーを確かめる**: 検証コマンドの実行に要るもの（依存のインストール済みバイナリなど）と、
    組み立て済みの成果物が揃っているかをメインが確かめる（何を見るかはプロジェクトの CLAUDE.md の
-   立ち上げの記述に従う）。無ければ委譲せず、人に立ち上げを頼んで `task release T-xxx` する。
+   立ち上げの記述に従う）。無ければ委譲せず、人に立ち上げを頼んで `tw release T-xxx` する。
 
 5. **委譲する**: Agent ツールで `difficulty` と同じモデルのサブエージェントへ（メインのモデルは
    判断材料にしない。一致していても委譲する。正典「difficulty とモデルの切り替え」）。
@@ -96,30 +95,30 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    `${CLAUDE_SKILL_DIR}/../retrospect/SKILL.md` を解決した絶対パスに置き換えて渡す。委譲先は
    `${CLAUDE_SKILL_DIR}` を持たない）:
    - タスクID とファイルのパス（`develop/task/T-xxx.md`）。「まずそれを読む。書き足すときはファイルを
-     直に書き換えず、front matter を除いた本文を丸ごと `task edit T-xxx --body-file -` に渡す」。
-     **Beads 方式では** パスの代わりに「`task show T-xxx` で読み、書き足すときは本文を丸ごと
-     `task edit T-xxx --body-file -` に渡す」
-   - 「**最初に、いまのコードで前提を調べ直して `## やること` の中身を書き、`task edit` で渡す**（見出しは
-     登録時から枠にある。空か「なし」を置き換える。`task edit` が、そのとき作業が始まっていたかを
+     直に書き換えず、front matter を除いた本文を丸ごと `tw edit T-xxx --body-file -` に渡す」。
+     **Beads 方式では** パスの代わりに「`tw show T-xxx` で読み、書き足すときは本文を丸ごと
+     `tw edit T-xxx --body-file -` に渡す」
+   - 「**最初に、いまのコードで前提を調べ直して `## やること` の中身を書き、`tw edit` で渡す**（見出しは
+     登録時から枠にある。空か「なし」を置き換える。`tw edit` が、そのとき作業が始まっていたかを
      記録し、受け入れで機械的に確かめられる。作業の後だと `EDITED` の次に `PLAN_AFTER_WORK` の行が出る。
      front matter は付けず `## ` の見出しから渡す）。前提が崩れていて作業が要らないと分かったら、
      作業せず `dropped` にすべき理由を報告する」
    - 「`## 目的・背景` がファイルの存在・パス・行番号を主張していたら、`## やること` を書く前に実物で
      確かめる（他リポジトリなら `ghq` の下を見る）。違っていたら直さず『前提が誤り』と報告する」
-   - 「検証コマンドは `task verify` で打って通す（通ると作業ツリーの中身の鍵が控えられ、受け入れで
+   - 「検証コマンドは `tw verify` で打って通す（通ると作業ツリーの中身の鍵が控えられ、受け入れで
      中身が同じなら検証を省ける。落ちたら `VERIFY_NOT_PASSED` とログのパスが出る）。通したあとに
      ファイルを変えたら打ち直す」
    - 「`develop/task/T-xxx.md` 以外の `develop/` を触らない。コミットしない
-     （`git add -A` もしない）。`task show`・`task edit`・`task verify` のほかの `task` コマンドは打たない」
+     （`git add -A` もしない）。`tw show`・`tw edit`・`tw verify` のほかの `tw` コマンドは打たない」
    - 「完了条件が後段のタスクの本文を直す・分けるよう求めていても、後段には手を付けず申し送りだけ
-     書く（本文の編集と `task new` での分割はメインが受け入れで行う）」
+     書く（本文の編集と `tw new` での分割はメインが受け入れで行う）」
    - 「`git stash` を使わない（stash の山は作業ツリーの間で共有され、別のセッションの退避を
      取り違える）。変更の前後を見比べるなら一時コミットか `git show HEAD:<path>` で見る」
    - 「グローバルへのリンク（`pnpm link --global` など）・ホームのファイル・グローバル設定を
      触らない。必要なら報告に書く」
    - 「外部に捨てる資源（リポジトリ・Project など）を作る前に、`gh auth status` のスコープで
      消せることを確かめる。消せなければ作らずに、人にスコープの追加を頼む」
-   - 「タスクファイルに `## 結果` の節を書かない（`task done` が書く）」
+   - 「タスクファイルに `## 結果` の節を書かない（`tw done` が書く）」
    - 「`develop/draft/` にドラフトを積むときは、ドラフトの形（太字の見出し1行・`根拠`・`出し先` の
      子項目）で書く」
    - 「`/` やホーム全体を `find` で探さない」（`ghq list`・`node_modules` の下など置き場の見当が付く所だけ探す。
@@ -145,9 +144,9 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
      （fork を含む）を立てず、レーンを順に自分で読む」
 
    `loopable: N` のタスク（ユーザーが直接呼んだとき）は委譲せずメインで行う。着手して初めて
-   ユーザーの判断が要ると分かったら、front matter を `loopable: N` に直し、`task release T-xxx`
-   して預ける（直した1行は手順7と同じ形でコミットして `task ship`。Beads 方式では
-   `task edit T-xxx --loopable N` と `task release T-xxx` だけで、コミットは要らない）。判断が重いと分かったら
+   ユーザーの判断が要ると分かったら、front matter を `loopable: N` に直し、`tw release T-xxx`
+   して預ける（直した1行は手順7と同じ形でコミットして `tw ship`。Beads 方式では
+   `tw edit T-xxx --loopable N` と `tw release T-xxx` だけで、コミットは要らない）。判断が重いと分かったら
    `difficulty` を上げてから委譲し直す。委譲し直すときは、前の担当を `TaskStop` で止めてから
    新しい担当を立てる（`SendMessage` で呼び戻さない）。
 
@@ -157,14 +156,14 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    2. **最後の書き込みから30分ほど動きが無ければ、作業ツリーに手を出さずに止める**（目安であって
       厳密な計測を求めない。進捗を尋ねても返らなかった実績が2件あるので、尋ねる段は必須にしない）。
    3. 止めたら最後の状態と `git diff` を読み、**完了条件を満たしていれば手順6で受け入れる**。
-   4. 途中なら、済んだことと残りを明示して**別のサブエージェントに引き継ぐ**。`task release` で
+   4. 途中なら、済んだことと残りを明示して**別のサブエージェントに引き継ぐ**。`tw release` で
       捨てるのは差分が使えないときだけ。
 
 6. **受け入れる**: 作業ツリーを直し始める前に、委譲先の `完了 | N/N` の合図か hand-back が届いていることを
    確かめる。届いていなければ `TaskStop` か `SendMessage` で止めてから触る。報告をそのまま信用しない。
-   最初に `task plan-check T-xxx` を打ち（下の表。ファイル方式・Beads 方式のどちらも同じ形）、
-   `git diff` を読み、整形コマンド → `task verify-check` を打つ（下の2つ目の表。検証を省くか
-   `task verify` で打つかを決める）。方針からズレた実装はその場で直す。
+   最初に `tw plan-check T-xxx` を打ち（下の表。ファイル方式・Beads 方式のどちらも同じ形）、
+   `git diff` を読み、整形コマンド → `tw verify-check` を打つ（下の2つ目の表。検証を省くか
+   `tw verify` で打つかを決める）。方針からズレた実装はその場で直す。
    作業ツリーを cwd にした残りのプロセスが無いかを `ps` で見て、あれば止める。
    **検証コマンドが1回で通らず、打ち直したら通った**ときは、落ちた・打ち直した・通った、を
    一言メモしておく（手順6aで `retrospect` の兆候「運良く助かった」に使う。委譲先の friction log の
@@ -172,27 +171,27 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    **人が止めた・直させた・やり直させた**ときも、そのことだけを一言メモしておく（手順6aの兆候
    「人の差し戻し」。人の発言は写さない）。
 
-   | `task plan-check` の出力 | すること |
+   | `tw plan-check` の出力 | すること |
    | --- | --- |
-   | `PLAN_FIRST` | 次へ（委譲先が作業より先に `## やること` を `task edit` で書いた） |
-   | `PLAN_NOT_FIRST\tT-xxx\tmissing` | 委譲先が `## やること` を書かずに終えた。差分から中身を書き起こして `task edit` で渡す |
-   | `PLAN_NOT_FIRST\tT-xxx\tafter-work` | 作業を始めてから書いた。中身が差分と合っているかを照らし、合わなければ直して `task edit` で渡す |
-   | `PLAN_NOT_FIRST\tT-xxx\tunrecorded` | `task edit` を通さずに書いた（順は分からない）。`after-work` と同じく差分と照らす |
-   | `NOT_OWNER` | 自分の作業ツリーの印が無い（人が `task release --force` した、など）。ID を添えて終了する |
+   | `PLAN_FIRST` | 次へ（委譲先が作業より先に `## やること` を `tw edit` で書いた） |
+   | `PLAN_NOT_FIRST\tT-xxx\tmissing` | 委譲先が `## やること` を書かずに終えた。差分から中身を書き起こして `tw edit` で渡す |
+   | `PLAN_NOT_FIRST\tT-xxx\tafter-work` | 作業を始めてから書いた。中身が差分と合っているかを照らし、合わなければ直して `tw edit` で渡す |
+   | `PLAN_NOT_FIRST\tT-xxx\tunrecorded` | `tw edit` を通さずに書いた（順は分からない）。`after-work` と同じく差分と照らす |
+   | `NOT_OWNER` | 自分の作業ツリーの印が無い（人が `tw release --force` した、など）。ID を添えて終了する |
 
    `PLAN_NOT_FIRST` はどの理由でも、理由の語を一言メモしておく（手順6aで兆候「受け入れのときに
    メインが直したもの」として扱う。札は `制約違反`）。
 
-   | `task verify-check` の出力 | すること |
+   | `tw verify-check` の出力 | すること |
    | --- | --- |
-   | `VERIFIED_SAME\t<木の SHA>` | 検証コマンドを打たずに次へ（委譲先が `task verify` で通した中身と、整形のあとの中身が同じ） |
-   | `NOT_VERIFIED\t<理由>` | `task verify` を打つ（`none`＝委譲先が控えていない・最後の検証が落ちた／`content`＝整形や受け入れの直しで中身が変わった／`head`／`command`）。`VERIFIED`・`VERIFIED_UNSTAMPED` は通った。`VERIFY_NOT_PASSED` なら出力の末尾とログを読んで直し、打ち直す |
+   | `VERIFIED_SAME\t<木の SHA>` | 検証コマンドを打たずに次へ（委譲先が `tw verify` で通した中身と、整形のあとの中身が同じ） |
+   | `NOT_VERIFIED\t<理由>` | `tw verify` を打つ（`none`＝委譲先が控えていない・最後の検証が落ちた／`content`＝整形や受け入れの直しで中身が変わった／`head`／`command`）。`VERIFIED`・`VERIFIED_UNSTAMPED` は通った。`VERIFY_NOT_PASSED` なら出力の末尾とログを読んで直し、打ち直す |
    | `NOTHING` | 検証コマンドが無い。完了条件を目視で確かめる |
 
-   受け入れで作業ツリーを直したら、`task verify-check` から打ち直す。`task ship` が付け替えたときの
+   受け入れで作業ツリーを直したら、`tw verify-check` から打ち直す。`tw ship` が付け替えたときの
    検証は、この控えでは省かれない。
 
-   手順7で `task done` を打ったときの出力に `COMMITS_SINCE_CLAIM` の行が続いたら、次のとおり
+   手順7で `tw done` を打ったときの出力に `COMMITS_SINCE_CLAIM` の行が続いたら、次のとおり
    扱ってから先へ進む（`claim` した時点より後に、委譲先が作ったコミットがあった合図。
    ファイル方式・Beads 方式のどちらも同じ形。控えの無い古い印では出ない）:
 
@@ -210,7 +209,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    コミットのハッシュは書かない）を標準入力で渡す:
 
    ```bash
-   task done T-xxx --result-file - <<'EOF'
+   tw done T-xxx --result-file - <<'EOF'
    - 検証コマンド: 1204 pass / 0 fail（+9）
    - 振り返り: 兆候なし
    EOF
@@ -218,9 +217,9 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 
    `dropped` にするときは `--dropped` を付け、理由を結果に書く。**Beads 方式では**、`DONE` は
    stage せず（`## 結果` は Beads の comment に入る）、コミットは作業のファイルと（積んだなら）
-   ドラフトのファイルだけ。差分が無ければコミットせずに手順8へ進む（`task ship` が `NOTHING` を
+   ドラフトのファイルだけ。差分が無ければコミットせずに手順8へ進む（`tw ship` が `NOTHING` を
    返して閉じる）。ファイル方式では、`DONE` が出たら、**コミットの前に
-   もう一度整形コマンドを打つ**（`タスク運用`節が `なし` なら不要。`task done` が書き込んだ結果の
+   もう一度整形コマンドを打つ**（`タスク運用`節が `なし` なら不要。`tw done` が書き込んだ結果の
    表は手順6で打った分より後にできるので、そのままだと整形コマンドの検査が付け替え後に落ちる）。
    打ったら作業のファイルを**個別に** `git add` し（`git add -A` は使わない）、タスクファイル
    （再整形して改めて `git add` し直す）、手順6aで積んだならドラフトのファイルと一緒に
@@ -228,7 +227,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    （正典「コミットメッセージ」）、末尾はセッションの attribution の指示に従う。知見は
    `## 結果`・`## 注意`・正典の docs・新しいタスクへ置き、`develop/progress.md` には書かない。
 
-7a. **振り返り済みのタスクファイルを消す**: `task prune`（`/loop` から回っているときも）。
+7a. **振り返り済みのタスクファイルを消す**: `tw prune`（`/loop` から回っているときも）。
    消せるものが10件に届くまでは `NOTHING` で何もしないので、削除のコミットは10件ごとに1つになる。
    Beads 方式では常に `NOTHING`。
 
@@ -239,11 +238,11 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    | `DIRTY` | 手順7のコミットに入れ損ねた変更がある。`git status --short` を添えて終了する（捨てない） |
    | `INVALID` | 理由をそのまま報告して終了する（手順7のコミットは送らずに残る） |
 
-8. **送る**: `task ship`（手順7aのコミットも一緒に送る）。
+8. **送る**: `tw ship`（手順7aのコミットも一緒に送る）。
 
    | 出力 | すること |
    | --- | --- |
-   | `SHIPPED` | 完了。`kept=feature/T-xxx` が付いていたら、枝を消せなかったことを報告して人に預ける（消さない）。Beads 方式で続く行に `NOT_CLOSED`・`TRACKER\tFAILED`・`BACKUP\tFAILED` があれば、行を添えて報告する（送れてはいる。`TRACKER` は `task sync` で打ち直せる） |
+   | `SHIPPED` | 完了。`kept=feature/T-xxx` が付いていたら、枝を消せなかったことを報告して人に預ける（消さない）。Beads 方式で続く行に `NOT_CLOSED`・`TRACKER\tFAILED`・`BACKUP\tFAILED` があれば、行を添えて報告する（送れてはいる。`TRACKER` は `tw sync` で打ち直せる） |
    | `NOTHING` | 送るコミットが無い。Beads 方式で作業の差分が無かったときはこれで閉じている（`SHIPPED` と同じく完了として扱う）。ファイル方式では手順7のコミットを入れ損ねているので、`git status --short` を添えて終了する |
    | `MAIN_DIRTY`・`DIRTY` | 本体（か自分）が汚れている。パスを添えて終了する（`main` は動いていない） |
    | `CONFLICT` | 衝突したファイルを添えて人に預ける（`resolving-merge-conflicts` スキルで解ける） |
@@ -255,7 +254,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 ## 完了報告のフォーマット
 
 報告は**人が読むためのもの**で、`/loop` のための行を並べない。`/loop` の続行判断は、同じ会話に
-残っているツールの結果（`task ship` の先頭語と、送ったあとに取り直す `task status`）から行う。
+残っているツールの結果（`tw ship` の先頭語と、送ったあとに取り直す `tw status`）から行う。
 
 1. **結論を1文目に置く**: 送れたときは「`T-xxx <summary>` を完了して main へ送りました。」
    （`dropped` なら「`T-xxx <summary>` を見送って（dropped）main へ送りました。」と理由を1文）。
@@ -268,15 +267,15 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    手順3でタスク化したなら登録したタスクID、`kept=` で枝を消せなかったこと
 4. 検証コマンドの結果（件数。「なし」なら完了条件を目視で確かめたこと）と、手順6aの振り返り
    （`## 結果` に入れた `- 振り返り:` の行そのまま）を1行ずつ
-5. `/loop` で進められる行（取り直した `task status` で `着手可否` が `READY` かつ `loopable` が `Y`）が
+5. `/loop` で進められる行（取り直した `tw status` で `着手可否` が `READY` かつ `loopable` が `Y`）が
    無くなったときだけ1行: 未完了が残っていなければ「全タスク完了」、`HOLD`・`loopable: N` が
    残っていれば、その ID を添えて「残りは人の判断待ち」
 
 書かないもの: 結論と重なる「完了したタスク」の行、手順7aで消したタスクファイルの件数、
-`task status` の件数、`develop/direction.md` の行数、`stale`・`legacy_progress` の行
-（これらは `task status` を打てば人も見られる）。
+`tw status` の件数、`develop/direction.md` の行数、`stale`・`legacy_progress` の行
+（これらは `tw status` を打てば人も見られる）。
 
-**`/loop` の続行判断**（報告ではなく、会話に残ったツールの結果で決める）: `task ship` が `SHIPPED`
-以外、または手順8より前で終了したなら続行しない。`SHIPPED` なら送ったあとに `task status` を
+**`/loop` の続行判断**（報告ではなく、会話に残ったツールの結果で決める）: `tw ship` が `SHIPPED`
+以外、または手順8より前で終了したなら続行しない。`SHIPPED` なら送ったあとに `tw status` を
 取り直し、`着手可否` が `READY` かつ `loopable` が `Y` の行があるか、`## ユーザーから` に中身があれば
 続行し、どちらも無ければ続行しない。

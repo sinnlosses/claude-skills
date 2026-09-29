@@ -1487,7 +1487,7 @@ def test_config_doctor() -> None:
             r.returncode == 1
             and any(
                 l.startswith("legacy\tFOUND\t") and "develop/tasks.json" in l and "develop/progress.md" in l
-                and l.endswith("task migrate --dry-run")
+                and l.endswith("tw migrate --dry-run")
                 for l in lines
             )
             and any(l.startswith("base_branch\tOK") for l in lines)
