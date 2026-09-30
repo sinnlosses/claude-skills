@@ -414,13 +414,18 @@ class ContentKey:
 
 
 def content_key(verify_command: str, cwd: str | None = None) -> ContentKey:
-    """いまの作業ツリーの中身の鍵。
+    """いまの作業ツリーの中身の鍵。"""
+    toplevel = git_toplevel(cwd)
+    head = head_sha_or_none(toplevel) or "-"
+    return ContentKey(head, worktree_tree(toplevel), verify_command)
+
+
+def worktree_tree(toplevel: str) -> str:
+    """いまの作業ツリーの中身の木の SHA。
 
     index を一時ファイルに写して `git add -A` → `git write-tree` するので、`.gitignore` の対象でない
     未追跡のファイルまで入り、本物の index は変わらない。
     """
-    toplevel = git_toplevel(cwd)
-    head = head_sha_or_none(toplevel) or "-"
     real_index = _git(["rev-parse", "--path-format=absolute", "--git-path", "index"], toplevel)
     with tempfile.TemporaryDirectory() as tmp:
         temp_index = os.path.join(tmp, "index")
@@ -431,8 +436,7 @@ def content_key(verify_command: str, cwd: str | None = None) -> ContentKey:
             r = subprocess.run(["git", *args], cwd=toplevel, env=env, capture_output=True, text=True)
             if r.returncode != 0:
                 raise GitCommandError(f"git {' '.join(args)} が失敗（{r.returncode}）: {r.stderr.strip()}")
-        tree = r.stdout.strip()
-    return ContentKey(head, tree, verify_command)
+        return r.stdout.strip()
 
 
 def verify_log_path(cwd: str | None = None) -> str:

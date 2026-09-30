@@ -390,7 +390,7 @@ def test_plan_check() -> None:
 def test_verify_stamp() -> None:
     say("verify・verify-check: Beads 方式でも同じ形で控えて照らす")
     with tempfile.TemporaryDirectory() as tmp:
-        _main, wt1, _wt2 = make_repo(tmp, verify="`echo 3 pass`")
+        main_path, wt1, _wt2 = make_repo(tmp, verify="`echo 3 pass`")
         r = run_task(wt1, "verify")
         check("通れば VERIFIED", r.returncode == 0 and r.stdout.startswith("VERIFIED\t"), r.stdout + r.stderr)
         tree = r.stdout.split("\t")[1] if r.stdout.startswith("VERIFIED\t") else "?"
@@ -399,6 +399,14 @@ def test_verify_stamp() -> None:
         write(os.path.join(wt1, "shared.txt"), "line1\nline2\n")
         r = run_task(wt1, "verify-check")
         check("変えれば NOT_VERIFIED content", r.stdout.strip() == "NOT_VERIFIED\tcontent", r.stdout + r.stderr)
+        write(os.path.join(main_path, "other.txt"), "main\n")
+        git(main_path, "add", "other.txt")
+        git(main_path, "commit", "-q", "-m", "mainだけの変更")
+        r = run_task(wt1, "verify-check")
+        check("main が進めば NOT_VERIFIED base", r.stdout.strip() == "NOT_VERIFIED\tbase", r.stdout + r.stderr)
+        r = run_task(wt1, "verify")
+        check("main を取り込んでから打つ", r.returncode == 0 and r.stdout.startswith("FOLDED\t")
+              and "\nVERIFIED\t" in r.stdout and os.path.exists(os.path.join(wt1, "other.txt")), r.stdout + r.stderr)
 
 
 def test_verify_refuses_unplanned_work() -> None:

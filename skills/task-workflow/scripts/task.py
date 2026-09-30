@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 import beads
+import fold
 import init
 import layout
 import ledger
@@ -547,7 +548,7 @@ def cmd_done(toplevel: str, task_id: str, dropped: bool, result_path: str) -> No
 
 
 def _commits_since_claim(toplevel: str, head: str | None) -> list[str]:
-    """`head`（claim 時の HEAD）から今の HEAD までにできたコミット（古い順、短縮ハッシュ）。
+    """`head`（claim 時の HEAD）から今の HEAD までにできた、主ブランチに無いコミット（古い順、短縮ハッシュ）。
 
     `head` が無い（控えの無い古い印。ファイル方式は owner の `head=`、Beads 方式は metadata の
     `task_claim_head`）か `git log` が引けなければ空のまま返す（`task done` はそれを「委譲先の
@@ -555,7 +556,8 @@ def _commits_since_claim(toplevel: str, head: str | None) -> list[str]:
     """
     if not head:
         return []
-    r = _run_git(toplevel, ["log", "--format=%h", "--reverse", f"{head}..HEAD"])
+    base = ledger.base_branch(toplevel)
+    r = _run_git(toplevel, ["log", "--format=%h", "--reverse", "HEAD", f"^{head}", f"^{base}"])
     if r.returncode != 0:
         return []
     return [line for line in r.stdout.splitlines() if line]
@@ -727,6 +729,13 @@ def cmd_verify(toplevel: str, unplanned_work: Callable[[], list[str]]) -> None:
                 f"先に ## やること を書いて tw edit {shown} --after-work --body-file - で渡し、打ち直す"
             )
         raise SystemExit(10)
+    folded = fold.fold_base(toplevel, ledger.base_branch(toplevel))
+    if folded.kind == "CONFLICT":
+        ledger.clear_verify_stamp(cwd=toplevel)
+        print("CONFLICT\t" + (",".join(folded.conflict_files) or "?"))
+        raise SystemExit(7)
+    if folded.kind == "FOLDED":
+        print(f"FOLDED\t{folded.old_base}..{folded.new_base}")
     before = ledger.content_key(verify_command, cwd=toplevel)
     log_path = ledger.verify_log_path(cwd=toplevel)
     with open(log_path, "w", encoding="utf-8") as log:
@@ -755,6 +764,9 @@ def cmd_verify_check(toplevel: str) -> None:
     stamp = ledger.read_verify_stamp(cwd=toplevel)
     if stamp is None:
         print("NOT_VERIFIED\tnone")
+        return
+    if fold.can_fold(toplevel, ledger.base_branch(toplevel)):
+        print("NOT_VERIFIED\tbase")
         return
     now = ledger.content_key(verify_command, cwd=toplevel)
     if now == stamp:

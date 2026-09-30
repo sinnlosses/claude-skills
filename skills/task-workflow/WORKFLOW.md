@@ -257,8 +257,8 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
    作業より先に書いたかを印に残し、作業の後の初回の記入は拒む）、実装せずに報告して止まる。
    前提が崩れていれば作業せず、`tw done --dropped` にする理由を報告する。メインが `tw plan-check T-xxx`
    （`## やること` を作業より先に書いたか）と差分の有無と `## やること` の中身を見て、2回目へ進めるか決める
-4. 2回目の委譲: 同じ委譲先へ続けて実装させる（`SendMessage`）。条件を満たせば文書の担当（`sonnet` 固定、同時に1匹まで）を並べて起こす（条件・渡す言葉は `next-task/SKILL.md` 手順5c）。`develop/task/` 以外の `develop/` は触らない。検証コマンドは `tw verify` で打つ（通ると作業ツリーの中身の鍵を控える。`## やること` が空のまま作業があれば打たない）
-5. 受け入れ: 差分を読む → 整形コマンド → `tw verify-check`（`VERIFIED_SAME` なら検証を省く。ほかは `tw verify`）
+4. 2回目の委譲: 同じ委譲先へ続けて実装させる（`SendMessage`）。条件を満たせば文書の担当（`sonnet` 固定、同時に1匹まで）を並べて起こす（条件・渡す言葉は `next-task/SKILL.md` 手順5c）。`develop/task/` 以外の `develop/` は触らない。検証コマンドは `tw verify` で打つ（打つ前に主ブランチを未コミットの中身ごと取り込み、衝突したら打たずに `CONFLICT`。通ると作業ツリーの中身の鍵を控える。`## やること` が空のまま作業があれば打たない）
+5. 受け入れ: 差分を読む → 整形コマンド → `tw verify-check`（`VERIFIED_SAME` なら検証を省く。ほかは `tw verify`。主ブランチが進んでいれば `NOT_VERIFIED base` で、`tw verify` が取り込んでから打つ）
 5a. 振り返り（`/loop` からも。`retrospect` の SKILL.md「1件だけ振り返る」）: 兆候に当たったときだけ
    `develop/draft/` にドラフトのファイルを足す
 6. `tw done T-xxx --result-file -`（`status` と `## 結果` を書いて stage。印はまだ消さない）
@@ -283,9 +283,12 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
   （中身がすべて主ブランチにあるコミットは rebase が落とす）。消したファイルを相手が書き換えていたときだけ `CONFLICT`
 - 主ブランチを出している作業ツリーで起こしたときは送る段が無く、印を消して `SHIPPED <主ブランチ>` を返す
 
+`tw verify` が検証の前に主ブランチを取り込むので、`ship` が付け替えるのは、受け入れから送るまでの間に
+主ブランチが進んだときだけ。
+
 | 検証コマンドを打つ時点 | 誰が | なぜ |
 | --- | --- | --- |
-| 受け入れ（`tw done` の前） | スキル | 作業の合否そのもの。整形コマンドもここ。委譲先が `tw verify` で控えた中身と同じなら省く（`tw verify-check`） |
+| 受け入れ（`tw done` の前） | スキル | 作業の合否そのもの。主ブランチを取り込んだあとの中身で打つ。整形コマンドもここ。委譲先が `tw verify` で控えた中身と同じなら省く（`tw verify-check`） |
 | `ship` の中で rebase が実際に付け替えたとき | `tw` | 両側の変更が初めて同じ木に乗る |
 | 主ブランチへ送ったあと | 打たない | fast-forward なので、主ブランチの木は直前に検証した木と同じ |
 
@@ -392,15 +395,15 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 | `new --summary … --difficulty … --loopable Y\|N [--deps T-001,…] [--hold] --body-file <path\|->` | 錠の中で採番してファイルを作る（コミットしない） | `CREATED`・`LOCKED` |
 | `claim T-xxx` | clean・未送りなしを確かめ、主ブランチへ追い付き、印を立て、設定なら枝を切る | `CLAIMED`・`TAKEN`・`NOT_READY`・`DIRTY`・`UNSHIPPED` |
 | `release T-xxx [--force]` | 印を消すだけ（ファイルは戻さない）。`--force` は人が取り残しを片付けるとき | `RELEASED`・`NOT_CLAIMED`・`NOT_OWNER` |
-| `done T-xxx [--dropped] --result-file <path\|->` | `status` と `## 結果` を書いて stage（コミットしない・印は残す）。本文が枠（`## 結果` を除く7節）と違えば書かずに `INVALID`（終了コード3）。`claim` した時点の `HEAD` より後にコミットがあれば `DONE` に続けて知らせる（控えの無い古い印では出さない） | `DONE`（`COMMITS_SINCE_CLAIM` が続くことがある）・`NOT_OWNER`・`INVALID` |
+| `done T-xxx [--dropped] --result-file <path\|->` | `status` と `## 結果` を書いて stage（コミットしない・印は残す）。本文が枠（`## 結果` を除く7節）と違えば書かずに `INVALID`（終了コード3）。`claim` した時点の `HEAD` より後に、主ブランチに無いコミットがあれば `DONE` に続けて知らせる（控えの無い古い印では出さない） | `DONE`（`COMMITS_SINCE_CLAIM` が続くことがある）・`NOT_OWNER`・`INVALID` |
 | `ship` | rebase → （付け替えたら）検証 → ff-only で送る → 印を消す → 作業ブランチから降りる | `SHIPPED`・`NOTHING`・`MAIN_DIRTY`・`CONFLICT`・`VERIFY_FAILED`・`RACE` |
 | `prune [--dry-run] [--min N]` | `HEAD` で `done`・`dropped`・印なし、かつ振り返り済み（`## 結果` に `- 振り返り:` の行がある＝`reviewed`）のタスクファイルを `git rm` して stage（コミットしない）。対象が `--min`（既定10）件に届かなければ何もしない。`--dry-run` は一覧だけ（汚れていても打てる） | 対象ごとに `PRUNE\tT-xxx\treviewed`、最後に `PRUNED\t<N>`／`PLAN\t<N>`（`--dry-run`）。対象が無いか `--min` 件に届かなければ `NOTHING`。`DIRTY` |
 | `migrate [--dry-run]` | 旧形式を変換する（下の「旧形式からの移行」） | `WRITE`・`MOVE`・`LEFTOVER`・`REMOVE`・`PLAN`/`MIGRATED` |
 | `show T-xxx` | タスク1件をタスクファイルの形で出す（読むだけ。ファイル方式は作業ツリーの版、無ければ主ブランチの版） | 本文。無ければ `NOT_READY` |
 | `edit T-xxx [--after-work] --body-file <path\|->` | 本文を丸ごと書き換える（ファイル方式は作業ツリーのタスクファイルで、`todo`・`hold` だけ。ほかの引数は Beads 方式だけ）。着手の印の持ち主が `## やること` に初めて中身を入れたとき、その時点で作業が始まっていたか（`claim` した時点の `HEAD` より後のコミットか、タスク自身のファイルと渡した本文のファイル以外の変更があるか）を1回だけ印に残す（ファイル方式は台帳の印の `plan`、Beads 方式は metadata `task_plan`。値は `first`／`after-work`）。`after-work` になるときは書き込まずに `WORK_BEFORE_PLAN\tT-xxx\t<次の一手>` で止まる（終了コード4）。`--after-work`（両方式）を付けると書き込んで `after-work` を残し、`EDITED` の次に `PLAN_AFTER_WORK\tT-xxx\t作業の後に書いた` の行を足す（作業が始まっていなければ `--after-work` は何も変えず `first`）。front matter 付きの本文は拒む（終了コード2。除いて渡す） | `EDITED`・`NOT_READY`・`WORK_BEFORE_PLAN` |
 | `plan-check T-xxx` | 自分の着手の印について、`## やること` を作業より先に `tw edit` で書いたかを出す（読むだけ） | `PLAN_FIRST\tT-xxx`、そうでなければ `PLAN_NOT_FIRST\tT-xxx\t<理由>`（`missing`＝空か「なし」／`after-work`＝作業が始まってから書いた／`unrecorded`＝`tw edit` を通さずに書いた）。どちらも終了コード0。`NOT_OWNER` |
-| `verify` | 検証コマンドを打つ。打つ前後で作業ツリーの中身の鍵（`HEAD` の SHA・一時の index に `git add -A` して `write-tree` した木の SHA・検証コマンドの文字列。本物の index は変えない）を取り、通って前後で同じなら作業ツリー固有の git dir の `task-verify-stamp` に控える。落ちたら控えを消す。全出力は同じ場所の `task-verify.log`。この作業ツリーが着手の印を持つタスク（`done`・`dropped` にしたものを除く）の `## やること` が空か「なし」のまま作業が始まっていれば（`edit` と同じ判定）、検証コマンドを打たずに控えを消して `PLAN_MISSING` で止まる | `VERIFIED\t<木の SHA>\t<ログのパス>`（控えた）／`VERIFIED_UNSTAMPED\t<ログのパス>`（通ったが検証のあいだに中身が変わったので控えない）／`VERIFY_NOT_PASSED\t<ログのパス>`（終了コード10）。どれも出力の末尾40行が続く。`PLAN_MISSING\tT-xxx\t<次の一手>`（終了コード10。該当するタスクごとに1行）。検証コマンドが無ければ `NOTHING` |
-| `verify-check` | いまの中身の鍵を `verify` の控えと照らす（読むだけ） | `VERIFIED_SAME\t<木の SHA>`（検証を省いてよい）、そうでなければ `NOT_VERIFIED\t<理由>`（`none`＝控えが無い／`head`／`content`／`command`）。どちらも終了コード0。検証コマンドが無ければ `NOTHING` |
+| `verify` | 主ブランチを取り込んでから検証コマンドを打つ。取り込むのは、主ブランチが `HEAD` より先へ進んでいて `HEAD` がその祖先のとき（`claim` のあとに自分のコミットがあれば取り込まず、`ship` が付け替える）で、未コミットの中身を一時のコミットにして `git merge-tree` で主ブランチと合わせ、衝突が無ければ作業ツリーに当てて `HEAD` を主ブランチへ進める（作業は未コミットのまま残る。`git add` 済みの区別は消える）。衝突すれば何も書き換えず、検証コマンドを打たずに控えを消して `CONFLICT` で止まる。打つ前後で作業ツリーの中身の鍵（`HEAD` の SHA・一時の index に `git add -A` して `write-tree` した木の SHA・検証コマンドの文字列。本物の index は変えない）を取り、通って前後で同じなら作業ツリー固有の git dir の `task-verify-stamp` に控える。落ちたら控えを消す。全出力は同じ場所の `task-verify.log`。この作業ツリーが着手の印を持つタスク（`done`・`dropped` にしたものを除く）の `## やること` が空か「なし」のまま作業が始まっていれば（`edit` と同じ判定）、検証コマンドを打たずに控えを消して `PLAN_MISSING` で止まる | 取り込んだときは先頭に `FOLDED\t<前の HEAD>..<主ブランチ>` の1行。`CONFLICT\t<ファイル,…>`（終了コード7）。`VERIFIED\t<木の SHA>\t<ログのパス>`（控えた）／`VERIFIED_UNSTAMPED\t<ログのパス>`（通ったが検証のあいだに中身が変わったので控えない）／`VERIFY_NOT_PASSED\t<ログのパス>`（終了コード10）。どれも出力の末尾40行が続く。`PLAN_MISSING\tT-xxx\t<次の一手>`（終了コード10。該当するタスクごとに1行）。検証コマンドが無ければ `NOTHING` |
+| `verify-check` | いまの中身の鍵を `verify` の控えと照らす（読むだけ） | `VERIFIED_SAME\t<木の SHA>`（検証を省いてよい）、そうでなければ `NOT_VERIFIED\t<理由>`（`none`＝控えが無い／`base`＝主ブランチが進んでいて `verify` が取り込める／`head`／`content`／`command`）。どちらも終了コード0。検証コマンドが無ければ `NOTHING` |
 | `config-doctor` | このリポジトリが今の読み取りに合っているかを点検する（**読むだけ。`--fix` は無い**）。主ブランチが何で決まったか・設定ファイルがどちらか・「## タスク運用」の3行・旧形式の残り、の4検査を必ず1行ずつ出す | `base_branch`・`config_file`・`claude_md_lines`・`legacy` の4行。各行の2語目が `OK`／`MISSING`／`MISSING_LINE`／`BAD_BRANCH`／`NO_SECTION`／`FOUND`／`INVALID` |
 
 | 終了コード | 先頭語 | 意味 | スキルがすること |
@@ -412,7 +415,7 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 | 4 | `TAKEN`・`NOT_READY`・`DIRTY`・`MAIN_DIRTY`・`UNSHIPPED`・`LOCKED`・`NOT_OWNER`・`WORK_BEFORE_PLAN` | いまの状態では進めない | 各スキルの表のとおり（別の1件を選ぶか止まる） |
 | 5 | `LEGACY` | 旧形式 | 下の「旧形式からの移行」を案内して止まる |
 | 6 | `MISSING` | タスク運用を始めていない | `/setup-tasks` を案内して止まる |
-| 7 | `CONFLICT` | rebase が衝突した（`--abort` 済み） | 衝突したファイルを添えて人に預ける |
+| 7 | `CONFLICT` | `ship` の rebase が衝突した（`--abort` 済み）か、`verify` の主ブランチの取り込みが衝突した（何も書き換えていない） | 衝突したファイルを添えて人に預ける。`verify` の衝突を解いたあとは `tw verify` を打ち直す |
 | 8 | `VERIFY_FAILED` | 付け替えのあとの検証が落ちた（送っていない） | 出力の末尾を添えて人に預ける |
 | 9 | `RACE` | `--ff-only` が3回続けて落ちた | 人に預ける |
 | 10 | `VERIFY_NOT_PASSED`・`PLAN_MISSING` | `verify` の検証コマンドが落ちた／`## やること` が空のまま作業があるので打たなかった（どちらも控えは消えた） | `VERIFY_NOT_PASSED` は出力の末尾（全体はログ）を読んで直し、`PLAN_MISSING` は `## やること` を書いて `tw edit T-xxx --after-work` で渡し、打ち直す |
