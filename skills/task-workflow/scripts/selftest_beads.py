@@ -387,6 +387,34 @@ def test_plan_check() -> None:
               r.stdout + r.stderr + str(metadata(c)))
 
 
+def test_plan_check_unrecorded() -> None:
+    say("plan-check: edit が印を残さない書き方は PLAN_NOT_FIRST unrecorded")
+    planned = BODY.replace("## やること\n", "## やること\n1. 書く\n")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp)
+        d = new(main_path, "claim の前に書く")
+        e = new(main_path, "持ち主でない作業ツリーから書く")
+
+        def metadata(task_id: str) -> dict:
+            issue = beads.show(main_path, beads.to_bd_id(task_id))
+            raw = issue.raw.get("metadata") if issue is not None else None
+            return raw if isinstance(raw, dict) else {}
+
+        run_task(wt1, "edit", d, "--body-file", "-", stdin=planned)
+        run_task(wt1, "claim", d)
+        r = run_task(wt1, "plan-check", d)
+        check("claim の前に書くと印が無く PLAN_NOT_FIRST unrecorded", r.returncode == 0
+              and r.stdout.strip() == f"PLAN_NOT_FIRST\t{d}\tunrecorded" and beads.PLAN_KEY not in metadata(d),
+              r.stdout + r.stderr + str(metadata(d)))
+
+        run_task(wt2, "claim", e)
+        run_task(wt1, "edit", e, "--body-file", "-", stdin=planned)
+        r = run_task(wt2, "plan-check", e)
+        check("持ち主でない作業ツリーから書くと PLAN_NOT_FIRST unrecorded", r.returncode == 0
+              and r.stdout.strip() == f"PLAN_NOT_FIRST\t{e}\tunrecorded" and beads.PLAN_KEY not in metadata(e),
+              r.stdout + r.stderr + str(metadata(e)))
+
+
 def test_verify_stamp() -> None:
     say("verify・verify-check: Beads 方式でも同じ形で控えて照らす")
     with tempfile.TemporaryDirectory() as tmp:
@@ -1080,6 +1108,7 @@ def main() -> None:
             test_cycle_done_ship_and_dropped,
             test_done_commits_since_claim,
             test_plan_check,
+            test_plan_check_unrecorded,
             test_verify_stamp,
             test_verify_refuses_unplanned_work,
             test_stale_markers,
