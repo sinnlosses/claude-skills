@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -1153,6 +1154,21 @@ def test_verify_folds_base_before_check() -> None:
         check("検証コマンドは1回だけ", _verify_count(tmp) == 1, str(_verify_count(tmp)))
 
 
+def test_worktree_tree_sees_same_size_edit_after_second_boundary() -> None:
+    print("ledger.worktree_tree: index の書き込みと同じ秒にした同サイズの書き換えを、秒をまたいでから測っても拾う")
+    with tempfile.TemporaryDirectory() as tmp:
+        git(tmp, "init", "-q")
+        write(os.path.join(tmp, "n"), NOTES)
+        git(tmp, "add", "n")
+        git(tmp, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "初期")
+        git(tmp, "checkout", "-q", "--", "n")
+        git(tmp, "status", "--short")
+        write(os.path.join(tmp, "n"), NOTES.replace("e\n", "E\n"))
+        time.sleep(1.2)
+        head_tree = git(tmp, "rev-parse", "HEAD^{tree}").stdout.strip()
+        check("書き換えた木は HEAD の木と違う", ledger.worktree_tree(tmp) != head_tree)
+
+
 def test_verify_conflict_before_check() -> None:
     print("task.py verify: 取り込みが衝突すれば、何も書き換えず検証コマンドを打たずに CONFLICT で止まる")
     with tempfile.TemporaryDirectory() as tmp:
@@ -1805,6 +1821,7 @@ def main() -> None:
         test_verify_refuses_unplanned_work,
         test_verify_stamp,
         test_verify_folds_base_before_check,
+        test_worktree_tree_sees_same_size_edit_after_second_boundary,
         test_verify_conflict_before_check,
         test_verify_check_reports_base,
         test_ship_fast_forward,

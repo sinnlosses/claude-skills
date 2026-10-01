@@ -430,7 +430,8 @@ def worktree_tree(toplevel: str) -> str:
     with tempfile.TemporaryDirectory() as tmp:
         temp_index = os.path.join(tmp, "index")
         if os.path.exists(real_index):
-            shutil.copyfile(real_index, temp_index)
+            # mtime を保たないと、同じ秒・同じ大きさの書き換えを git が無変更とみなす
+            shutil.copy2(real_index, temp_index)
         env = {**os.environ, "GIT_INDEX_FILE": temp_index}
         for args in (["add", "-A"], ["write-tree"]):
             r = subprocess.run(["git", *args], cwd=toplevel, env=env, capture_output=True, text=True)
