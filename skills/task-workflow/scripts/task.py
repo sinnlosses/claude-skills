@@ -715,6 +715,14 @@ def _print_plan_check(shown: str, has_plan: bool, mark: str | None) -> None:
 VERIFY_TAIL_LINES = 40
 
 
+def _print_verify_end(folded_line: str, verdict: str, tail: str) -> None:
+    print(verdict)
+    print(tail)
+    if folded_line:
+        print(folded_line)
+    print(verdict)
+
+
 def cmd_verify(toplevel: str, unplanned_work: Callable[[], list[str]]) -> None:
     verify_command = ship.read_verify_command(toplevel)
     if verify_command is None:
@@ -734,8 +742,10 @@ def cmd_verify(toplevel: str, unplanned_work: Callable[[], list[str]]) -> None:
         ledger.clear_verify_stamp(cwd=toplevel)
         print("CONFLICT\t" + (",".join(folded.conflict_files) or "?"))
         raise SystemExit(7)
+    folded_line = ""
     if folded.kind == "FOLDED":
-        print(f"FOLDED\t{folded.old_base}..{folded.new_base}")
+        folded_line = f"FOLDED\t{folded.old_base}..{folded.new_base}"
+        print(folded_line)
     before = ledger.content_key(verify_command, cwd=toplevel)
     log_path = ledger.verify_log_path(cwd=toplevel)
     with open(log_path, "w", encoding="utf-8") as log:
@@ -744,16 +754,15 @@ def cmd_verify(toplevel: str, unplanned_work: Callable[[], list[str]]) -> None:
         tail = "\n".join(f.read().splitlines()[-VERIFY_TAIL_LINES:])
     if r.returncode != 0:
         ledger.clear_verify_stamp(cwd=toplevel)
-        print(f"VERIFY_NOT_PASSED\t{log_path}")
-        print(tail)
+        _print_verify_end(folded_line, f"VERIFY_NOT_PASSED\t{log_path}", tail)
         raise SystemExit(10)
     if ledger.content_key(verify_command, cwd=toplevel) != before:
         ledger.clear_verify_stamp(cwd=toplevel)
-        print(f"VERIFIED_UNSTAMPED\t{log_path}")
+        verdict = f"VERIFIED_UNSTAMPED\t{log_path}"
     else:
         ledger.write_verify_stamp(before, cwd=toplevel)
-        print(f"VERIFIED\t{before.tree}\t{log_path}")
-    print(tail)
+        verdict = f"VERIFIED\t{before.tree}\t{log_path}"
+    _print_verify_end(folded_line, verdict, tail)
 
 
 def cmd_verify_check(toplevel: str) -> None:

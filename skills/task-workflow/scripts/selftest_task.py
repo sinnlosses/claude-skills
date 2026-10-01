@@ -993,6 +993,7 @@ def test_verify_stamp() -> None:
         check("通れば VERIFIED と木の SHA とログのパス（終了コード0）", r.returncode == 0 and first.startswith("VERIFIED\t")
               and len(first.split("\t")) == 3 and os.path.exists(first.split("\t")[2]), r.stdout + r.stderr)
         check("出力の末尾を続ける", "3 pass" in r.stdout, r.stdout)
+        check("最後の行だけで判定が取れる", r.stdout.splitlines()[-1] == first, r.stdout)
         check("本物の index（中身・stage）は変わらない", index_state() == before)
         tree = first.split("\t")[1]
         check("控えた中身と同じなら VERIFIED_SAME", verify_check() == f"VERIFIED_SAME\t{tree}")
@@ -1028,6 +1029,8 @@ def test_verify_stamp() -> None:
         r = run_task(wt1, "verify")
         check("落ちれば VERIFY_NOT_PASSED（終了コード10）と出力の末尾", r.returncode == 10
               and r.stdout.startswith("VERIFY_NOT_PASSED\t") and "fail" in r.stdout, r.stdout + r.stderr)
+        check("落ちた回も最後の行だけで判定が取れる", r.stdout.splitlines()[-1] == r.stdout.splitlines()[0]
+              and r.stdout.splitlines()[-1].startswith("VERIFY_NOT_PASSED\t"), r.stdout)
         check("落ちた回は控えを消す", verify_check() == "NOT_VERIFIED\tnone")
         os.remove(os.path.join(wt1, "ignored", "fail"))
         r = run_task(wt1, "verify")
@@ -1037,6 +1040,8 @@ def test_verify_stamp() -> None:
         r = run_task(wt1, "verify")
         check("検証のあいだに中身が変われば VERIFIED_UNSTAMPED（控えない）", r.returncode == 0
               and r.stdout.startswith("VERIFIED_UNSTAMPED\t"), r.stdout + r.stderr)
+        check("VERIFIED_UNSTAMPED も最後の行だけで判定が取れる",
+              r.stdout.splitlines()[-1].startswith("VERIFIED_UNSTAMPED\t"), r.stdout)
         check("VERIFIED_UNSTAMPED のあとは控えが無い", verify_check() == "NOT_VERIFIED\tnone")
         os.remove(os.path.join(wt1, "ignored", "touch"))
         os.remove(os.path.join(wt1, "out.txt"))
@@ -1117,6 +1122,7 @@ def test_verify_folds_base_before_check() -> None:
         lines = r.stdout.splitlines()
         check("FOLDED のあとに VERIFIED", r.returncode == 0 and lines[0] == f"FOLDED\t{claim_head}..{new_base}"
               and lines[1].startswith("VERIFIED\t"), r.stdout + r.stderr)
+        check("最後の2行で FOLDED と判定が取れる", lines[-2] == lines[0] and lines[-1] == lines[1], r.stdout)
         check("HEAD は main と同じ", git(wt1, "rev-parse", "HEAD").stdout.strip() == new_base)
         status = git(wt1, "status", "--short").stdout
         check("作業は未コミットのまま残る", status.splitlines() == [" M notes.txt", "?? work.txt"], status)
@@ -1163,6 +1169,8 @@ def test_verify_check_reports_base() -> None:
         write(os.path.join(wt1, "work.txt"), "x\n")
         r = run_task(wt1, "verify")
         check("main が進んでいなければ取り込まない", r.stdout.startswith("VERIFIED\t"), r.stdout + r.stderr)
+        check("取り込まない回は末尾に FOLDED が出ない", "FOLDED" not in r.stdout
+              and r.stdout.splitlines()[-1].startswith("VERIFIED\t"), r.stdout)
         _advance_main(main_path, NOTES, extra="other.txt")
 
         r = run_task(wt1, "verify-check")
