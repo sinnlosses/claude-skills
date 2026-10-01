@@ -211,6 +211,22 @@ def has_plan(body: str) -> bool:
     return not is_blank(dict(_frame_sections(body)[1]).get(PLAN_HEADING, ""))
 
 
+def changed_frame_sections(old_body: str, new_body: str) -> list[str]:
+    """`## 目的・背景`・`## 完了条件` のうち、中身が `old_body` と違う節の見出し。
+
+    行末の空白と連続する空行の数は無視する。`old_body` に節が無いときは比べない。
+    """
+    old = dict(_frame_sections(old_body)[1])
+    new = dict(_frame_sections(new_body)[1])
+    return [h for h in FILLED_SECTIONS if h in old and _squeeze(old[h]) != _squeeze(new.get(h, ""))]
+
+
+def _squeeze(content: str) -> str:
+    lines = [line.rstrip() for line in content.split("\n")]
+    kept = [line for i, line in enumerate(lines) if line or (i > 0 and lines[i - 1])]
+    return "\n".join(kept).strip()
+
+
 def set_result_section(body: str, content: str) -> str:
     """本文の `## 結果` 節を `content` に置き換える（無ければ末尾に足す。3.3・3.4・5.7）。
 

@@ -387,6 +387,41 @@ def test_plan_check() -> None:
               r.stdout + r.stderr + str(metadata(c)))
 
 
+def test_edit_frame_guard() -> None:
+    say("edit: ## 目的・背景・## 完了条件 がいまの本文と違う本文は --change-frame なしで拒む")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, _wt1, _wt2 = make_repo(tmp)
+        a = new(main_path, "守る本文")
+        other = BODY.replace("## 目的・背景\nx", "## 目的・背景\n別のタスクの目的")
+
+        def current() -> str:
+            issue = beads.show(main_path, beads.to_bd_id(a))
+            return json.dumps(issue.raw if issue is not None else {}, sort_keys=True, default=str)
+
+        before = current()
+        r = run_task(main_path, "edit", a, "--body-file", "-", stdin=other)
+        check("別のタスクの本文は FRAME_CHANGED（終了コード4）で拒み、書き込まない", r.returncode == 4
+              and r.stdout.startswith(f"FRAME_CHANGED\t{a}\t") and "--change-frame" in r.stdout
+              and "## 目的・背景" in r.stdout and current() == before, r.stdout + r.stderr)
+        r = run_task(main_path, "edit", a, "--body-file", "-", stdin=BODY.replace("- 通る", "- 通らない"))
+        check("## 完了条件 だけ違っても拒む", r.returncode == 4 and r.stdout.startswith("FRAME_CHANGED\t")
+              and "## 完了条件" in r.stdout and current() == before, r.stdout + r.stderr)
+        r = run_task(main_path, "edit", a, "--change-frame", "--body-file", "-", stdin=other)
+        issue = beads.show(main_path, beads.to_bd_id(a))
+        check("--change-frame を付ければ書き込む", r.returncode == 0 and r.stdout.startswith(f"EDITED\t{a}")
+              and issue is not None and "別のタスクの目的" in str(issue.raw.get("description")), r.stdout + r.stderr)
+        planned = other.replace("## やること\n", "## やること\n1. 書く\n")
+        r = run_task(main_path, "edit", a, "--body-file", "-", stdin=planned)
+        check("## やること だけの書き換えは通る", r.returncode == 0 and r.stdout.startswith("EDITED\t"),
+              r.stdout + r.stderr)
+        r = run_task(main_path, "edit", a, "--body-file", "-", stdin=planned.replace("別のタスクの目的", "別のタスクの目的  ") + "\n\n")
+        check("行末の空白と末尾の改行だけの差は通る", r.returncode == 0 and r.stdout.startswith("EDITED\t"),
+              r.stdout + r.stderr)
+        r = run_task(main_path, "edit", a, "--status", "hold")
+        check("--status だけの edit は本文を比べない", r.returncode == 0 and r.stdout.startswith("EDITED\t"),
+              r.stdout + r.stderr)
+
+
 def test_plan_check_unrecorded() -> None:
     say("plan-check: edit が印を残さない書き方は PLAN_NOT_FIRST unrecorded")
     planned = BODY.replace("## やること\n", "## やること\n1. 書く\n")
@@ -1108,6 +1143,7 @@ def main() -> None:
             test_cycle_done_ship_and_dropped,
             test_done_commits_since_claim,
             test_plan_check,
+            test_edit_frame_guard,
             test_plan_check_unrecorded,
             test_verify_stamp,
             test_verify_refuses_unplanned_work,

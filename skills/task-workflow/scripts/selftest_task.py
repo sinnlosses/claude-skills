@@ -900,6 +900,20 @@ def test_edit_and_plan_check() -> None:
         r = run_task(wt1, "plan-check", "T-103")
         check("claim 後にコミットしてから書いても after-work", r.stdout.strip() == "PLAN_NOT_FIRST\tT-103\tafter-work", r.stdout)
 
+        other = planned.replace("## 目的・背景\nx", "## 目的・背景\n別のタスクの目的")
+        r = run_task(wt1, "edit", "T-103", "--body-file", "-", stdin=other)
+        task, _ = taskfile.read_task_file(task_file("T-103"))
+        check("別のタスクの本文は FRAME_CHANGED（終了コード4）で拒み、書き込まない", r.returncode == 4
+              and r.stdout.startswith("FRAME_CHANGED\tT-103\t") and "--change-frame" in r.stdout
+              and task is not None and "別のタスクの目的" not in task.body, r.stdout + r.stderr)
+        r = run_task(wt1, "edit", "T-103", "--change-frame", "--body-file", "-", stdin=other)
+        task, _ = taskfile.read_task_file(task_file("T-103"))
+        check("--change-frame を付ければ書き込む", r.returncode == 0 and r.stdout.startswith("EDITED\tT-103")
+              and task is not None and "別のタスクの目的" in task.body, r.stdout + r.stderr)
+        r = run_task(wt1, "edit", "T-103", "--body-file", "-", stdin=other.replace("1. 書く", "1. 直す"))
+        check("## やること だけの書き換えは通る", r.returncode == 0 and r.stdout.startswith("EDITED\tT-103"),
+              r.stdout + r.stderr)
+
         r = run_task(wt1, "edit", "T-103", "--summary", "x")
         check("ファイル方式の edit は --body-file のほかは終了コード2", r.returncode == 2, r.stdout + r.stderr)
         r = run_task(wt1, "edit", "T-103", "--body-file", "-", stdin="---\nid: T-103\n---\n\n" + planned)

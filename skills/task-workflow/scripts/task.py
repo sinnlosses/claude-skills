@@ -582,7 +582,7 @@ PLAN_AFTER_WORK = "after-work"
 def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
     """ファイル方式の `edit`。本文だけを書き換え、`## やること` を初めて書いた時点の判定を印に残す。"""
     if any([args.summary, args.difficulty, args.loopable, args.status]) or not args.body_file:
-        print("usage: ファイル方式の edit は --body-file（と --after-work）だけ（ほかはタスクファイルを直に直す）", file=sys.stderr)
+        print("usage: ファイル方式の edit は --body-file（と --after-work・--change-frame）だけ（ほかはタスクファイルを直に直す）", file=sys.stderr)
         raise SystemExit(2)
     task_id = args.task_id
     if not taskfile.ID_PATTERN.match(task_id):
@@ -604,6 +604,7 @@ def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
     if error is not None:
         print(f"usage: {error}", file=sys.stderr)
         raise SystemExit(2)
+    _refuse_frame_change(task_id, taskfile.changed_frame_sections(task.body, body), args.change_frame)
 
     root = ledger.ledger_root(cwd=toplevel)
     owner = ledger.read_owner(ledger.claim_dir(root, task_id))
@@ -628,6 +629,15 @@ def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
     print(f"EDITED\t{task_id}")
     if state == PLAN_AFTER_WORK:
         print(f"PLAN_AFTER_WORK\t{task_id}\t作業の後に書いた")
+
+
+def _refuse_frame_change(shown: str, changed: list[str], allowed: bool) -> None:
+    if changed and not allowed:
+        print(
+            f"FRAME_CHANGED\t{shown}\t書き込んでいない。{'・'.join(changed)}がいまの本文と違う。"
+            f"変えてよいなら --change-frame を付けて打ち直す"
+        )
+        raise SystemExit(4)
 
 
 def _refuse_plan_after_work(shown: str, state: str, after_work: bool) -> None:
@@ -1532,6 +1542,13 @@ def cmd_beads_edit(toplevel: str, args: argparse.Namespace) -> None:
         if error is not None:
             print(f"usage: {error}", file=sys.stderr)
             raise SystemExit(2)
+        current = beads.compose_body(
+            str(issue.raw.get("description") or ""),
+            str(issue.raw.get("acceptance_criteria") or ""),
+            str(issue.raw.get("notes") or ""),
+            None,
+        )
+        _refuse_frame_change(shown, taskfile.changed_frame_sections(current, body), args.change_frame)
         parts = beads.split_body(body)
         cmd += ["--body-file", "-", "--acceptance", parts.acceptance, "--notes", parts.notes]
         stdin = parts.description
@@ -1755,6 +1772,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_edit.add_argument("--loopable", default=None, choices=taskfile.LOOPABLE_VALUES)
     p_edit.add_argument("--status", default=None, choices=("todo", "hold"))
     p_edit.add_argument("--after-work", dest="after_work", action="store_true")
+    p_edit.add_argument("--change-frame", dest="change_frame", action="store_true")
 
     # 以下は Beads 方式だけ。
 
