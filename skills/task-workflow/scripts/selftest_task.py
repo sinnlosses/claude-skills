@@ -176,6 +176,19 @@ def test_taskfile_parse() -> None:
     filled_plan = BODY.replace("## やること\n", "## やること\n1. 書く\n")
     check("登録時にやることを書いた本文は拒む", taskfile.validate_new_body(filled_plan) is not None)
     check("着手後の本文（やることあり）は validate_body を通る", taskfile.validate_body(filled_plan) is None)
+    named = BODY.replace("## やること\n", "## やること\n### 1. 書く\nx\n\n### 名指すファイル\n- `src/a.py`（直す）\n- `docs/`\n\n")
+    check("--with-plan は名指すファイルつきの本文を通す", taskfile.validate_new_body(named, with_plan=True) is None)
+    check("名指すファイルを読む（説明と次の行を除く）", taskfile.plan_files(named) == (("src/a.py", "docs/"), None),
+          repr(taskfile.plan_files(named)))
+    check("--with-plan でも名指すファイルの小見出しが無ければ拒む", taskfile.validate_new_body(filled_plan, with_plan=True) is not None)
+    check("--with-plan でも中身の無い ## やること は拒む", taskfile.validate_new_body(BODY, with_plan=True) is not None)
+    check("名指すファイルの形の違う行は拒む",
+          taskfile.validate_new_body(named.replace("- `docs/`", "docs/"), with_plan=True) is not None)
+    check("名指すファイルの .. を含むパスは拒む",
+          taskfile.validate_new_body(named.replace("`docs/`", "`../x`"), with_plan=True) is not None)
+    check("名指すファイルの絶対パスは拒む",
+          taskfile.validate_new_body(named.replace("`docs/`", "`/etc/x`"), with_plan=True) is not None)
+    check("--with-plan なしでは名指すファイルつきでも拒む（今までどおり）", taskfile.validate_new_body(named) is not None)
     check(
         "本文で結果の名前に言及しただけなら通る（見出しではない）",
         taskfile.validate_new_body(BODY.replace("## 参考情報\n", "## 参考情報\n`## 結果`セクションは作業後に追加します\n"))
@@ -925,6 +938,102 @@ def test_edit_and_plan_check() -> None:
         r = run_task(wt1, "edit", "T-104", "--body-file", "-", stdin=planned)
         check("done のタスクは NOT_READY（終了コード4）", r.returncode == 4
               and r.stdout.strip() == "NOT_READY\tT-104\tdone", r.stdout + r.stderr)
+
+
+def test_registered_plan() -> None:
+    print("task.py new --with-plan・claim・plan-check: 登録時の計画が名指すファイルが着手時までに変わったかを知らせる")
+
+    def plan_body(*paths: str) -> str:
+        listed = "".join(f"- `{p}`\n" for p in paths)
+        return BODY.replace("## やること\n", f"## やること\n### 1. 書く\nx\n\n### 名指すファイル\n{listed}\n")
+
+    def new_id(r: subprocess.CompletedProcess) -> str:
+        return r.stdout.split("\t")[1] if r.stdout.startswith("CREATED\t") else ""
+
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp, branch="切らない")
+        write(os.path.join(main_path, "src", "a.txt"), "a\n")
+        write(os.path.join(main_path, "other.txt"), "o\n")
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "src を足す")
+        root = ledger.ledger_root(cwd=main_path)
+
+        r = run_task(main_path, "new", "--summary", "無いファイル", "--difficulty", "sonnet", "--loopable", "Y",
+                     "--with-plan", "--body-file", "-", stdin=plan_body("nothing.txt"))
+        check("木に無いパスを名指すと終了コード2で、ファイルも控えも作らない", r.returncode == 2
+              and "nothing.txt" in r.stderr and not os.path.isdir(os.path.join(main_path, "develop", "task"))
+              and not os.path.isdir(os.path.join(root, ledger.PLAN_BASE_DIR_NAME)), r.stdout + r.stderr)
+        r = run_task(main_path, "new", "--summary", "引数なし", "--difficulty", "sonnet", "--loopable", "Y",
+                     "--body-file", "-", stdin=plan_body("shared.txt"))
+        check("--with-plan なしで中身のある ## やること は終了コード2（今までどおり）", r.returncode == 2
+              and "--with-plan" in r.stderr, r.stdout + r.stderr)
+
+        r = run_task(main_path, "new", "--summary", "変わらない", "--difficulty", "sonnet", "--loopable", "Y",
+                     "--with-plan", "--body-file", "-", stdin=plan_body("shared.txt"))
+        same = new_id(r)
+        r2 = run_task(main_path, "new", "--summary", "変わる", "--difficulty", "sonnet", "--loopable", "Y",
+                      "--with-plan", "--body-file", "-", stdin=plan_body("src/"))
+        changed = new_id(r2)
+        r3 = run_task(main_path, "new", "--summary", "書かない", "--difficulty", "sonnet", "--loopable", "Y",
+                      "--body-file", "-", stdin=BODY)
+        unplanned = new_id(r3)
+        head = git(main_path, "rev-parse", "main").stdout.strip()
+        check("--with-plan の登録は CREATED で、主ブランチの SHA を台帳に控える", same != "" and changed != ""
+              and ledger.read_plan_base(root, same) == head and ledger.read_plan_base(root, changed) == head,
+              r.stdout + r.stderr + r2.stdout + r2.stderr)
+        check("書かない登録は控えを作らない", unplanned != "" and ledger.read_plan_base(root, unplanned) is None, r3.stdout)
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "登録")
+        write(os.path.join(main_path, "other.txt"), "o2\n")
+        write(os.path.join(main_path, "src", "new.txt"), "n\n")
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "主ブランチが進む")
+        tip = git(main_path, "rev-parse", "main").stdout.strip()
+
+        run_task(wt1, "claim", same)
+        r = run_task(wt1, "plan-check", same)
+        check("名指したファイルが変わっていなければ PLAN_REGISTERED（終了コード0）", r.returncode == 0
+              and r.stdout.strip() == f"PLAN_REGISTERED\t{same}\t{head}", r.stdout + r.stderr)
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        with open(os.path.join(wt1, "develop", "task", f"{same}.md"), encoding="utf-8") as f:
+            current = taskfile.parse(f.read())[0]
+        r = run_task(wt1, "edit", same, "--body-file", "-",
+                     stdin=current.body.replace("## 注意\n", "## 注意\n作業中の知見\n") if current else "")
+        check("PLAN_REGISTERED のあとは作業してからの書き足しも WORK_BEFORE_PLAN にならない", r.returncode == 0
+              and r.stdout.strip() == f"EDITED\t{same}", r.stdout + r.stderr)
+
+        run_task(wt2, "claim", changed)
+        r = run_task(wt2, "plan-check", changed)
+        check("名指したファイルが変わっていれば PLAN_STALE と変わったファイル（終了コード0）", r.returncode == 0
+              and r.stdout.strip() == f"PLAN_STALE\t{changed}\tsrc/new.txt", r.stdout + r.stderr)
+        check("claim が判定した主ブランチの先端を印に控える", ledger.read_plan_tip(root, changed) == tip)
+        write(os.path.join(main_path, "src", "later.txt"), "l\n")
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "着手のあとに主ブランチが進む")
+        r = run_task(wt2, "plan-check", changed)
+        check("着手のあとに主ブランチが進んでも判定は変わらない", r.stdout.strip() == f"PLAN_STALE\t{changed}\tsrc/new.txt", r.stdout)
+        r = run_task(wt2, "edit", changed, "--body-file", "-", stdin=plan_body("src/", "shared.txt"))
+        r2 = run_task(wt2, "plan-check", changed)
+        check("PLAN_STALE のあとに書き直すと PLAN_FIRST", r.returncode == 0
+              and r2.stdout.strip() == f"PLAN_FIRST\t{changed}", r.stdout + r.stderr + r2.stdout)
+
+        git(wt1, "checkout", "--", ".")
+        git(wt1, "clean", "-fdq")
+        run_task(wt1, "release", same)
+        git(wt1, "merge", "-q", "--ff-only", "main")
+        run_task(wt1, "claim", unplanned)
+        r = run_task(wt1, "plan-check", unplanned)
+        check("登録時に書いていなければ PLAN_NOT_FIRST missing（今までどおり）", r.returncode == 0
+              and r.stdout.strip() == f"PLAN_NOT_FIRST\t{unplanned}\tmissing", r.stdout + r.stderr)
+        run_task(wt1, "release", unplanned)
+
+        git(wt1, "merge", "-q", "--ff-only", "main")
+        run_task(wt1, "claim", same)
+        _claim_work_and_done(wt1, same)
+        r = run_task(wt1, "ship")
+        check("ship で送ったタスクの控えは消える", r.stdout.startswith("SHIPPED\t")
+              and ledger.read_plan_base(root, same) is None and ledger.read_plan_base(root, changed) == head,
+              r.stdout + r.stderr)
 
 
 def test_verify_refuses_unplanned_work() -> None:
@@ -1818,6 +1927,7 @@ def main() -> None:
         test_body_frame_check,
         test_done_commits_since_claim,
         test_edit_and_plan_check,
+        test_registered_plan,
         test_verify_refuses_unplanned_work,
         test_verify_stamp,
         test_verify_folds_base_before_check,

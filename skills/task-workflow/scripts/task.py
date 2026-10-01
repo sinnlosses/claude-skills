@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shlex
@@ -358,10 +359,11 @@ def cmd_new(toplevel: str, args: argparse.Namespace) -> None:
             raise SystemExit(2)
 
     body = read_body(args.body_file)
-    error = taskfile.validate_new_body(body)
+    error = taskfile.validate_new_body(body, args.with_plan)
     if error is not None:
         print(f"usage: {error}", file=sys.stderr)
         raise SystemExit(2)
+    plan_base = _registered_plan_base(toplevel, body) if args.with_plan else None
 
     root = ledger.ledger_root(cwd=toplevel)
     if not ledger.acquire_lock(root):
@@ -397,9 +399,51 @@ def cmd_new(toplevel: str, args: argparse.Namespace) -> None:
             f.write(rendered)
 
         ledger.write_last_id(root, number)
+        if plan_base is not None:
+            ledger.write_plan_base(root, task_id, plan_base)
         print(f"CREATED\t{task_id}\t{layout.TASK_DIR}/{task_id}.md")
     finally:
         ledger.release_lock(root)
+
+
+def _registered_plan_base(toplevel: str, body: str) -> str:
+    """`--with-plan` で控える SHA（`HEAD` と主ブランチの分かれ目）。名指すファイルがその木に無ければ終了コード2。"""
+    base = ledger.base_branch(toplevel)
+    r = _run_git(toplevel, ["merge-base", "HEAD", base])
+    if r.returncode != 0:
+        print(f"INVALID\t{base} との分かれ目が引けない（{r.stderr.strip()}）")
+        raise SystemExit(3)
+    sha = r.stdout.strip()
+    paths, _ = taskfile.plan_files(body)
+    missing = [p for p in paths if _run_git(toplevel, ["cat-file", "-e", f"{sha}:{p.rstrip('/')}"]).returncode != 0]
+    if missing:
+        print(
+            f"usage: {taskfile.PLAN_FILES_HEADING} の {', '.join(missing)} が {base} に無い"
+            "（新しいファイルは置くディレクトリを名指す）",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    return sha
+
+
+def _registered_plan_changes(toplevel: str, base_sha: str | None, tip: str | None, body: str) -> list[str] | None:
+    """登録時の計画が名指すファイルのうち、控えた `base_sha` から `tip` までに変わったもの。控えが無ければ `None`。"""
+    if base_sha is None:
+        return None
+    if tip is None or _run_git(toplevel, ["cat-file", "-e", f"{base_sha}^{{commit}}"]).returncode != 0:
+        return ["(控えた SHA が無い)"]
+    paths, _ = taskfile.plan_files(body)
+    if not paths:
+        return ["(名指すファイルが読めない)"]
+    r = _run_git(toplevel, ["diff", "--name-only", base_sha, tip, "--", *paths])
+    if r.returncode != 0:
+        return ["(差分が引けない)"]
+    return [line for line in r.stdout.splitlines() if line]
+
+
+def _base_tip(toplevel: str) -> str | None:
+    r = _run_git(toplevel, ["rev-parse", ledger.base_branch(toplevel)])
+    return r.stdout.strip() if r.returncode == 0 else None
 
 
 # --- claim（5.5） -----------------------------------------------------------
@@ -438,6 +482,14 @@ def cmd_claim(toplevel: str, task_id: str) -> None:
         elapsed = format_elapsed(age) if age is not None else "?"
         print(f"TAKEN\t{task_id}\t{owner.get('worktree', '?')}\t{elapsed}")
         raise SystemExit(4)
+
+    plan_base = ledger.read_plan_base(root, task_id)
+    if plan_base is not None and taskfile.has_plan(task.body):
+        tip = _base_tip(toplevel)
+        if tip is not None:
+            ledger.write_plan_tip(root, task_id, tip)
+        if _registered_plan_changes(toplevel, plan_base, tip, task.body) == []:
+            ledger.write_plan_mark(root, task_id, PLAN_REGISTERED)
 
     _claim_branch_out(toplevel, task_id, branch_setting, base, branch_after_sync, f"{layout.TASK_DIR}/{task_id}.md")
 
@@ -577,6 +629,7 @@ def _print_commits_since_claim(toplevel: str, shown_id: str, head: str | None) -
 
 PLAN_FIRST = "first"
 PLAN_AFTER_WORK = "after-work"
+PLAN_REGISTERED = "registered"
 
 
 def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
@@ -680,7 +733,9 @@ def cmd_plan_check(toplevel: str, task_id: str) -> None:
     if err is not None or task is None:
         print(f"INVALID\t{err or '読めない'}")
         raise SystemExit(3)
-    _print_plan_check(task_id, taskfile.has_plan(task.body), ledger.read_plan_mark(root, task_id))
+    plan_base = ledger.read_plan_base(root, task_id)
+    stale = _registered_plan_changes(toplevel, plan_base, ledger.read_plan_tip(root, task_id), task.body)
+    _print_plan_check(task_id, taskfile.has_plan(task.body), ledger.read_plan_mark(root, task_id), plan_base, stale)
 
 
 def _plan_state(toplevel: str, head: str | None, body_file: str, own_path: str | None) -> str:
@@ -712,9 +767,18 @@ def _porcelain_paths(out: str) -> list[str]:
     return paths
 
 
-def _print_plan_check(shown: str, has_plan: bool, mark: str | None) -> None:
+def _print_plan_check(
+    shown: str, has_plan: bool, mark: str | None, plan_base: str | None, stale: list[str] | None
+) -> None:
+    """`stale` は登録時の計画が名指すファイルのうち着手時までに変わったもの（`_registered_plan_changes`）。"""
     if has_plan and mark == PLAN_FIRST:
         print(f"PLAN_FIRST\t{shown}")
+        return
+    if has_plan and mark == PLAN_REGISTERED:
+        print(f"PLAN_REGISTERED\t{shown}\t{plan_base or '?'}")
+        return
+    if has_plan and mark is None and stale is not None:
+        print(f"PLAN_STALE\t{shown}\t{','.join(stale) or '?'}")
         return
     reason = "missing" if not has_plan else (mark or "unrecorded")
     print(f"PLAN_NOT_FIRST\t{shown}\t{reason}")
@@ -811,6 +875,7 @@ def _release_own_claims_when_shipped(root: str, toplevel: str) -> list[str]:
         t = tasks.get(tid)
         if t is not None and t.status in ("done", "dropped"):
             ledger.release_claim(root, tid, toplevel)
+            ledger.clear_plan_base(root, tid)
             released.append(tid)
     return released
 
@@ -1270,10 +1335,11 @@ def cmd_beads_new(toplevel: str, args: argparse.Namespace) -> None:
             print(f"usage: --deps の {d!r} が T-999・GH-5・PROJ-123 の形式でない", file=sys.stderr)
             raise SystemExit(2)
     body = read_body(args.body_file)
-    error = taskfile.validate_new_body(body)
+    error = taskfile.validate_new_body(body, args.with_plan)
     if error is not None:
         print(f"usage: {error}", file=sys.stderr)
         raise SystemExit(2)
+    plan_base = _registered_plan_base(toplevel, body) if args.with_plan else None
 
     snap = _beads_snapshot(toplevel)
     missing = [d for d in deps if d not in snap.issues]
@@ -1289,6 +1355,10 @@ def cmd_beads_new(toplevel: str, args: argparse.Namespace) -> None:
         cmd = ["create", "--id", bd_id, "--title", summary, "--body-file", "-", "-l", labels, "--silent"]
         if parts.acceptance:
             cmd += ["--acceptance", parts.acceptance]
+        if parts.notes:
+            cmd += ["--notes", parts.notes]
+        if plan_base is not None:
+            cmd += ["--metadata", json.dumps({beads.PLAN_BASE_KEY: plan_base})]
         if args.hold:
             cmd += ["-s", beads.HOLD_STATUS]
         if deps:
@@ -1381,6 +1451,18 @@ def cmd_beads_claim(toplevel: str, task_id: str) -> None:
     head = ledger.head_sha_or_none(cwd=toplevel)
     if head is not None:
         claim_args += ["--set-metadata", f"{beads.CLAIM_HEAD_KEY}={head}"]
+    metadata = issue.raw.get("metadata")
+    plan_base = metadata.get(beads.PLAN_BASE_KEY) if isinstance(metadata, dict) else None
+    plan = str(issue.raw.get("notes") or "")
+    if plan_base and not taskfile.is_blank(plan):
+        tip = _base_tip(toplevel)
+        if tip is not None:
+            claim_args += ["--set-metadata", f"{beads.PLAN_TIP_KEY}={tip}"]
+        plan_body = f"{taskfile.PLAN_HEADING}\n{plan}\n"
+        if _registered_plan_changes(toplevel, plan_base, tip, plan_body) == []:
+            claim_args += ["--set-metadata", f"{beads.PLAN_KEY}={PLAN_REGISTERED}"]
+        else:
+            claim_args += ["--unset-metadata", beads.PLAN_KEY]
     r = beads.run(toplevel, claim_args, actor)
     if r.returncode != 0:
         again = beads.show(toplevel, bd_id)
@@ -1609,8 +1691,13 @@ def cmd_beads_plan_check(toplevel: str, task_id: str) -> None:
         print(f"NOT_OWNER\t{shown}")
         raise SystemExit(4)
     metadata = issue.raw.get("metadata")
-    mark = metadata.get(beads.PLAN_KEY) if isinstance(metadata, dict) else None
-    _print_plan_check(shown, not taskfile.is_blank(str(issue.raw.get("notes") or "")), mark)
+    metadata = metadata if isinstance(metadata, dict) else {}
+    plan = str(issue.raw.get("notes") or "")
+    plan_base = metadata.get(beads.PLAN_BASE_KEY) or None
+    stale = _registered_plan_changes(
+        toplevel, plan_base, metadata.get(beads.PLAN_TIP_KEY) or None, f"{taskfile.PLAN_HEADING}\n{plan}\n"
+    )
+    _print_plan_check(shown, not taskfile.is_blank(plan), metadata.get(beads.PLAN_KEY) or None, plan_base, stale)
 
 
 def cmd_beads_adopt(toplevel: str, args: argparse.Namespace) -> None:
@@ -1729,6 +1816,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_new.add_argument("--loopable", required=True, choices=taskfile.LOOPABLE_VALUES)
     p_new.add_argument("--deps", default="")
     p_new.add_argument("--hold", action="store_true")
+    p_new.add_argument("--with-plan", action="store_true")
     p_new.add_argument("--body-file", required=True)
 
     p_claim = sub.add_parser("claim")

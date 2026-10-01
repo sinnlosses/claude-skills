@@ -57,8 +57,12 @@ LAST_ID_KEY = "task-workflow.last-id"
 CLAIM_BRANCH_KEY = "task_branch"
 # claim した時点の HEAD の SHA（`task done` が委譲先のコミットを知らせるのに使う）。
 CLAIM_HEAD_KEY = "task_claim_head"
-# `## やること` を初めて書いた時点の判定（`first`・`after-work`）。
+# `## やること` を初めて書いた時点の判定（`first`・`after-work`）か、登録時の計画のまま進めてよい（`registered`）。
 PLAN_KEY = "task_plan"
+# 登録時に `## やること` を書いたときの主ブランチの SHA（`tw new --with-plan`）。
+PLAN_BASE_KEY = "task_plan_base"
+# 登録時の計画を判定した、着手時の主ブランチの先端。
+PLAN_TIP_KEY = "task_plan_tip"
 RESULT_HEADING = taskfile.RESULT_HEADING
 
 # 本文の節のうち、`description` 以外へ入るもの。

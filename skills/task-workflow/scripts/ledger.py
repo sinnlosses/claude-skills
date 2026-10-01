@@ -1,4 +1,4 @@
-"""共有の `.git` の中に置く台帳（着手の印・採番の錠・最後の番号）。
+"""共有の `.git` の中に置く台帳（着手の印・採番の錠・最後の番号・登録時の計画の控え）。
 
 正典は `docs/task-workflow-redesign.md` の4.2〜4.3。台帳はクローンに1つ
 （`git rev-parse --path-format=absolute --git-common-dir` の下）で、コミットしないので
@@ -308,7 +308,46 @@ def write_plan_mark(root: str, task_id: str, state: str) -> None:
 
 
 def read_plan_mark(root: str, task_id: str) -> str | None:
-    path = os.path.join(claim_dir(root, task_id), PLAN_FILE_NAME)
+    return _read_line(os.path.join(claim_dir(root, task_id), PLAN_FILE_NAME))
+
+
+PLAN_TIP_FILE_NAME = "plan-tip"
+
+
+def write_plan_tip(root: str, task_id: str, sha: str) -> None:
+    """登録時の計画を判定した、着手時の主ブランチの先端を印のディレクトリに残す。"""
+    with open(os.path.join(claim_dir(root, task_id), PLAN_TIP_FILE_NAME), "w", encoding="utf-8") as f:
+        f.write(f"{sha}\n")
+
+
+def read_plan_tip(root: str, task_id: str) -> str | None:
+    return _read_line(os.path.join(claim_dir(root, task_id), PLAN_TIP_FILE_NAME))
+
+
+# --- plan-base（登録時に `## やること` を書いたときの主ブランチの SHA） -----
+
+PLAN_BASE_DIR_NAME = "plan-base"
+
+
+def write_plan_base(root: str, task_id: str, sha: str) -> None:
+    d = os.path.join(root, PLAN_BASE_DIR_NAME)
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, task_id), "w", encoding="utf-8") as f:
+        f.write(f"{sha}\n")
+
+
+def read_plan_base(root: str, task_id: str) -> str | None:
+    return _read_line(os.path.join(root, PLAN_BASE_DIR_NAME, task_id))
+
+
+def clear_plan_base(root: str, task_id: str) -> None:
+    try:
+        os.remove(os.path.join(root, PLAN_BASE_DIR_NAME, task_id))
+    except FileNotFoundError:
+        pass
+
+
+def _read_line(path: str) -> str | None:
     if not os.path.exists(path):
         return None
     with open(path, encoding="utf-8") as f:

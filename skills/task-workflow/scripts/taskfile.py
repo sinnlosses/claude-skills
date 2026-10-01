@@ -13,6 +13,7 @@ YAML にしない理由・見出しの意味は正典を参照（同ファイル
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 import layout
@@ -25,6 +26,8 @@ LOOPABLE_VALUES = ("Y", "N")
 # 本文の枠（WORKFLOW.md「タスクファイル」）。7つの見出しを必ずこの順で置き、要らない欄は空か「なし」にする。
 PURPOSE_HEADING = "## 目的・背景"
 PLAN_HEADING = "## やること"
+# 登録時に書いた `## やること` が名指すファイル（`tw new --with-plan`）。1行1つの「- `パス`」。
+PLAN_FILES_HEADING = "### 名指すファイル"
 ACCEPTANCE_HEADING = "## 完了条件"
 CAUTION_HEADING = "## 注意"
 SECTION_HEADINGS = (
@@ -155,15 +158,54 @@ def read_task_file(path: str) -> tuple[Task | None, str | None]:
     return task, None
 
 
-def validate_new_body(body: str) -> str | None:
+def validate_new_body(body: str, with_plan: bool = False) -> str | None:
     """`task new`・`task adopt` の本文検査。枠の検査に加え、`## やること` は空か「なし」に限る
-    （登録時に書いた手順は着手までに古くなる）。問題が無ければ `None`。"""
+    （登録時に書いた手順は着手までに古くなる）。`with_plan`（`tw new --with-plan`）なら逆に
+    `## やること` の中身と `### 名指すファイル` を求める。問題が無ければ `None`。"""
     error = validate_body(body)
     if error is not None:
         return error
+    if with_plan:
+        if not has_plan(body):
+            return f"--with-plan には {PLAN_HEADING} の中身が要る"
+        return plan_files(body)[1]
     if has_plan(body):
-        return f"{PLAN_HEADING} は着手直後に書く（登録時は空か「{EMPTY_MARK}」）"
+        return (
+            f"{PLAN_HEADING} は着手直後に書く（登録時は空か「{EMPTY_MARK}」。"
+            "すぐ着手するなら --with-plan を付ける）"
+        )
     return None
+
+
+def plan_files(body: str) -> tuple[tuple[str, ...], str | None]:
+    """`## やること` の `### 名指すファイル` に並んだパス。形が違えば `((), 理由)`。
+
+    小見出しの下は、次の `### ` 見出しか節の終わりまで、空でない行がすべて「- `パス`」
+    （後ろに説明を続けてよい）。パスはリポジトリの根からの相対で、`/`・`~` で始まらず `..` を含まない。
+    """
+    lines = dict(_frame_sections(body)[1]).get(PLAN_HEADING, "").split("\n")
+    starts = [i for i, line in enumerate(lines) if line.rstrip() == PLAN_FILES_HEADING]
+    if len(starts) != 1:
+        return (), f"{PLAN_HEADING} に {PLAN_FILES_HEADING} の小見出しを1つ置く（{len(starts)}個ある）"
+    paths: list[str] = []
+    for line in lines[starts[0] + 1:]:
+        if line.startswith("### "):
+            break
+        if not line.strip():
+            continue
+        m = _PLAN_FILE_LINE.match(line.rstrip())
+        if m is None:
+            return (), f"{PLAN_FILES_HEADING} の行が「- `パス`」の形でない: {line.strip()}"
+        path = m.group(1)
+        if path.startswith(("/", "~")) or ".." in path.split("/"):
+            return (), f"{PLAN_FILES_HEADING} の {path} はリポジトリの根からの相対パスにする"
+        paths.append(path)
+    if not paths:
+        return (), f"{PLAN_FILES_HEADING} にパスが1つも無い"
+    return tuple(paths), None
+
+
+_PLAN_FILE_LINE = re.compile(r"^- `([^`]+)`.*$")
 
 
 def validate_body(body: str) -> str | None:

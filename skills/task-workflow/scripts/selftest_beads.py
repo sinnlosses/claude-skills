@@ -450,6 +450,63 @@ def test_plan_check_unrecorded() -> None:
               r.stdout + r.stderr + str(metadata(e)))
 
 
+def plan_body(*paths: str) -> str:
+    listed = "".join(f"- `{p}`\n" for p in paths)
+    return BODY.replace("## やること\n", f"## やること\n### 1. 書く\nx\n\n### 名指すファイル\n{listed}\n")
+
+
+def test_registered_plan() -> None:
+    say("new --with-plan・claim・plan-check: 登録時の計画が名指すファイルが着手時までに変わったかを知らせる")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp)
+        write(os.path.join(main_path, "src", "a.txt"), "a\n")
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "src を足す")
+        head = git(main_path, "rev-parse", "main").stdout.strip()
+
+        def metadata(task_id: str) -> dict:
+            issue = beads.show(main_path, beads.to_bd_id(task_id))
+            raw = issue.raw.get("metadata") if issue is not None else None
+            return raw if isinstance(raw, dict) else {}
+
+        r = run_task(main_path, "new", "--summary", "無いファイル", "--difficulty", "sonnet", "--loopable", "Y",
+                     "--with-plan", "--body-file", "-", stdin=plan_body("nothing.txt"))
+        check("木に無いパスを名指すと終了コード2", r.returncode == 2 and "nothing.txt" in r.stderr, r.stdout + r.stderr)
+        same = new(main_path, "変わらない", "--with-plan", body=plan_body("shared.txt"))
+        changed = new(main_path, "変わる", "--with-plan", body=plan_body("src/"))
+        unplanned = new(main_path, "書かない")
+        shown = run_task(main_path, "show", same).stdout
+        check("--with-plan の登録は SHA を metadata に控え、## やること を notes に入れる",
+              metadata(same).get(beads.PLAN_BASE_KEY) == head and "### 名指すファイル" in shown
+              and beads.PLAN_BASE_KEY not in metadata(unplanned), shown + str(metadata(same)))
+        write(os.path.join(main_path, "src", "new.txt"), "n\n")
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "主ブランチが進む")
+        tip = git(main_path, "rev-parse", "main").stdout.strip()
+
+        run_task(wt1, "claim", same)
+        r = run_task(wt1, "plan-check", same)
+        check("名指したファイルが変わっていなければ PLAN_REGISTERED", r.returncode == 0
+              and r.stdout.strip() == f"PLAN_REGISTERED\t{same}\t{head}"
+              and metadata(same).get(beads.PLAN_TIP_KEY) == tip, r.stdout + r.stderr + str(metadata(same)))
+
+        run_task(wt2, "claim", changed)
+        r = run_task(wt2, "plan-check", changed)
+        check("名指したファイルが変わっていれば PLAN_STALE と変わったファイル", r.returncode == 0
+              and r.stdout.strip() == f"PLAN_STALE\t{changed}\tsrc/new.txt", r.stdout + r.stderr)
+        r = run_task(wt2, "edit", changed, "--body-file", "-", stdin=plan_body("src/", "shared.txt"))
+        r2 = run_task(wt2, "plan-check", changed)
+        check("PLAN_STALE のあとに書き直すと PLAN_FIRST", r.returncode == 0
+              and r2.stdout.strip() == f"PLAN_FIRST\t{changed}", r.stdout + r.stderr + r2.stdout)
+
+        run_task(wt1, "release", same)
+        git(wt1, "merge", "-q", "--ff-only", "main")
+        run_task(wt1, "claim", unplanned)
+        r = run_task(wt1, "plan-check", unplanned)
+        check("登録時に書いていなければ PLAN_NOT_FIRST missing（今までどおり）", r.returncode == 0
+              and r.stdout.strip() == f"PLAN_NOT_FIRST\t{unplanned}\tmissing", r.stdout + r.stderr)
+
+
 def test_verify_stamp() -> None:
     say("verify・verify-check: Beads 方式でも同じ形で控えて照らす")
     with tempfile.TemporaryDirectory() as tmp:
@@ -906,6 +963,12 @@ def test_tracker_github_bidirectional() -> None:
             a = new(main_path, "Issue を先に立てる")
             check("new は Issue を立てて GH-<番号> を返す", a == "GH-2" and beads.show(main_path, "gh-2") is not None, a)
             check("仮の ID は残らない", not any(i.bd_id.startswith("gh-new-") for i in beads.list_issues(main_path)))
+            p = new(main_path, "登録時に計画を書く", "--with-plan", body=plan_body("shared.txt"))
+            issue = beads.show(main_path, beads.to_bd_id(p))
+            raw = issue.raw if issue is not None else {}
+            meta = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+            check("付け替えたあとも登録時の計画（notes）と控え（metadata）が残る", p.startswith("GH-")
+                  and "### 名指すファイル" in str(raw.get("notes")) and bool(meta.get(beads.PLAN_BASE_KEY)), str(raw))
             b = new(main_path, "後段", "--deps", a)
             r = run_task(wt1, "status")
             check("status は GH-<n> の行と依存", rows(r.stdout).get(b, [""] * 8)[5] == f"BLOCKED:{a}", r.stdout)
@@ -1145,6 +1208,7 @@ def main() -> None:
             test_plan_check,
             test_edit_frame_guard,
             test_plan_check_unrecorded,
+            test_registered_plan,
             test_verify_stamp,
             test_verify_refuses_unplanned_work,
             test_stale_markers,
