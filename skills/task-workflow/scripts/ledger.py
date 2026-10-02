@@ -506,3 +506,33 @@ def clear_verify_stamp(cwd: str | None = None) -> None:
     path = os.path.join(git_dir(cwd), VERIFY_STAMP_FILE_NAME)
     if os.path.exists(path):
         os.remove(path)
+
+
+# --- open-claim（`claim` から `done` までの作業ツリー固有の控え）------------
+
+OPEN_CLAIMS_DIR_NAME = "task-open-claims"
+
+
+def _open_claims_dir(cwd: str | None = None) -> str:
+    """**作業ツリー固有**の git dir に置く（共有の台帳に置くと、別の作業ツリーのコミットまで拒む）。"""
+    return os.path.join(git_dir(cwd), OPEN_CLAIMS_DIR_NAME)
+
+
+def mark_open_claim(task_id: str, cwd: str | None = None) -> None:
+    d = _open_claims_dir(cwd)
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, task_id), "w", encoding="utf-8"):
+        pass
+
+
+def clear_open_claim(task_id: str, cwd: str | None = None) -> None:
+    path = os.path.join(_open_claims_dir(cwd), task_id)
+    if os.path.exists(path):
+        os.remove(path)
+
+
+def open_claims(cwd: str | None = None) -> list[str]:
+    d = _open_claims_dir(cwd)
+    if not os.path.isdir(d):
+        return []
+    return sorted(os.listdir(d))

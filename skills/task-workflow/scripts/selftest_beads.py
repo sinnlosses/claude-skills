@@ -36,6 +36,7 @@ sys.path.insert(0, HERE)
 
 import beads  # noqa: E402
 import layout  # noqa: E402
+import ledger  # noqa: E402
 import taskfile  # noqa: E402
 
 TASK_PY = os.path.join(HERE, "task.py")
@@ -335,6 +336,51 @@ def test_done_commits_since_claim() -> None:
             r2.returncode == 0 and r2.stdout.strip() == f"DONE\t{b}\tbeads:{bd_id_b}\tship で閉じる",
             r2.stdout,
         )
+
+
+def guard_denies(tmp: str, where: str, command: str = "git commit -m x") -> bool:
+    """`tw commit-guard` を git の外（`tmp`）から打ち、拒んだか。"""
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": where})
+    r = run_task(tmp, "commit-guard", stdin=payload)
+    if r.returncode != 0:
+        raise RuntimeError(f"commit-guard が {r.returncode} で終わった: {r.stderr}")
+    return '"deny"' in r.stdout
+
+
+def test_commit_guard() -> None:
+    say("commit-guard: 印が立って done 前の作業ツリーのコミットを拒む")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp)
+        a = new(main_path, "拒む")
+        b = new(main_path, "release で外す")
+        c = new(main_path, "人が外す")
+
+        run_task(wt1, "claim", a)
+        check("claim で控えが立つ（作業ツリーごと）",
+              ledger.open_claims(cwd=wt1) == [a] and ledger.open_claims(cwd=wt2) == [], str(ledger.open_claims(cwd=wt1)))
+        check("印の作業ツリーの git commit は拒む", guard_denies(tmp, wt1))
+        check("印の無い作業ツリーの git commit は通す", not guard_denies(tmp, wt2))
+        check("別の作業ツリーへの git -C は通す", not guard_denies(tmp, wt1, f"git -C {wt2} commit -m x"))
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        git(wt1, "add", "work.txt")
+        git(wt1, "commit", "-q", "-m", "メインの手直し")
+        check("hook を通らないメインのコミットは印があっても通る",
+              git(wt1, "log", "-1", "--format=%s").stdout.strip() == "メインの手直し")
+        r = run_task(wt1, "done", a, "--result-file", "-", stdin="- 検証: なし\n- 振り返り: 兆候なし\n")
+        check("done で控えが消え、そのあとの git commit は通る",
+              r.returncode == 0 and ledger.open_claims(cwd=wt1) == [] and not guard_denies(tmp, wt1), r.stdout)
+        r = run_task(wt1, "ship")
+        check("ship のあとも控えは無い", r.returncode == 0 and ledger.open_claims(cwd=wt1) == [], r.stdout + r.stderr)
+
+        run_task(wt2, "claim", b)
+        check("release の前は拒む", guard_denies(tmp, wt2))
+        run_task(wt2, "release", b)
+        check("release のあとは通る", not guard_denies(tmp, wt2))
+
+        run_task(wt2, "claim", c)
+        r = run_task(wt1, "release", c, "--force")
+        check("人が --force で外すと持ち主の作業ツリーの控えも消える",
+              r.returncode == 0 and ledger.open_claims(cwd=wt2) == [] and not guard_denies(tmp, wt2), r.stdout)
 
 
 def test_plan_check() -> None:
@@ -1261,6 +1307,7 @@ def main() -> None:
             test_claim_race_owner_and_release,
             test_cycle_done_ship_and_dropped,
             test_done_commits_since_claim,
+            test_commit_guard,
             test_plan_check,
             test_edit_frame_guard,
             test_edit_section,

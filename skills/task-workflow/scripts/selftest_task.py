@@ -833,6 +833,108 @@ def test_done_commits_since_claim() -> None:
         )
 
 
+NO_DELEGATE = os.path.join(HERE, "..", "..", "..", "agents", "no-delegate.md")
+
+
+def run_guard(tmp: str, where: str, command: str) -> str | None:
+    """`tw commit-guard` を git の外（`tmp`）から打つ。拒んだら理由、通したら `None`（落ちたら例外）。"""
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": where})
+    r = run_task(tmp, "commit-guard", stdin=payload)
+    if r.returncode != 0:
+        raise RuntimeError(f"commit-guard が {r.returncode} で終わった: {r.stderr}")
+    if r.stdout == "":
+        return None
+    out = json.loads(r.stdout)["hookSpecificOutput"]
+    assert out["permissionDecision"] == "deny"
+    return out["permissionDecisionReason"]
+
+
+def _hook_command() -> str:
+    with open(NO_DELEGATE, encoding="utf-8") as f:
+        for line in f:
+            if line.strip().startswith("command: tw commit-guard"):
+                return line.strip()[len("command: "):]
+    raise RuntimeError("no-delegate.md に hook の行が無い")
+
+
+def test_commit_guard() -> None:
+    print("task.py commit-guard: 印が立って done 前の作業ツリーのコミットを拒む")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp)
+        commit_task(main_path, taskfile.Task("T-100", "拒む", "todo", "sonnet", "Y", (), BODY))
+        commit_task(main_path, taskfile.Task("T-101", "release で外す", "todo", "sonnet", "Y", (), BODY))
+
+        check("claim の前は通る", run_guard(tmp, wt1, "git commit -m x") is None)
+        run_task(wt1, "claim", "T-100")
+        check("claim で控えが立つ（作業ツリーごと）",
+              ledger.open_claims(cwd=wt1) == ["T-100"] and ledger.open_claims(cwd=wt2) == [])
+
+        reason = run_guard(tmp, wt1, "git commit -m x")
+        check("印の作業ツリーの git commit は理由つきで拒む",
+              reason is not None and "T-100" in reason and "コミットせず" in reason and "報告で返す" in reason,
+              str(reason))
+        for command, where in (
+            ("git -c user.name=x commit -am y", wt1),
+            (f"cd {wt1} && git add -A && git commit -m z", tmp),
+            (f"git -C {wt1} commit -m z", tmp),
+            ("git cherry-pick HEAD", wt1),
+            ("FOO=1 git commit -m z", os.path.join(wt1, "develop")),
+        ):
+            check(f"拒む: {command}", run_guard(tmp, where, command) is not None)
+        for command, where in (
+            ("git status && git log -1", wt1),
+            ("tw verify", wt1),
+            ("git commit -m x", wt2),
+            (f"git -C {wt2} commit -m x", wt1),
+            (f"cd {wt2} && git commit -m x", wt1),
+            ('git commit -m "閉じない', wt1),
+        ):
+            check(f"通す: {command}", run_guard(tmp, where, command) is None)
+        r = run_task(tmp, "commit-guard", stdin="not json")
+        check("読めない入力は何も出さずに通す", r.returncode == 0 and r.stdout == "", r.stdout + r.stderr)
+        _check_hook_line(tmp, wt1)
+
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        git(wt1, "add", "work.txt")
+        git(wt1, "commit", "-q", "-m", "メインの手直し")
+        check("hook を通らないメインのコミットは印があっても通る",
+              git(wt1, "log", "-1", "--format=%s").stdout.strip() == "メインの手直し")
+
+        result_path = write(os.path.join(tmp, "result.md"), "結果\n")
+        run_task(wt1, "done", "T-100", "--result-file", result_path)
+        check("done で控えが消える", ledger.open_claims(cwd=wt1) == [])
+        check("done のあとの git commit は通る", run_guard(tmp, wt1, "git commit -m x") is None)
+
+        run_task(wt2, "claim", "T-101")
+        check("release の前は拒む", run_guard(tmp, wt2, "git commit -m x") is not None)
+        run_task(wt2, "release", "T-101")
+        check("release のあとは通る", run_guard(tmp, wt2, "git commit -m x") is None)
+
+
+def _check_hook_line(tmp: str, claimed: str) -> None:
+    """`no-delegate.md` の hook の行を `sh -c` で打つ。`claimed` は印が立った作業ツリー。"""
+    hook = _hook_command()
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git commit -m x"}, "cwd": claimed})
+    bare_path = "/usr/bin:/bin"
+
+    def run_hook(tw_script: str | None) -> subprocess.CompletedProcess:
+        path = bare_path
+        if tw_script is not None:
+            bin_dir = tempfile.mkdtemp(dir=tmp)
+            write(os.path.join(bin_dir, "tw"), tw_script)
+            os.chmod(os.path.join(bin_dir, "tw"), 0o755)
+            path = f"{bin_dir}:{bare_path}"
+        return subprocess.run(["sh", "-c", hook], input=payload, capture_output=True, text=True, env={"PATH": path})
+
+    r = run_hook(f'#!/bin/sh\nexec {sys.executable} {TASK_PY} "$@"\n')
+    check("hook の行は tw commit-guard を呼んで拒む", r.returncode == 0 and '"deny"' in r.stdout, r.stdout + r.stderr)
+    r = run_hook(None)
+    check("tw が PATH に無くても hook は何も出さず0で通す", r.returncode == 0 and r.stdout == "", r.stdout + r.stderr)
+    r = run_hook(f"#!/bin/sh\nexec {sys.executable} -c 'raise RuntimeError(\"x\")'\n")
+    check("tw commit-guard が例外で落ちても hook は何も出さず0で通す",
+          r.returncode == 0 and r.stdout == "", r.stdout + r.stderr)
+
+
 # --- task.py: edit・plan-check ----------------------------------------------
 
 
@@ -1980,6 +2082,7 @@ def main() -> None:
         test_done_single_worktree,
         test_body_frame_check,
         test_done_commits_since_claim,
+        test_commit_guard,
         test_edit_and_plan_check,
         test_edit_section,
         test_registered_plan,

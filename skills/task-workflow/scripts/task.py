@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """1件1ファイル＋台帳の形のタスク運用を操作する入口コマンド。
 
-使い方: tw <status|new|claim|release|done|ship|prune|migrate|config-doctor|show|edit|plan-check|verify|verify-check> ...
+使い方: tw <status|new|claim|release|done|ship|prune|migrate|config-doctor|show|edit|plan-check|verify|verify-check|commit-guard> ...
 
 正典は `docs/task-workflow-redesign.md`（5章が `task` コマンド、4章が状態と台帳、
 3章がタスクファイル、6章が送り出し、5.9・10章が `migrate`）。`install.sh` が PATH 上に張る
@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 import beads
+import commit_guard
 import fold
 import init
 import layout
@@ -482,6 +483,7 @@ def cmd_claim(toplevel: str, task_id: str) -> None:
         elapsed = format_elapsed(age) if age is not None else "?"
         print(f"TAKEN\t{task_id}\t{owner.get('worktree', '?')}\t{elapsed}")
         raise SystemExit(4)
+    ledger.mark_open_claim(task_id, cwd=toplevel)
 
     plan_base = ledger.read_plan_base(root, task_id)
     if plan_base is not None and taskfile.has_plan(task.body):
@@ -546,12 +548,25 @@ def cmd_release(toplevel: str, task_id: str, force: bool) -> None:
         print(f"usage: {task_id!r} が T-999 の形式でない", file=sys.stderr)
         raise SystemExit(2)
     root = ledger.ledger_root(cwd=toplevel)
+    owner = ledger.read_owner(ledger.claim_dir(root, task_id)) or {}
     result = ledger.release_claim(root, task_id, toplevel, force=force)
+    if result == "RELEASED":
+        _clear_open_claim_in(owner.get("worktree", toplevel), task_id)
     if result in ("RELEASED", "NOT_CLAIMED"):
         print(f"{result}\t{task_id}")
         return
     print(f"{result}\t{task_id}")
     raise SystemExit(4)
+
+
+def _clear_open_claim_in(worktree: str, task_id: str) -> None:
+    """`worktree` の作業ツリー固有の控えを消す。作業ツリーが消えていれば何もしない。"""
+    if not os.path.isdir(worktree):
+        return
+    try:
+        ledger.clear_open_claim(task_id, cwd=worktree)
+    except ledger.GitCommandError:
+        return
 
 
 # --- done（5.7） ------------------------------------------------------------
@@ -596,6 +611,7 @@ def cmd_done(toplevel: str, task_id: str, dropped: bool, result_path: str) -> No
     relpath = os.path.join(layout.TASK_DIR, f"{task_id}.md")
     _run_git(toplevel, ["add", relpath])
     print(f"DONE\t{task_id}\t{relpath}\tstaged")
+    ledger.clear_open_claim(task_id, cwd=toplevel)
     _print_commits_since_claim(toplevel, task_id, owner.get("head"))
 
 
@@ -892,6 +908,7 @@ def _release_own_claims_when_shipped(root: str, toplevel: str) -> list[str]:
         if t is not None and t.status in ("done", "dropped"):
             ledger.release_claim(root, tid, toplevel)
             ledger.clear_plan_base(root, tid)
+            ledger.clear_open_claim(tid, cwd=toplevel)
             released.append(tid)
     return released
 
@@ -1485,6 +1502,7 @@ def cmd_beads_claim(toplevel: str, task_id: str) -> None:
         if again is not None and again.status == "in_progress":
             _print_taken(shown, again)
         raise beads.BeadsError(f"bd update --claim が失敗: {(r.stderr or r.stdout).strip()}")
+    ledger.mark_open_claim(shown, cwd=toplevel)
     _claim_branch_out(toplevel, shown, branch_setting, base, branch_after_sync, f"beads:{bd_id}")
     _print_lines(pulled + trk.after([bd_id]))
 
@@ -1518,6 +1536,9 @@ def cmd_beads_release(toplevel: str, task_id: str, force: bool) -> None:
     marks = [v for v in beads.SHIP_LABELS.values() if v in issue.labels]
     if marks:
         beads.run_ok(toplevel, ["update", bd_id] + [x for m in marks for x in ("--remove-label", m)], actor)
+    owner_paths = [w.path for w in ledger.list_worktrees(cwd=toplevel) if os.path.basename(w.path) == issue.assignee]
+    for path in owner_paths:
+        _clear_open_claim_in(path, shown)
     print(f"RELEASED\t{shown}")
     _print_lines(pulled + trk.after([bd_id]))
 
@@ -1544,6 +1565,7 @@ def cmd_beads_done(toplevel: str, task_id: str, dropped: bool, result_path: str)
         toplevel, ["update", bd_id, "--add-label", beads.SHIP_LABELS[kind], "--remove-label", other], actor
     )
     print(f"DONE\t{shown}\tbeads:{bd_id}\tship で閉じる")
+    ledger.clear_open_claim(shown, cwd=toplevel)
     metadata = issue.raw.get("metadata")
     head = metadata.get(beads.CLAIM_HEAD_KEY) if isinstance(metadata, dict) else None
     _print_commits_since_claim(toplevel, shown, head)
@@ -1571,6 +1593,7 @@ def _beads_ship_hooks(toplevel: str) -> ShipHooks:
             if issue.external_ref and tracker.read_tracker(toplevel).kind == "jira":
                 update += ["--add-label", beads.JIRA_CLOSE_LABEL]
             beads.run_ok(toplevel, update, actor)
+            ledger.clear_open_claim(beads.to_task_id(issue.bd_id), cwd=toplevel)
             closed.append(beads.to_task_id(issue.bd_id))
         return closed
 
@@ -1869,6 +1892,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("verify")
     sub.add_parser("verify-check")
+    sub.add_parser("commit-guard")
 
     # ファイル方式は --body-file だけ（ほかはタスクファイルを直に直す）。
     p_edit = sub.add_parser("edit")
@@ -1905,6 +1929,10 @@ BEADS_ONLY_COMMANDS = ("adopt", "sync", "backup", "jira-closed")
 
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
+
+    if args.command == "commit-guard":
+        commit_guard.run(sys.stdin, sys.stdout)
+        return
 
     try:
         toplevel = ledger.git_toplevel()
