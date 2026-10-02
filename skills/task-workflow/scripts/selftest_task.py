@@ -940,6 +940,60 @@ def test_edit_and_plan_check() -> None:
               and r.stdout.strip() == "NOT_READY\tT-104\tdone", r.stdout + r.stderr)
 
 
+def test_edit_section() -> None:
+    print("task.py edit --section: 指した節の中身だけを置き換える")
+    mentions = BODY.replace("## 目的・背景\nx", "## 目的・背景\n文中の `## やること` は境目でない\nx")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp)
+        for tid in ("T-110", "T-111"):
+            commit_task(main_path, taskfile.Task(tid, "節だけ", "todo", "sonnet", "Y", (), mentions))
+        path = lambda tid: os.path.join(wt1, "develop", "task", f"{tid}.md")  # noqa: E731
+
+        def read(tid: str) -> str:
+            with open(path(tid), encoding="utf-8") as f:
+                return f.read()
+
+        run_task(wt1, "claim", "T-110")
+        run_task(wt1, "claim", "T-111")
+        before = read("T-110")
+        r = run_task(wt1, "edit", "T-110", "--section", "やること", "--body-file", "-", stdin="### 1. 書く\n\n- x\n")
+        after = read("T-110")
+        want = before.replace("## やること\n\n## 完了条件", "## やること\n\n### 1. 書く\n\n- x\n\n## 完了条件")
+        check("節だけが置き換わり、ほかの節は1バイトも変わらない（文中の `## やること` は境目に数えない）",
+              r.returncode == 0 and r.stdout.strip() == "EDITED\tT-110" and after == want and after != before,
+              r.stdout + r.stderr + after)
+        r = run_task(wt1, "plan-check", "T-110")
+        check("--section の記入も作業より先なら PLAN_FIRST", r.stdout.strip() == "PLAN_FIRST\tT-110", r.stdout + r.stderr)
+        r = run_task(wt1, "edit", "T-110", "--section", "## やること", "--body-file", "-", stdin="- y\n")
+        check("節名は `## ` 付きでも受け、2回目の書き直しもできる", r.returncode == 0 and "- y\n\n## 完了条件" in read("T-110"),
+              r.stdout + r.stderr)
+        mid = read("T-110")
+        for name in ("ほげ", "結果"):
+            r = run_task(wt1, "edit", "T-110", "--section", name, "--body-file", "-", stdin="x\n")
+            check(f"枠に無い見出し {name} は書き込まずに拒む（終了コード2）",
+                  r.returncode == 2 and "usage:" in r.stderr and read("T-110") == mid, r.stdout + r.stderr)
+        r = run_task(wt1, "edit", "T-110", "--section", "やること", "--body-file", "-", stdin="a\n## 完了条件\nb\n")
+        check("中身に `## ` で始まる行があれば書き込まずに拒む（終了コード2）",
+              r.returncode == 2 and "usage:" in r.stderr and read("T-110") == mid, r.stdout + r.stderr)
+        r = run_task(wt1, "edit", "T-110", "--section", "完了条件", "--body-file", "-", stdin="別の条件\n")
+        check("枠の節を変えれば FRAME_CHANGED（終了コード4）で拒む", r.returncode == 4
+              and r.stdout.startswith("FRAME_CHANGED\tT-110\t") and read("T-110") == mid, r.stdout + r.stderr)
+        r = run_task(wt1, "edit", "T-110", "--section", "完了条件", "--change-frame", "--body-file", "-", stdin="別の条件\n")
+        check("--change-frame を付ければ書き込む", r.returncode == 0 and "別の条件" in read("T-110"), r.stdout + r.stderr)
+        r = run_task(wt1, "edit", "T-110", "--section", "やること")
+        check("--section だけで --body-file が無ければ拒む（終了コード2）", r.returncode == 2, r.stdout + r.stderr)
+
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        r = run_task(wt1, "edit", "T-111", "--section", "やること", "--body-file", "-", stdin="- z\n")
+        check("作業のあとの初回の記入は WORK_BEFORE_PLAN（終了コード4）で拒み、書き込まない", r.returncode == 4
+              and r.stdout.startswith("WORK_BEFORE_PLAN\tT-111\t") and "- z" not in read("T-111"), r.stdout + r.stderr)
+        r = run_task(wt1, "edit", "T-111", "--section", "やること", "--after-work", "--body-file", "-", stdin="- z\n")
+        r2 = run_task(wt1, "plan-check", "T-111")
+        check("--after-work なら書き込み、印は after-work", r.returncode == 0
+              and r.stdout.splitlines()[:2] == ["EDITED\tT-111", "PLAN_AFTER_WORK\tT-111\t作業の後に書いた"]
+              and r2.stdout.strip() == "PLAN_NOT_FIRST\tT-111\tafter-work", r.stdout + r2.stdout + r.stderr)
+
+
 def test_registered_plan() -> None:
     print("task.py new --with-plan・claim・plan-check: 登録時の計画が名指すファイルが着手時までに変わったかを知らせる")
 
@@ -1927,6 +1981,7 @@ def main() -> None:
         test_body_frame_check,
         test_done_commits_since_claim,
         test_edit_and_plan_check,
+        test_edit_section,
         test_registered_plan,
         test_verify_refuses_unplanned_work,
         test_verify_stamp,

@@ -422,6 +422,62 @@ def test_edit_frame_guard() -> None:
               r.stdout + r.stderr)
 
 
+def test_edit_section() -> None:
+    say("edit --section: 指した節の中身だけを置き換える")
+    mentions = BODY.replace("## 目的・背景\nx", "## 目的・背景\n文中の `## やること` は境目でない\nx")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp)
+        a = new(main_path, "節だけ", body=mentions)
+        b = new(main_path, "作業のあとに書く", body=mentions)
+
+        def text(task_id: str) -> str:
+            issue = beads.show(main_path, beads.to_bd_id(task_id))
+            raw = issue.raw if issue is not None else {}
+            return beads.compose_body(
+                str(raw.get("description") or ""), str(raw.get("acceptance_criteria") or ""), str(raw.get("notes") or ""), None
+            )
+
+        def metadata(task_id: str) -> dict:
+            issue = beads.show(main_path, beads.to_bd_id(task_id))
+            raw = issue.raw.get("metadata") if issue is not None else None
+            return raw if isinstance(raw, dict) else {}
+
+        run_task(wt1, "claim", a)
+        run_task(wt1, "claim", b)
+        before = text(a)
+        r = run_task(wt1, "edit", a, "--section", "やること", "--body-file", "-", stdin="### 1. 書く\n\n- x\n")
+        want = before.replace("## やること\n\n## 完了条件", "## やること\n\n### 1. 書く\n\n- x\n\n## 完了条件")
+        check("節だけが置き換わり、ほかの節は1バイトも変わらない（文中の `## やること` は境目に数えない）",
+              r.returncode == 0 and r.stdout.startswith(f"EDITED\t{a}") and text(a) == want and want != before,
+              r.stdout + r.stderr + text(a))
+        check("作業より先の記入は metadata に first を残す", metadata(a).get(beads.PLAN_KEY) == "first", str(metadata(a)))
+        mid = text(a)
+        for name in ("ほげ", "結果"):
+            r = run_task(wt1, "edit", a, "--section", name, "--body-file", "-", stdin="x\n")
+            check(f"枠に無い見出し {name} は書き込まずに拒む（終了コード2）",
+                  r.returncode == 2 and "usage:" in r.stderr and text(a) == mid, r.stdout + r.stderr)
+        r = run_task(wt1, "edit", a, "--section", "やること", "--body-file", "-", stdin="a\n## 完了条件\nb\n")
+        check("中身に `## ` で始まる行があれば書き込まずに拒む（終了コード2）",
+              r.returncode == 2 and "usage:" in r.stderr and text(a) == mid, r.stdout + r.stderr)
+        r = run_task(wt1, "edit", a, "--section", "完了条件", "--body-file", "-", stdin="別の条件\n")
+        check("枠の節を変えれば FRAME_CHANGED（終了コード4）で拒む", r.returncode == 4
+              and r.stdout.startswith(f"FRAME_CHANGED\t{a}\t") and text(a) == mid, r.stdout + r.stderr)
+        r = run_task(wt1, "edit", a, "--section", "完了条件", "--change-frame", "--body-file", "-", stdin="別の条件\n")
+        check("--change-frame を付ければ書き込む", r.returncode == 0 and "別の条件" in text(a), r.stdout + r.stderr)
+        r = run_task(wt1, "edit", a, "--section", "やること")
+        check("--section だけで --body-file が無ければ拒む（終了コード2）", r.returncode == 2, r.stdout + r.stderr)
+
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        r = run_task(wt1, "edit", b, "--section", "やること", "--body-file", "-", stdin="- z\n")
+        check("作業のあとの初回の記入は WORK_BEFORE_PLAN（終了コード4）で拒み、書き込まない", r.returncode == 4
+              and r.stdout.startswith(f"WORK_BEFORE_PLAN\t{b}\t") and "- z" not in text(b)
+              and beads.PLAN_KEY not in metadata(b), r.stdout + r.stderr)
+        r = run_task(wt1, "edit", b, "--section", "やること", "--after-work", "--body-file", "-", stdin="- z\n")
+        check("--after-work なら書き込み、metadata に after-work を残す", r.returncode == 0
+              and r.stdout.splitlines()[:2] == [f"EDITED\t{b}", f"PLAN_AFTER_WORK\t{b}\t作業の後に書いた"]
+              and metadata(b).get(beads.PLAN_KEY) == "after-work", r.stdout + r.stderr + str(metadata(b)))
+
+
 def test_plan_check_unrecorded() -> None:
     say("plan-check: edit が印を残さない書き方は PLAN_NOT_FIRST unrecorded")
     planned = BODY.replace("## やること\n", "## やること\n1. 書く\n")
@@ -1207,6 +1263,7 @@ def main() -> None:
             test_done_commits_since_claim,
             test_plan_check,
             test_edit_frame_guard,
+            test_edit_section,
             test_plan_check_unrecorded,
             test_registered_plan,
             test_verify_stamp,

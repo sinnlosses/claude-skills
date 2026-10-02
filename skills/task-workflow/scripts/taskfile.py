@@ -294,6 +294,32 @@ def strip_result_section(body: str) -> str:
     return "\n".join(lines[:start] + lines[end:])
 
 
+def section_heading(name: str) -> str | None:
+    """`やること`・`## やること` を枠の見出しの行にそろえる。枠に無い名前は `None`。"""
+    heading = name.strip()
+    heading = heading if heading.startswith("## ") else f"## {heading}"
+    return heading if heading in SECTION_HEADINGS else None
+
+
+def check_section_content(content: str) -> str | None:
+    """節の中身に行頭の `## ` の行があれば、その理由を返す。"""
+    if any(line.startswith("## ") for line in content.split("\n")):
+        return "節の中身に `## ` で始まる行がある（節の境目は渡せない）"
+    return None
+
+
+def replace_section(body: str, heading: str, content: str) -> str | None:
+    """`heading` の節の中身だけを `content` に置き換える。ほかの行はそのまま。節が無ければ `None`。"""
+    lines = body.split("\n")
+    start = next((i for i, l in enumerate(lines) if l.startswith("## ") and l.rstrip() == heading), None)
+    if start is None:
+        return None
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    text = content.strip("\n")
+    middle = ["", *text.split("\n"), ""] if text else [""]
+    return "\n".join(lines[: start + 1] + middle + lines[end:])
+
+
 def task_path(task_dir: str, task_id: str) -> str:
     return os.path.join(task_dir, f"{task_id}.md")
 

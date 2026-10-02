@@ -635,7 +635,7 @@ PLAN_REGISTERED = "registered"
 def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
     """ファイル方式の `edit`。本文だけを書き換え、`## やること` を初めて書いた時点の判定を印に残す。"""
     if any([args.summary, args.difficulty, args.loopable, args.status]) or not args.body_file:
-        print("usage: ファイル方式の edit は --body-file（と --after-work・--change-frame）だけ（ほかはタスクファイルを直に直す）", file=sys.stderr)
+        print("usage: ファイル方式の edit は --body-file（と --section・--after-work・--change-frame）だけ（ほかはタスクファイルを直に直す）", file=sys.stderr)
         raise SystemExit(2)
     task_id = args.task_id
     if not taskfile.ID_PATTERN.match(task_id):
@@ -652,7 +652,7 @@ def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
     if task.status not in ("todo", "hold"):
         print(f"NOT_READY\t{task_id}\t{task.status}")
         raise SystemExit(4)
-    body = read_body(args.body_file)
+    body = _section_body(args, task.body, read_body(args.body_file))
     error = taskfile.validate_body(body)
     if error is not None:
         print(f"usage: {error}", file=sys.stderr)
@@ -682,6 +682,22 @@ def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
     print(f"EDITED\t{task_id}")
     if state == PLAN_AFTER_WORK:
         print(f"PLAN_AFTER_WORK\t{task_id}\t作業の後に書いた")
+
+
+def _section_body(args: argparse.Namespace, current: str, given: str) -> str:
+    """`--section` が無ければ渡された本文、あれば `current` のその節だけを `given` にした本文。"""
+    if args.section is None:
+        return given
+    heading = taskfile.section_heading(args.section)
+    if heading is None:
+        print(f"usage: --section {args.section!r} は枠の見出しでない: " + "、".join(taskfile.SECTION_HEADINGS), file=sys.stderr)
+        raise SystemExit(2)
+    error = taskfile.check_section_content(given)
+    replaced = taskfile.replace_section(current, heading, given) if error is None else None
+    if error is not None or replaced is None:
+        print(f"usage: {error or f'いまの本文に {heading} が無い'}", file=sys.stderr)
+        raise SystemExit(2)
+    return replaced
 
 
 def _refuse_frame_change(shown: str, changed: list[str], allowed: bool) -> None:
@@ -1606,6 +1622,9 @@ def cmd_beads_edit(toplevel: str, args: argparse.Namespace) -> None:
     """本文・summary・difficulty・loopable・todo↔hold を書き換える（ファイル方式で手で直していたもの）。"""
     bd_id = _bd_task_id(args.task_id)
     shown = beads.to_task_id(bd_id)
+    if args.section is not None and not args.body_file:
+        print("usage: --section は --body-file と一緒に使う", file=sys.stderr)
+        raise SystemExit(2)
     if not any([args.body_file, args.summary, args.difficulty, args.loopable, args.status]):
         print("usage: 直すもの（--body-file・--summary・--difficulty・--loopable・--status）が無い", file=sys.stderr)
         raise SystemExit(2)
@@ -1619,17 +1638,17 @@ def cmd_beads_edit(toplevel: str, args: argparse.Namespace) -> None:
     stdin = None
     state = None
     if args.body_file:
-        body = read_body(args.body_file)
-        error = taskfile.validate_body(body)
-        if error is not None:
-            print(f"usage: {error}", file=sys.stderr)
-            raise SystemExit(2)
         current = beads.compose_body(
             str(issue.raw.get("description") or ""),
             str(issue.raw.get("acceptance_criteria") or ""),
             str(issue.raw.get("notes") or ""),
             None,
         )
+        body = _section_body(args, current, read_body(args.body_file))
+        error = taskfile.validate_body(body)
+        if error is not None:
+            print(f"usage: {error}", file=sys.stderr)
+            raise SystemExit(2)
         _refuse_frame_change(shown, taskfile.changed_frame_sections(current, body), args.change_frame)
         parts = beads.split_body(body)
         cmd += ["--body-file", "-", "--acceptance", parts.acceptance, "--notes", parts.notes]
@@ -1855,6 +1874,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_edit = sub.add_parser("edit")
     p_edit.add_argument("task_id")
     p_edit.add_argument("--body-file", default=None)
+    p_edit.add_argument("--section", default=None)
     p_edit.add_argument("--summary", default=None)
     p_edit.add_argument("--difficulty", default=None, choices=taskfile.DIFFICULTY_VALUES)
     p_edit.add_argument("--loopable", default=None, choices=taskfile.LOOPABLE_VALUES)
