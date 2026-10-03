@@ -26,8 +26,10 @@ LOOPABLE_VALUES = ("Y", "N")
 # 本文の枠（WORKFLOW.md「タスクファイル」）。7つの見出しを必ずこの順で置き、要らない欄は空か「なし」にする。
 PURPOSE_HEADING = "## 目的・背景"
 PLAN_HEADING = "## やること"
-# 登録時に書いた `## やること` が名指すファイル（`tw new --with-plan`）。1行1つの「- `パス`」。
+# 登録時（`tw new`・`tw adopt`）に書いた `## やること` が名指すファイル。1行1つの「- `パス`」。
 PLAN_FILES_HEADING = "### 名指すファイル"
+# 名指すファイルが別のリポジトリにあるときの、そのリポジトリの根の絶対パス。1行の「- `パス`」。
+PLAN_WORK_REPO_HEADING = "### 作業先"
 ACCEPTANCE_HEADING = "## 完了条件"
 CAUTION_HEADING = "## 注意"
 SECTION_HEADINGS = (
@@ -158,23 +160,43 @@ def read_task_file(path: str) -> tuple[Task | None, str | None]:
     return task, None
 
 
-def validate_new_body(body: str, with_plan: bool = False) -> str | None:
-    """`task new`・`task adopt` の本文検査。枠の検査に加え、`## やること` は空か「なし」に限る
-    （登録時に書いた手順は着手までに古くなる）。`with_plan`（`tw new --with-plan`）なら逆に
-    `## やること` の中身と `### 名指すファイル` を求める。問題が無ければ `None`。"""
+def validate_new_body(body: str, hold: bool) -> str | None:
+    """`task new`・`task adopt` の本文検査。枠の検査に加え、`## やること` の中身と `### 名指すファイル` を
+    求める（`### 作業先` があればその形も）。中身を空にできるのは `hold` のときだけ。問題が無ければ `None`。"""
     error = validate_body(body)
     if error is not None:
         return error
-    if with_plan:
-        if not has_plan(body):
-            return f"--with-plan には {PLAN_HEADING} の中身が要る"
-        return plan_files(body)[1]
-    if has_plan(body):
-        return (
-            f"{PLAN_HEADING} は着手直後に書く（登録時は空か「{EMPTY_MARK}」。"
-            "すぐ着手するなら --with-plan を付ける）"
-        )
-    return None
+    if not has_plan(body):
+        return None if hold else f"{PLAN_HEADING} に計画を書く（空にできるのは --hold だけ）"
+    return plan_files(body)[1] or plan_work_repo(body)[1]
+
+
+def plan_work_repo(body: str) -> tuple[str | None, str | None]:
+    """`## やること` の `### 作業先` が名指すリポジトリの根。小見出しが無ければ `(None, None)`、形が違えば `(None, 理由)`。
+
+    小見出しの下は、次の `### ` 見出しか節の終わりまで、空でない行がちょうど1つの「- `絶対パス`」。
+    """
+    lines = dict(_frame_sections(body)[1]).get(PLAN_HEADING, "").split("\n")
+    starts = [i for i, line in enumerate(lines) if line.rstrip() == PLAN_WORK_REPO_HEADING]
+    if not starts:
+        return None, None
+    if len(starts) != 1:
+        return None, f"{PLAN_HEADING} に {PLAN_WORK_REPO_HEADING} の小見出しは1つまで（{len(starts)}個ある）"
+    entries: list[str] = []
+    for line in lines[starts[0] + 1:]:
+        if line.startswith("### "):
+            break
+        if line.strip():
+            entries.append(line.rstrip())
+    if len(entries) != 1:
+        return None, f"{PLAN_WORK_REPO_HEADING} には「- `パス`」を1行だけ置く（{len(entries)}行ある）"
+    m = _PLAN_FILE_LINE.match(entries[0])
+    if m is None:
+        return None, f"{PLAN_WORK_REPO_HEADING} の行が「- `パス`」の形でない: {entries[0].strip()}"
+    path = m.group(1)
+    if not path.startswith("/"):
+        return None, f"{PLAN_WORK_REPO_HEADING} の {path} は絶対パスにする（`~` も展開して書く）"
+    return path, None
 
 
 def plan_files(body: str) -> tuple[tuple[str, ...], str | None]:

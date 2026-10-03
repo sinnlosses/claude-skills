@@ -44,6 +44,8 @@ INIT_PY = os.path.join(HERE, "init.py")
 MATERIAL_PY = os.path.join(HERE, "..", "..", "retrospect", "scripts", "material.py")
 BODY = ("## 目的・背景\nx\n\n## 決まっていること（蒸し返さない）\n\n## 解くべき論点\nなし\n\n## やること\n\n"
         "## 完了条件\n- 通る\n\n## 注意\nz\n\n## 参考情報\n")
+# 登録の既定の本文。`make_repo` が主ブランチに置く `shared.txt` を名指す。
+PLANNED_BODY = BODY.replace("## やること\n", "## やること\n### 1. 書く\nx\n\n### 名指すファイル\n- `shared.txt`\n")
 
 failures: list[str] = []
 BASE_ENV = os.environ.copy()
@@ -142,12 +144,21 @@ def make_repo(tmp: str, branch: str = "切らない", extra: str = "", verify: s
     return main_path, wt1, wt2
 
 
-def new(cwd: str, summary: str, *extra: str, body: str = BODY) -> str:
+def new(cwd: str, summary: str, *extra: str, body: str = PLANNED_BODY) -> str:
     r = run_task(cwd, "new", "--summary", summary, "--difficulty", "sonnet", "--loopable", "Y", *extra,
                  "--body-file", "-", stdin=body)
     if r.returncode != 0:
         raise RuntimeError(f"task new 失敗: {r.stdout}{r.stderr}")
     return r.stdout.split("\t")[1]
+
+
+def new_unplanned(cwd: str, summary: str, body: str = BODY) -> str:
+    """`## やること` の空な todo（`--hold` で登録して戻す）。"""
+    task_id = new(cwd, summary, "--hold", body=body)
+    r = run_task(cwd, "edit", task_id, "--status", "todo")
+    if r.returncode != 0:
+        raise RuntimeError(f"task edit --status todo 失敗: {r.stdout}{r.stderr}")
+    return task_id
 
 
 def work_and_done(wt: str, task_id: str, *, dropped: bool = False, name: str = "") -> None:
@@ -201,7 +212,7 @@ def test_file_mode_untouched_by_beads_dir() -> None:
         git(main_path, "add", "-A")
         git(main_path, "commit", "-q", "-m", "ファイル方式へ")
         r = run_task(main_path, "new", "--summary", "f", "--difficulty", "haiku", "--loopable", "Y",
-                     "--body-file", "-", stdin=BODY)
+                     "--body-file", "-", stdin=PLANNED_BODY)
         check("new がタスクファイルを作る", r.returncode == 0 and "develop/task/T-001.md" in r.stdout
               and os.path.exists(os.path.join(main_path, "develop", "task", "T-001.md")), r.stdout)
         r = run_task(main_path, "config-doctor")
@@ -226,17 +237,22 @@ def test_new_status_and_numbering() -> None:
         b = new(wt1, "次", "--deps", a)
         h = new(wt1, "待ち", "--hold")
         r = run_task(wt1, "new", "--summary", "x", "--difficulty", "haiku", "--loopable", "Y", "--deps", "T-999",
-                     "--body-file", "-", stdin=BODY)
+                     "--body-file", "-", stdin=PLANNED_BODY)
         check("Beads に無い依存は終了コード2", r.returncode == 2, r.stdout + r.stderr)
         r = run_task(wt1, "new", "--summary", "x", "--difficulty", "haiku", "--loopable", "Y",
+                     "--body-file", "-", stdin=BODY)
+        check("空の ## やること は終了コード2", r.returncode == 2 and "--hold" in r.stderr, r.stdout + r.stderr)
+        r = run_task(wt1, "new", "--summary", "x", "--difficulty", "haiku", "--loopable", "Y",
                      "--body-file", "-", stdin=BODY.replace("## やること\n", "## やること\n1\n"))
-        check("## やること を書いた本文は終了コード2", r.returncode == 2, r.stdout + r.stderr)
+        check("名指すファイルの無い ## やること は終了コード2", r.returncode == 2, r.stdout + r.stderr)
+        h_empty = new(wt1, "空の待ち", "--hold", body=BODY)
+        check("--hold なら空の ## やること を受ける", h_empty.startswith("T-"), h_empty)
 
         r = run_task(wt2, "status")
         t = rows(r.stdout)
         check("status の行（READY・BLOCKED・HOLD）", t.get(a, [])[5:6] == ["READY"]
               and t.get(b, [])[5:6] == [f"BLOCKED:{a}"] and t.get(h, [])[1] == "hold" and t[h][5] == "HOLD", r.stdout)
-        check("counts・ready", "counts\ttodo=2\thold=1\tdone=0\tdropped=0\tclaimed=0" in r.stdout
+        check("counts・ready", "counts\ttodo=2\thold=2\tdone=0\tdropped=0\tclaimed=0" in r.stdout
               and "ready\t1" in r.stdout, r.stdout)
         issue = beads.show(main_path, beads.to_bd_id(a))
         check("完了条件は acceptance_criteria、ほかは description", issue is not None
@@ -246,7 +262,7 @@ def test_new_status_and_numbering() -> None:
 
         procs = [start_task(w, "new", "--summary", f"並行{i}", "--difficulty", "haiku", "--loopable", "Y",
                             "--body-file", "-") for i, w in enumerate((wt1, wt2, main_path))]
-        outs = [p.communicate(BODY)[0] for p in procs]
+        outs = [p.communicate(PLANNED_BODY)[0] for p in procs]
         ids = [o.split("\t")[1] for o in outs if o.startswith("CREATED")]
         check("3つ同時の new で番号が重ならない", len(ids) == 3 and len(set(ids)) == 3, repr(outs))
         r = bd(main_path, "kv", "get", beads.LAST_ID_KEY)
@@ -388,9 +404,9 @@ def test_plan_check() -> None:
     planned = BODY.replace("## やること\n", "## やること\n1. 書く\n")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp)
-        a = new(main_path, "先に書く")
-        b = new(main_path, "後から書く")
-        c = new(main_path, "着手前に直す")
+        a = new_unplanned(main_path, "先に書く")
+        b = new_unplanned(main_path, "後から書く")
+        c = new_unplanned(main_path, "着手前に直す")
 
         def metadata(task_id: str) -> dict:
             issue = beads.show(main_path, beads.to_bd_id(task_id))
@@ -473,8 +489,8 @@ def test_edit_section() -> None:
     mentions = BODY.replace("## 目的・背景\nx", "## 目的・背景\n文中の `## やること` は境目でない\nx")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _wt2 = make_repo(tmp)
-        a = new(main_path, "節だけ", body=mentions)
-        b = new(main_path, "作業のあとに書く", body=mentions)
+        a = new_unplanned(main_path, "節だけ", body=mentions)
+        b = new_unplanned(main_path, "作業のあとに書く", body=mentions)
 
         def text(task_id: str) -> str:
             issue = beads.show(main_path, beads.to_bd_id(task_id))
@@ -589,8 +605,8 @@ def test_plan_check_unrecorded() -> None:
     planned = BODY.replace("## やること\n", "## やること\n1. 書く\n")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp)
-        d = new(main_path, "claim の前に書く")
-        e = new(main_path, "持ち主でない作業ツリーから書く")
+        d = new_unplanned(main_path, "claim の前に書く")
+        e = new_unplanned(main_path, "持ち主でない作業ツリーから書く")
 
         def metadata(task_id: str) -> dict:
             issue = beads.show(main_path, beads.to_bd_id(task_id))
@@ -612,19 +628,29 @@ def test_plan_check_unrecorded() -> None:
               r.stdout + r.stderr + str(metadata(e)))
 
 
-def plan_body(*paths: str) -> str:
+def plan_body(*paths: str, work_repo: str | None = None) -> str:
     listed = "".join(f"- `{p}`\n" for p in paths)
-    return BODY.replace("## やること\n", f"## やること\n### 1. 書く\nx\n\n### 名指すファイル\n{listed}\n")
+    repo = f"### 作業先\n- `{work_repo}`\n\n" if work_repo else ""
+    return BODY.replace("## やること\n", f"## やること\n### 1. 書く\nx\n\n{repo}### 名指すファイル\n{listed}\n")
 
 
 def test_registered_plan() -> None:
-    say("new --with-plan・claim・plan-check: 登録時の計画が名指すファイルが着手時までに変わったかを知らせる")
+    say("new・claim・plan-check: 登録時の計画が名指すファイルが着手時までに変わったかを知らせる")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp)
         write(os.path.join(main_path, "src", "a.txt"), "a\n")
         git(main_path, "add", "-A")
         git(main_path, "commit", "-q", "-m", "src を足す")
         head = git(main_path, "rev-parse", "main").stdout.strip()
+        work = os.path.join(tmp, "work")
+        os.makedirs(work)
+        git(work, "init", "-q", "-b", "main")
+        git(work, "config", "user.email", "test@example.com")
+        git(work, "config", "user.name", "test")
+        write(os.path.join(work, "lib", "y.txt"), "y\n")
+        git(work, "add", "-A")
+        git(work, "commit", "-q", "-m", "init")
+        work_head = git(work, "rev-parse", "main").stdout.strip()
 
         def metadata(task_id: str) -> dict:
             issue = beads.show(main_path, beads.to_bd_id(task_id))
@@ -632,19 +658,26 @@ def test_registered_plan() -> None:
             return raw if isinstance(raw, dict) else {}
 
         r = run_task(main_path, "new", "--summary", "無いファイル", "--difficulty", "sonnet", "--loopable", "Y",
-                     "--with-plan", "--body-file", "-", stdin=plan_body("nothing.txt"))
+                     "--body-file", "-", stdin=plan_body("nothing.txt"))
         check("木に無いパスを名指すと終了コード2", r.returncode == 2 and "nothing.txt" in r.stderr, r.stdout + r.stderr)
-        same = new(main_path, "変わらない", "--with-plan", body=plan_body("shared.txt"))
-        changed = new(main_path, "変わる", "--with-plan", body=plan_body("src/"))
-        unplanned = new(main_path, "書かない")
+        same = new(main_path, "変わらない", body=plan_body("shared.txt"))
+        changed = new(main_path, "変わる", body=plan_body("src/"))
+        unplanned = new_unplanned(main_path, "書かない")
+        remote = new(main_path, "作業先で変わる", body=plan_body("lib/y.txt", work_repo=work))
         shown = run_task(main_path, "show", same).stdout
-        check("--with-plan の登録は SHA を metadata に控え、## やること を notes に入れる",
+        check("計画つきの登録は SHA を metadata に控え、## やること を notes に入れる",
               metadata(same).get(beads.PLAN_BASE_KEY) == head and "### 名指すファイル" in shown
               and beads.PLAN_BASE_KEY not in metadata(unplanned), shown + str(metadata(same)))
+        check("作業先のある登録は作業先の主ブランチの SHA を控える",
+              metadata(remote).get(beads.PLAN_BASE_KEY) == work_head, str(metadata(remote)))
         write(os.path.join(main_path, "src", "new.txt"), "n\n")
         git(main_path, "add", "-A")
         git(main_path, "commit", "-q", "-m", "主ブランチが進む")
         tip = git(main_path, "rev-parse", "main").stdout.strip()
+        write(os.path.join(work, "lib", "y.txt"), "y2\n")
+        git(work, "add", "-A")
+        git(work, "commit", "-q", "-m", "作業先が進む")
+        work_tip = git(work, "rev-parse", "main").stdout.strip()
 
         run_task(wt1, "claim", same)
         r = run_task(wt1, "plan-check", same)
@@ -665,8 +698,15 @@ def test_registered_plan() -> None:
         git(wt1, "merge", "-q", "--ff-only", "main")
         run_task(wt1, "claim", unplanned)
         r = run_task(wt1, "plan-check", unplanned)
-        check("登録時に書いていなければ PLAN_NOT_FIRST missing（今までどおり）", r.returncode == 0
+        check("--hold で登録して todo に戻したものは PLAN_NOT_FIRST missing", r.returncode == 0
               and r.stdout.strip() == f"PLAN_NOT_FIRST\t{unplanned}\tmissing", r.stdout + r.stderr)
+        run_task(wt1, "release", unplanned)
+
+        run_task(wt1, "claim", remote)
+        r = run_task(wt1, "plan-check", remote)
+        check("作業先で名指したファイルが変わっていれば PLAN_STALE で、作業先の先端を控える", r.returncode == 0
+              and r.stdout.strip() == f"PLAN_STALE\t{remote}\tlib/y.txt"
+              and metadata(remote).get(beads.PLAN_TIP_KEY) == work_tip, r.stdout + r.stderr + str(metadata(remote)))
 
 
 def test_verify_stamp() -> None:
@@ -696,8 +736,8 @@ def test_verify_refuses_unplanned_work() -> None:
     planned = BODY.replace("## やること\n", "## やること\n1. 書く\n")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp, verify="`echo verified`")
-        a = new(main_path, "関門")
-        b = new(main_path, "done の後")
+        a = new_unplanned(main_path, "関門")
+        b = new_unplanned(main_path, "done の後")
         run_task(wt1, "claim", a)
         r = run_task(wt1, "verify")
         check("作業が始まっていなければ空でも打つ", r.returncode == 0 and r.stdout.startswith("VERIFIED\t"),
@@ -722,7 +762,7 @@ def test_cycle_done_ship_and_dropped() -> None:
     say("1サイクル（claim → edit → done → ship）と見送り")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp, branch="既定")
-        a = new(main_path, "前段")
+        a = new_unplanned(main_path, "前段")
         b = new(main_path, "後段", "--deps", a)
         c = new(main_path, "見送る")
         d = new(main_path, "見送りに依存", "--deps", c)
@@ -809,8 +849,19 @@ def test_triage_and_adopt() -> None:
               and "ready\t0" in r.stdout and rows(r.stdout).get(raw, [""] * 8)[5] == "TRIAGE", r.stdout)
         r = run_task(wt1, "claim", raw)
         check("振り分け前は claim できない（NOT_READY TRIAGE）", r.returncode == 4 and "TRIAGE" in r.stdout, r.stdout)
+        before = bd(main_path, "show", raw, "--json").stdout
         r = run_task(wt1, "adopt", raw, "--difficulty", "haiku", "--loopable", "N", "--body-file", "-", stdin=BODY)
+        check("空の ## やること の adopt は終了コード2で、課題を変えない", r.returncode == 2
+              and bd(main_path, "show", raw, "--json").stdout == before, r.stdout + r.stderr)
+        r = run_task(wt1, "adopt", raw, "--difficulty", "haiku", "--loopable", "N", "--body-file", "-", stdin=PLANNED_BODY)
         check("adopt が番号を振る", r.returncode == 0 and r.stdout.startswith(f"ADOPTED\t{raw}\tT-001"), r.stdout + r.stderr)
+        adopted = beads.show(main_path, beads.to_bd_id("T-001"))
+        metadata = adopted.raw.get("metadata") if adopted is not None else None
+        check("adopt は ## やること を notes に入れ、主ブランチの SHA を控える", adopted is not None
+              and "### 名指すファイル" in str(adopted.raw.get("notes"))
+              and isinstance(metadata, dict)
+              and metadata.get(beads.PLAN_BASE_KEY) == git(main_path, "rev-parse", "main").stdout.strip(),
+              str(adopted and adopted.raw))
         r = run_task(wt1, "status")
         check("adopt したものは READY", rows(r.stdout).get("T-001", [""] * 8)[5] == "READY" and "triage\t0" in r.stdout, r.stdout)
 
@@ -1104,7 +1155,7 @@ def test_tracker_github_push_only() -> None:
 
             fake.close()
             r = run_task(main_path, "new", "--summary", "落ちても登録", "--difficulty", "haiku", "--loopable", "Y",
-                         "--body-file", "-", stdin=BODY)
+                         "--body-file", "-", stdin=PLANNED_BODY)
             check("トラッカーの失敗は new を止めない（TRACKER FAILED を足して終了コード0）", r.returncode == 0
                   and r.stdout.startswith("CREATED") and "TRACKER\tFAILED\tgithub" in r.stdout, r.stdout)
             r = run_task(main_path, "sync")
@@ -1125,7 +1176,7 @@ def test_tracker_github_bidirectional() -> None:
             a = new(main_path, "Issue を先に立てる")
             check("new は Issue を立てて GH-<番号> を返す", a == "GH-2" and beads.show(main_path, "gh-2") is not None, a)
             check("仮の ID は残らない", not any(i.bd_id.startswith("gh-new-") for i in beads.list_issues(main_path)))
-            p = new(main_path, "登録時に計画を書く", "--with-plan", body=plan_body("shared.txt"))
+            p = new(main_path, "登録時に計画を書く", body=plan_body("shared.txt"))
             issue = beads.show(main_path, beads.to_bd_id(p))
             raw = issue.raw if issue is not None else {}
             meta = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
@@ -1139,7 +1190,8 @@ def test_tracker_github_bidirectional() -> None:
             r = run_task(main_path, "sync")
             check("sync が GitHub で立てた Issue を取り込み、番号の ID へ付け替えて振り分け前にする", r.returncode == 0
                   and "triage\t1\tGH-1" in run_task(main_path, "status").stdout, r.stdout)
-            r = run_task(main_path, "adopt", "GH-1", "--difficulty", "haiku", "--loopable", "N", "--body-file", "-", stdin=BODY)
+            r = run_task(main_path, "adopt", "GH-1", "--difficulty", "haiku", "--loopable", "N", "--body-file", "-",
+                         stdin=PLANNED_BODY)
             check("adopt は番号を変えない", r.stdout.startswith("ADOPTED\tGH-1\tGH-1"), r.stdout + r.stderr)
 
             r = run_task(wt1, "claim", a)
@@ -1186,7 +1238,7 @@ def test_tracker_github_bidirectional() -> None:
 
             fake.close()
             r = run_task(main_path, "new", "--summary", "落ちたら仮の ID", "--difficulty", "haiku", "--loopable", "Y",
-                         "--body-file", "-", stdin=BODY)
+                         "--body-file", "-", stdin=PLANNED_BODY)
             provisional = r.stdout.split("\t")[1] if r.stdout.startswith("CREATED") else ""
             check("push で落ちたら仮の ID のまま CREATED と TRACKER FAILED", provisional.startswith("gh-new-")
                   and "TRACKER\tFAILED" in r.stdout, r.stdout)
@@ -1264,14 +1316,17 @@ def test_tracker_jira_rename() -> None:
             check("付け替えた課題は Jira のキーで triage に出る", "PROJ-7" in tail_line(r.stdout, "triage")
                   and "PROJ-9" in tail_line(r.stdout, "triage"), r.stdout)
 
-            r = run_task(wt1, "adopt", "PROJ-7", "--difficulty", "haiku", "--loopable", "N", "--body-file", "-", stdin=BODY)
+            r = run_task(wt1, "adopt", "PROJ-7", "--difficulty", "haiku", "--loopable", "N", "--body-file", "-",
+                         stdin=PLANNED_BODY)
             check("adopt はキーの課題に番号を振らない", r.returncode == 0 and r.stdout.startswith("ADOPTED\tPROJ-7\tPROJ-7"),
                   r.stdout + r.stderr)
             bd(main_path, "create", "--id", "t-x1c", "--title", "付け替え前", "--external-ref", f"{site}PROJ-10", "--silent")
-            r = run_task(wt1, "adopt", "t-x1c", "--difficulty", "haiku", "--loopable", "N", "--body-file", "-", stdin=BODY)
+            r = run_task(wt1, "adopt", "t-x1c", "--difficulty", "haiku", "--loopable", "N", "--body-file", "-",
+                         stdin=PLANNED_BODY)
             check("adopt はキーの ID へ付け替える", r.returncode == 0 and r.stdout.startswith("ADOPTED\tt-x1c\tPROJ-10"),
                   r.stdout + r.stderr)
-            r = run_task(wt1, "adopt", "t-x1b", "--difficulty", "haiku", "--loopable", "N", "--body-file", "-", stdin=BODY)
+            r = run_task(wt1, "adopt", "t-x1b", "--difficulty", "haiku", "--loopable", "N", "--body-file", "-",
+                         stdin=PLANNED_BODY)
             ids = {i.bd_id for i in beads.list_issues(main_path)}
             check("行き先が既にあれば adopt は INVALID で番号も振らない（終了コード3）", r.returncode == 3
                   and "TRACKER\tINVALID\tt-x1b" in r.stdout and "t-x1b" in ids and "ADOPTED" not in r.stdout,

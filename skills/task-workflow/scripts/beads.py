@@ -59,7 +59,7 @@ CLAIM_BRANCH_KEY = "task_branch"
 CLAIM_HEAD_KEY = "task_claim_head"
 # `## やること` を初めて書いた時点の判定（`first`・`after-work`）か、登録時の計画のまま進めてよい（`registered`）。
 PLAN_KEY = "task_plan"
-# 登録時に `## やること` を書いたときの主ブランチの SHA（`tw new --with-plan`）。
+# 登録時（`tw new`・`tw adopt`）に `## やること` を書いたときの主ブランチの SHA。
 PLAN_BASE_KEY = "task_plan_base"
 # 登録時の計画を判定した、着手時の主ブランチの先端。
 PLAN_TIP_KEY = "task_plan_tip"

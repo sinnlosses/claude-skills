@@ -361,11 +361,11 @@ def cmd_new(toplevel: str, args: argparse.Namespace) -> None:
             raise SystemExit(2)
 
     body = read_body(args.body_file)
-    error = taskfile.validate_new_body(body, args.with_plan)
+    error = taskfile.validate_new_body(body, args.hold)
     if error is not None:
         print(f"usage: {error}", file=sys.stderr)
         raise SystemExit(2)
-    plan_base = _registered_plan_base(toplevel, body) if args.with_plan else None
+    plan_base = _registered_plan_base(toplevel, body) if taskfile.has_plan(body) else None
 
     root = ledger.ledger_root(cwd=toplevel)
     if not ledger.acquire_lock(root):
@@ -409,18 +409,29 @@ def cmd_new(toplevel: str, args: argparse.Namespace) -> None:
 
 
 def _registered_plan_base(toplevel: str, body: str) -> str:
-    """`--with-plan` で控える SHA（`HEAD` と主ブランチの分かれ目）。名指すファイルがその木に無ければ終了コード2。"""
-    base = ledger.base_branch(toplevel)
-    r = _run_git(toplevel, ["merge-base", "HEAD", base])
+    """登録時に控える SHA（計画のリポジトリの `HEAD` と主ブランチの分かれ目）。
+
+    名指すファイルがその木に無い、または `### 作業先` が git のリポジトリの根でなければ終了コード2。
+    """
+    repo = _plan_repo(toplevel, body)
+    if repo is None:
+        print(
+            f"usage: {taskfile.PLAN_WORK_REPO_HEADING} の {taskfile.plan_work_repo(body)[0]} が git のリポジトリの根でない",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    base = ledger.base_branch(repo)
+    r = _run_git(repo, ["merge-base", "HEAD", base])
     if r.returncode != 0:
         print(f"INVALID\t{base} との分かれ目が引けない（{r.stderr.strip()}）")
         raise SystemExit(3)
     sha = r.stdout.strip()
     paths, _ = taskfile.plan_files(body)
-    missing = [p for p in paths if _run_git(toplevel, ["cat-file", "-e", f"{sha}:{p.rstrip('/')}"]).returncode != 0]
+    missing = [p for p in paths if _run_git(repo, ["cat-file", "-e", f"{sha}:{p.rstrip('/')}"]).returncode != 0]
     if missing:
+        where = base if repo == toplevel else f"{repo} の {base}"
         print(
-            f"usage: {taskfile.PLAN_FILES_HEADING} の {', '.join(missing)} が {base} に無い"
+            f"usage: {taskfile.PLAN_FILES_HEADING} の {', '.join(missing)} が {where} に無い"
             "（新しいファイルは置くディレクトリを名指す）",
             file=sys.stderr,
         )
@@ -428,19 +439,41 @@ def _registered_plan_base(toplevel: str, body: str) -> str:
     return sha
 
 
+def _plan_repo(toplevel: str, body: str) -> str | None:
+    """計画の名指すファイルを読むリポジトリ。`### 作業先` が無ければ `toplevel`、あってもリポジトリの根でなければ `None`。"""
+    path, _ = taskfile.plan_work_repo(body)
+    if path is None:
+        return toplevel
+    if not os.path.isdir(path):
+        return None
+    r = _run_git(path, ["rev-parse", "--show-toplevel"])
+    if r.returncode != 0 or os.path.realpath(r.stdout.strip()) != os.path.realpath(path):
+        return None
+    return path
+
+
 def _registered_plan_changes(toplevel: str, base_sha: str | None, tip: str | None, body: str) -> list[str] | None:
     """登録時の計画が名指すファイルのうち、控えた `base_sha` から `tip` までに変わったもの。控えが無ければ `None`。"""
     if base_sha is None:
         return None
-    if tip is None or _run_git(toplevel, ["cat-file", "-e", f"{base_sha}^{{commit}}"]).returncode != 0:
+    repo = _plan_repo(toplevel, body)
+    if repo is None:
+        return ["(作業先が読めない)"]
+    if tip is None or _run_git(repo, ["cat-file", "-e", f"{base_sha}^{{commit}}"]).returncode != 0:
         return ["(控えた SHA が無い)"]
     paths, _ = taskfile.plan_files(body)
     if not paths:
         return ["(名指すファイルが読めない)"]
-    r = _run_git(toplevel, ["diff", "--name-only", base_sha, tip, "--", *paths])
+    r = _run_git(repo, ["diff", "--name-only", base_sha, tip, "--", *paths])
     if r.returncode != 0:
         return ["(差分が引けない)"]
     return [line for line in r.stdout.splitlines() if line]
+
+
+def _plan_tip(toplevel: str, body: str) -> str | None:
+    """着手時に比べる、計画のリポジトリの主ブランチの先端。"""
+    repo = _plan_repo(toplevel, body)
+    return _base_tip(repo) if repo is not None else None
 
 
 def _base_tip(toplevel: str) -> str | None:
@@ -488,7 +521,7 @@ def cmd_claim(toplevel: str, task_id: str) -> None:
 
     plan_base = ledger.read_plan_base(root, task_id)
     if plan_base is not None and taskfile.has_plan(task.body):
-        tip = _base_tip(toplevel)
+        tip = _plan_tip(toplevel, task.body)
         if tip is not None:
             ledger.write_plan_tip(root, task_id, tip)
         if _registered_plan_changes(toplevel, plan_base, tip, task.body) == []:
@@ -1444,11 +1477,11 @@ def cmd_beads_new(toplevel: str, args: argparse.Namespace) -> None:
             print(f"usage: --deps の {d!r} が T-999・GH-5・PROJ-123 の形式でない", file=sys.stderr)
             raise SystemExit(2)
     body = read_body(args.body_file)
-    error = taskfile.validate_new_body(body, args.with_plan)
+    error = taskfile.validate_new_body(body, args.hold)
     if error is not None:
         print(f"usage: {error}", file=sys.stderr)
         raise SystemExit(2)
-    plan_base = _registered_plan_base(toplevel, body) if args.with_plan else None
+    plan_base = _registered_plan_base(toplevel, body) if taskfile.has_plan(body) else None
 
     snap = _beads_snapshot(toplevel)
     missing = [d for d in deps if d not in snap.issues]
@@ -1564,10 +1597,10 @@ def cmd_beads_claim(toplevel: str, task_id: str) -> None:
     plan_base = metadata.get(beads.PLAN_BASE_KEY) if isinstance(metadata, dict) else None
     plan = str(issue.raw.get("notes") or "")
     if plan_base and not taskfile.is_blank(plan):
-        tip = _base_tip(toplevel)
+        plan_body = f"{taskfile.PLAN_HEADING}\n{plan}\n"
+        tip = _plan_tip(toplevel, plan_body)
         if tip is not None:
             claim_args += ["--set-metadata", f"{beads.PLAN_TIP_KEY}={tip}"]
-        plan_body = f"{taskfile.PLAN_HEADING}\n{plan}\n"
         if _registered_plan_changes(toplevel, plan_base, tip, plan_body) == []:
             claim_args += ["--set-metadata", f"{beads.PLAN_KEY}={PLAN_REGISTERED}"]
         else:
@@ -1837,10 +1870,11 @@ def cmd_beads_adopt(toplevel: str, args: argparse.Namespace) -> None:
     """振り分け前の課題（トラッカーから取り込んだものなど）に番号・difficulty・loopable を付ける。"""
     old = beads.to_bd_id(args.bd_id)
     body = read_body(args.body_file)
-    error = taskfile.validate_new_body(body)
+    error = taskfile.validate_new_body(body, hold=False)
     if error is not None:
         print(f"usage: {error}", file=sys.stderr)
         raise SystemExit(2)
+    plan_base = _registered_plan_base(toplevel, body)
     trk = tracker.session(toplevel)
     pulled = trk.before([old])
     issue = beads.show(toplevel, old)
@@ -1870,7 +1904,8 @@ def cmd_beads_adopt(toplevel: str, args: argparse.Namespace) -> None:
             print(f"LOCKED\t{NEW_ATTEMPTS}回続けて番号を取られた")
             raise SystemExit(4)
     parts = beads.split_body(body)
-    cmd = ["update", new_id, "--body-file", "-", "--acceptance", parts.acceptance]
+    cmd = ["update", new_id, "--body-file", "-", "--acceptance", parts.acceptance, "--notes", parts.notes]
+    cmd += ["--set-metadata", f"{beads.PLAN_BASE_KEY}={plan_base}"]
     cmd += [x for l in issue.labels if l.startswith((beads.DIFFICULTY_LABEL, beads.LOOPABLE_LABEL)) for x in ("--remove-label", l)]
     cmd += ["--add-label", f"{beads.DIFFICULTY_LABEL}{args.difficulty}", "--add-label", f"{beads.LOOPABLE_LABEL}{args.loopable}"]
     if args.summary:
@@ -1949,7 +1984,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_new.add_argument("--loopable", required=True, choices=taskfile.LOOPABLE_VALUES)
     p_new.add_argument("--deps", default="")
     p_new.add_argument("--hold", action="store_true")
-    p_new.add_argument("--with-plan", action="store_true")
     p_new.add_argument("--body-file", required=True)
 
     p_claim = sub.add_parser("claim")
