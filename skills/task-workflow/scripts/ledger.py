@@ -8,10 +8,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import dataclass
@@ -506,6 +508,34 @@ def clear_verify_stamp(cwd: str | None = None) -> None:
     path = os.path.join(git_dir(cwd), VERIFY_STAMP_FILE_NAME)
     if os.path.exists(path):
         os.remove(path)
+
+
+# --- flow（着手・検証・送り出し・完了の出来事。月ごとの JSONL）-------------
+
+FLOW_DIR_NAME = "flow"
+
+
+def flow_dir(root: str) -> str:
+    return os.path.join(root, FLOW_DIR_NAME)
+
+
+def record_event(
+    cwd: str | None, event: str, task_id: str, difficulty: str, **fields: str | int | bool
+) -> None:
+    """1出来事を `flow/<YYYY-MM>.jsonl` に1行足す。会話・コマンド・パスは入れない。
+
+    失敗しても例外を外へ出さない（呼ぶサブコマンドの出力と終了コードを変えない）。標準エラーに1行だけ出す。
+    """
+    try:
+        at = now_iso()
+        row = {"t": at, "event": event, "task": task_id, "difficulty": difficulty, **fields}
+        d = flow_dir(ledger_root(cwd))
+        os.makedirs(d, exist_ok=True)
+        line = json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n"
+        with open(os.path.join(d, f"{at[:7]}.jsonl"), "a", encoding="utf-8") as f:
+            f.write(line)
+    except (OSError, GitCommandError) as e:
+        print(f"flow: 記録を書けなかった（{type(e).__name__}）", file=sys.stderr)
 
 
 # --- open-claim（`claim` から `done` までの作業ツリー固有の控え）------------

@@ -827,6 +827,62 @@ def test_cycle_done_ship_and_dropped() -> None:
               and "+1. 書く" in mat.stdout, mat.stdout + mat.stderr)
 
 
+def test_flow_records_and_metrics() -> None:
+    say("flow・metrics: Beads 方式でも同じ記録が台帳に残り、書けなくても元の結果は変わらない")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp, verify="`echo ok`")
+        a = new(main_path, "流れ")
+        run_task(wt1, "claim", a)
+        run_task(wt1, "release", a)
+        run_task(wt1, "claim", a)
+        r = run_task(wt1, "verify")
+        check("verify は VERIFIED", r.returncode == 0 and r.stdout.startswith("VERIFIED\t"), r.stdout + r.stderr)
+        work_and_done(wt1, a)
+        r = run_task(wt1, "ship")
+        check("ship は SHIPPED", r.returncode == 0 and r.stdout.startswith("SHIPPED"), r.stdout + r.stderr)
+
+        d = ledger.flow_dir(ledger.ledger_root(cwd=wt1))
+        recs: list[dict] = []
+        for name in sorted(os.listdir(d)):
+            with open(os.path.join(d, name), encoding="utf-8") as f:
+                recs += [json.loads(line) for line in f if line.strip()]
+        steps = [(e["event"], e["task"], e.get("result")) for e in recs]
+        check(
+            "claim・release・claim・verify・done・ship が1行ずつ残る",
+            steps
+            == [
+                ("claim", a, None),
+                ("release", a, None),
+                ("claim", a, None),
+                ("verify", a, "VERIFIED"),
+                ("done", a, None),
+                ("ship", a, "SHIPPED"),
+            ],
+            repr(steps),
+        )
+        check("difficulty と done の振り返りが入る", {e["difficulty"] for e in recs} == {"sonnet"}
+              and next(e for e in recs if e["event"] == "done")["reflection"] == "none", repr(recs))
+        r = run_task(wt1, "metrics")
+        table = {l.split("\t")[0]: l.split("\t")[1:] for l in r.stdout.splitlines()}
+        say("  --- tw metrics の出力 ---")
+        for line in r.stdout.splitlines():
+            say(f"  | {line}")
+        check("metrics が数を出す", r.returncode == 0 and table.get("shipped") == ["1", "0"]
+              and table.get("verify_per_task") == ["1.0", "-"] and table.get("reclaim") == ["1", "0"]
+              and table.get("reflection_none_ratio") == ["100% (1/1)", "-"], r.stdout + r.stderr)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp)
+        a = new(main_path, "書けない")
+        write(ledger.flow_dir(ledger.ledger_root(cwd=wt1)), "ファイルがディレクトリの場所を塞ぐ\n")
+        r = run_task(wt1, "claim", a)
+        check("記録を書けなくても claim の出力と終了コードは変わらず、標準エラーに1行だけ出る",
+              r.returncode == 0 and r.stdout.startswith(f"CLAIMED\t{a}\t") and r.stderr.strip().startswith("flow:")
+              and len(r.stderr.strip().splitlines()) == 1, r.stdout + r.stderr)
+        r = run_task(wt1, "metrics")
+        check("記録が無ければ EMPTY", r.returncode == 0 and r.stdout.strip() == "EMPTY", r.stdout + r.stderr)
+
+
 def test_stale_markers() -> None:
     say("取り残しの判定（gone・shipped・no-owner）")
     with tempfile.TemporaryDirectory() as tmp:
@@ -1439,6 +1495,7 @@ def main() -> None:
             test_registered_plan,
             test_verify_stamp,
             test_verify_refuses_unplanned_work,
+            test_flow_records_and_metrics,
             test_stale_markers,
             test_triage_and_adopt,
             test_tracker_github_push_only,

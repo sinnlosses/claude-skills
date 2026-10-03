@@ -36,6 +36,7 @@ import init
 import layout
 import ledger
 import legacy
+import metrics
 import ship
 import taskfile
 import tracker
@@ -484,6 +485,56 @@ def _base_tip(toplevel: str) -> str | None:
 # --- claim（5.5） -----------------------------------------------------------
 
 
+def _task_difficulty(toplevel: str, task_id: str) -> str:
+    """記録に入れる `difficulty`。引けなければ `?`（記録のために元のサブコマンドを落とさない）。"""
+    try:
+        if layout.read_store(toplevel) == layout.STORE_BEADS:
+            issue = beads.show(toplevel, beads.to_bd_id(task_id))
+            task = beads.to_task(issue)[0] if issue is not None else None
+        else:
+            task = taskfile.read_task_file(taskfile.task_path(os.path.join(toplevel, layout.TASK_DIR), task_id))[0]
+    except Exception:
+        return "?"
+    return task.difficulty if task is not None else "?"
+
+
+def _record(toplevel: str, event: str, task_id: str, **fields: str | int | bool) -> None:
+    ledger.record_event(toplevel, event, task_id, _task_difficulty(toplevel, task_id), **fields)
+
+
+def _claimed_here(toplevel: str) -> list[str]:
+    """この作業ツリーが着手の印を持つタスク（`done` にしたあと `ship` までのものも含む）。引けなければ空。"""
+    try:
+        if layout.read_store(toplevel) == layout.STORE_BEADS:
+            actor = _actor(toplevel)
+            return [
+                beads.to_task_id(i.bd_id)
+                for i in beads.list_issues(toplevel)
+                if i.status == "in_progress" and i.assignee == actor
+            ]
+        root = ledger.ledger_root(cwd=toplevel)
+        return [
+            t
+            for t in ledger.list_claims(root)
+            if (ledger.read_owner(ledger.claim_dir(root, t)) or {}).get("worktree") == toplevel
+        ]
+    except Exception:
+        return []
+
+
+def _record_claimed(toplevel: str, event: str, **fields: str | int | bool) -> None:
+    for task_id in _claimed_here(toplevel):
+        _record(toplevel, event, task_id, **fields)
+
+
+def _reflection_of(result: str) -> str:
+    """`## 結果` の `- 振り返り:` の行が `none`（兆候なし）・`some`・`unknown`（行が無い）。"""
+    for line in result.splitlines():
+        if line.startswith("- 振り返り:"):
+            return "none" if "兆候なし" in line else "some"
+    return "unknown"
+
+
 def cmd_claim(toplevel: str, task_id: str) -> None:
     if not taskfile.ID_PATTERN.match(task_id):
         print(f"usage: {task_id!r} が T-999 の形式でない", file=sys.stderr)
@@ -518,6 +569,7 @@ def cmd_claim(toplevel: str, task_id: str) -> None:
         print(f"TAKEN\t{task_id}\t{owner.get('worktree', '?')}\t{elapsed}")
         raise SystemExit(4)
     ledger.mark_open_claim(task_id, cwd=toplevel)
+    _record(toplevel, "claim", task_id)
 
     plan_base = ledger.read_plan_base(root, task_id)
     if plan_base is not None and taskfile.has_plan(task.body):
@@ -586,6 +638,7 @@ def cmd_release(toplevel: str, task_id: str, force: bool) -> None:
     result = ledger.release_claim(root, task_id, toplevel, force=force)
     if result == "RELEASED":
         _clear_open_claim_in(owner.get("worktree", toplevel), task_id)
+        _record(toplevel, "release", task_id)
     if result in ("RELEASED", "NOT_CLAIMED"):
         print(f"{result}\t{task_id}")
         return
@@ -645,6 +698,7 @@ def cmd_done(toplevel: str, task_id: str, dropped: bool, result_path: str) -> No
     relpath = os.path.join(layout.TASK_DIR, f"{task_id}.md")
     _run_git(toplevel, ["add", relpath])
     print(f"DONE\t{task_id}\t{relpath}\tstaged")
+    _record(toplevel, "done", task_id, dropped=dropped, reflection=_reflection_of(result))
     ledger.clear_open_claim(task_id, cwd=toplevel)
     _print_commits_since_claim(toplevel, task_id, owner.get("head"))
 
@@ -964,6 +1018,7 @@ def cmd_verify(toplevel: str, unplanned_work: Callable[[], list[str]]) -> None:
         print(folded_line)
     log_path = ledger.verify_log_path(cwd=toplevel)
     format_command = ship.read_format_command(toplevel)
+    started = time.monotonic()
     if format_command is not None:
         with open(log_path, "w", encoding="utf-8") as log:
             formatted = subprocess.run(["sh", "-c", format_command], cwd=toplevel, stdout=log, stderr=subprocess.STDOUT)
@@ -971,6 +1026,7 @@ def cmd_verify(toplevel: str, unplanned_work: Callable[[], list[str]]) -> None:
             ledger.clear_verify_stamp(cwd=toplevel)
             with open(log_path, encoding="utf-8", errors="replace") as f:
                 format_tail = "\n".join(f.read().splitlines()[-VERIFY_TAIL_LINES:])
+            _record_claimed(toplevel, "verify", result="FORMAT_FAILED", seconds=round(time.monotonic() - started))
             _print_verify_end(folded_line, f"FORMAT_FAILED\t{log_path}", format_tail)
             raise SystemExit(10)
     before = ledger.content_key(verify_command, cwd=toplevel)
@@ -980,6 +1036,7 @@ def cmd_verify(toplevel: str, unplanned_work: Callable[[], list[str]]) -> None:
         tail = "\n".join(f.read().splitlines()[-VERIFY_TAIL_LINES:])
     if r.returncode != 0:
         ledger.clear_verify_stamp(cwd=toplevel)
+        _record_claimed(toplevel, "verify", result="VERIFY_NOT_PASSED", seconds=round(time.monotonic() - started))
         _print_verify_end(folded_line, f"VERIFY_NOT_PASSED\t{log_path}", tail)
         raise SystemExit(10)
     if ledger.content_key(verify_command, cwd=toplevel) != before:
@@ -988,6 +1045,7 @@ def cmd_verify(toplevel: str, unplanned_work: Callable[[], list[str]]) -> None:
     else:
         ledger.write_verify_stamp(before, cwd=toplevel)
         verdict = f"VERIFIED\t{before.tree}\t{log_path}"
+    _record_claimed(toplevel, "verify", result=verdict.split("\t")[0], seconds=round(time.monotonic() - started))
     _print_verify_end(folded_line, verdict, tail)
 
 
@@ -1070,6 +1128,7 @@ def cmd_ship(toplevel: str, hooks: "ShipHooks | None" = None) -> None:
         # 4.4: 主ブランチを出している作業ツリーで起こしたときは送る段が無い。
         ledger.clear_verify_owed(cwd=toplevel)
         released = hooks.release_shipped()
+        _record_shipped(toplevel, released)
         print(f"SHIPPED\t{base}\t(送る段なし)\treleased={','.join(released) or '-'}")
         _print_lines(hooks.after_send())
         return
@@ -1101,6 +1160,8 @@ def cmd_ship(toplevel: str, hooks: "ShipHooks | None" = None) -> None:
         preship_command=ship.read_preship_command(toplevel),
     )
 
+    if outcome.kind in ("CONFLICT", "VERIFY_FAILED", "RACE"):
+        _record_claimed(toplevel, "ship", result=outcome.kind)
     if outcome.kind == "CONFLICT":
         print("CONFLICT\t" + (",".join(outcome.conflict_files) or "?"))
         raise SystemExit(7)
@@ -1125,6 +1186,7 @@ def cmd_ship(toplevel: str, hooks: "ShipHooks | None" = None) -> None:
         branch_note = _leave_feature_branch(toplevel, branch, hooks.claimed_branch)
 
     released = hooks.release_shipped()
+    _record_shipped(toplevel, released)
     new_base = _run_git(toplevel, ["rev-parse", base]).stdout.strip()
     preship_note = "\tpreship=ran" if outcome.preship_ran else ""
     print(
@@ -1133,6 +1195,11 @@ def cmd_ship(toplevel: str, hooks: "ShipHooks | None" = None) -> None:
         f"\t{branch_note}"
     )
     _print_lines(hooks.after_send())
+
+
+def _record_shipped(toplevel: str, released: list[str]) -> None:
+    for task_id in released:
+        _record(toplevel, "ship", task_id, result="SHIPPED")
 
 
 def _print_lines(lines: list[str]) -> None:
@@ -1631,6 +1698,7 @@ def cmd_beads_claim(toplevel: str, task_id: str) -> None:
             _print_taken(shown, again)
         raise beads.BeadsError(f"bd update --claim が失敗: {(r.stderr or r.stdout).strip()}")
     ledger.mark_open_claim(shown, cwd=toplevel)
+    _record(toplevel, "claim", shown)
     _claim_branch_out(toplevel, shown, branch_setting, base, branch_after_sync, f"beads:{bd_id}")
     _print_lines(pulled + trk.after([bd_id]))
 
@@ -1668,6 +1736,7 @@ def cmd_beads_release(toplevel: str, task_id: str, force: bool) -> None:
     for path in owner_paths:
         _clear_open_claim_in(path, shown)
     print(f"RELEASED\t{shown}")
+    _record(toplevel, "release", shown)
     _print_lines(pulled + trk.after([bd_id]))
 
 
@@ -1693,6 +1762,7 @@ def cmd_beads_done(toplevel: str, task_id: str, dropped: bool, result_path: str)
         toplevel, ["update", bd_id, "--add-label", beads.SHIP_LABELS[kind], "--remove-label", other], actor
     )
     print(f"DONE\t{shown}\tbeads:{bd_id}\tship で閉じる")
+    _record(toplevel, "done", shown, dropped=dropped, reflection=_reflection_of(result))
     ledger.clear_open_claim(shown, cwd=toplevel)
     metadata = issue.raw.get("metadata")
     head = metadata.get(beads.CLAIM_HEAD_KEY) if isinstance(metadata, dict) else None
@@ -2037,6 +2107,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("verify")
     sub.add_parser("verify-check")
+    p_metrics = sub.add_parser("metrics")
+    p_metrics.add_argument("--days", type=int, default=metrics.DAYS_DEFAULT)
     sub.add_parser("commit-guard")
 
     # ファイル方式は --body-file だけ（ほかはタスクファイルを直に直す）。
@@ -2136,6 +2208,8 @@ def main(argv: list[str] | None = None) -> None:
             cmd_verify(toplevel, lambda: _file_unplanned_work(toplevel))
         elif args.command == "verify-check":
             cmd_verify_check(toplevel)
+        elif args.command == "metrics":
+            metrics.cmd_metrics(toplevel, args.days)
     except (ledger.NoBaseBranch, layout.ConfigConflict, layout.StoreSettingError, tracker.TrackerSettingError) as e:
         print(f"INVALID\t{e}")
         raise SystemExit(3)
@@ -2171,6 +2245,8 @@ def _main_beads(toplevel: str, args: argparse.Namespace) -> None:
             cmd_verify(toplevel, lambda: _beads_unplanned_work(toplevel))
         elif args.command == "verify-check":
             cmd_verify_check(toplevel)
+        elif args.command == "metrics":
+            metrics.cmd_metrics(toplevel, args.days)
         elif args.command == "adopt":
             cmd_beads_adopt(toplevel, args)
         elif args.command == "sync":

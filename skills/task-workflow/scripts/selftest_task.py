@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -1829,6 +1830,132 @@ def test_ship_forces_verify_after_verify_failed_without_new_rebase() -> None:
         check("送るものが無ければ今までどおりNOTHING", r3.returncode == 0 and r3.stdout.startswith("NOTHING\t"), r3.stdout + r3.stderr)
 
 
+def flow_rows(wt: str) -> list[dict]:
+    """台帳の `flow/` の記録を、ファイル名の順に読む。"""
+    d = ledger.flow_dir(ledger.ledger_root(cwd=wt))
+    out: list[dict] = []
+    for name in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+        with open(os.path.join(d, name), encoding="utf-8") as f:
+            out += [json.loads(line) for line in f if line.strip()]
+    return out
+
+
+def test_flow_records_and_metrics() -> None:
+    print("task.py: 着手・検証・送り出し・完了が台帳の flow/ に残り、metrics が数を出す")
+    with tempfile.TemporaryDirectory() as tmp:
+        flag = os.path.join(tmp, "verify-ok")
+        verify_script = write(os.path.join(tmp, "verify.sh"), f'[ -f "{flag}" ] && echo ok || {{ echo fail; exit 1; }}\n')
+        main_path, wt1, _wt2 = make_repo(tmp, branch="切らない", verify=f"`sh {verify_script}`")
+        commit_task(main_path, taskfile.Task("T-100", "流れ", "todo", "sonnet", "Y", (), PLANNED_BODY))
+        commit_task(main_path, taskfile.Task("T-101", "やり直し", "todo", "haiku", "Y", (), PLANNED_BODY))
+
+        r = run_task(wt1, "metrics")
+        check("記録が無ければ EMPTY", r.returncode == 0 and r.stdout.strip() == "EMPTY", r.stdout + r.stderr)
+
+        run_task(wt1, "claim", "T-101")
+        run_task(wt1, "release", "T-101")
+        run_task(wt1, "claim", "T-101")
+        run_task(wt1, "release", "T-101")
+        run_task(wt1, "claim", "T-100")
+        write(os.path.join(wt1, "work.txt"), "x")
+        r = run_task(wt1, "verify")
+        check("検証が落ちれば VERIFY_NOT_PASSED", r.returncode == 10, r.stdout + r.stderr)
+        write(flag, "x")
+        r = run_task(wt1, "verify")
+        check("通れば VERIFIED", r.returncode == 0 and r.stdout.startswith("VERIFIED\t"), r.stdout + r.stderr)
+        git(wt1, "add", "-A")
+        result_path = write(os.path.join(tmp, "result.md"), "- 検証: x\n- 振り返り: 兆候なし\n")
+        run_task(wt1, "done", "T-100", "--result-file", result_path)
+        git(wt1, "add", "-A")
+        git(wt1, "commit", "-q", "-m", "T-100: 完了")
+        write(os.path.join(main_path, "unrelated.txt"), "x")
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "mainだけの変更")
+        os.remove(flag)
+        r = run_task(wt1, "ship")
+        check("ship の検証が落ちれば VERIFY_FAILED", r.returncode == 8, r.stdout + r.stderr)
+        write(flag, "x")
+        r = run_task(wt1, "ship")
+        check("打ち直せば SHIPPED", r.returncode == 0 and r.stdout.startswith("SHIPPED\t"), r.stdout + r.stderr)
+
+        rows_ = flow_rows(wt1)
+        steps = [(e["event"], e["task"], e.get("result")) for e in rows_]
+        check(
+            "出来事が起きた順に1行ずつ増える",
+            steps
+            == [
+                ("claim", "T-101", None),
+                ("release", "T-101", None),
+                ("claim", "T-101", None),
+                ("release", "T-101", None),
+                ("claim", "T-100", None),
+                ("verify", "T-100", "VERIFY_NOT_PASSED"),
+                ("verify", "T-100", "VERIFIED"),
+                ("done", "T-100", None),
+                ("ship", "T-100", "VERIFY_FAILED"),
+                ("ship", "T-100", "SHIPPED"),
+            ],
+            repr(steps),
+        )
+        check(
+            "各行に difficulty と UTC の時刻があり、verify は所要秒を持つ",
+            {e["difficulty"] for e in rows_ if e["task"] == "T-100"} == {"sonnet"}
+            and all(e["t"].endswith("+00:00") for e in rows_)
+            and all(isinstance(e["seconds"], int) for e in rows_ if e["event"] == "verify"),
+            repr(rows_),
+        )
+        done = next(e for e in rows_ if e["event"] == "done")
+        check("done は dropped と振り返りの有無だけを持つ", done["dropped"] is False and done["reflection"] == "none", repr(done))
+        flow_text = json.dumps(rows_, ensure_ascii=False)
+        check("パスもコマンドも記録に入らない", tmp not in flow_text and "verify.sh" not in flow_text, flow_text)
+
+        # 前の期間の値（8日前に着手して7日前に送った1件）
+        old = lambda t, ev, **kw: json.dumps({"t": t, "event": ev, "task": "T-050", "difficulty": "sonnet", **kw})
+        stamp = lambda days: (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+        d = ledger.flow_dir(ledger.ledger_root(cwd=wt1))
+        write(os.path.join(d, "2000-01.jsonl"), "\n".join([old(stamp(9), "claim"), old(stamp(8), "ship", result="SHIPPED")]) + "\n")
+        r = run_task(wt1, "metrics")
+        table = {l.split("\t")[0]: l.split("\t")[1:] for l in r.stdout.splitlines()}
+        print("  --- tw metrics の出力 ---")
+        for line in r.stdout.splitlines():
+            print(f"  | {line}")
+        check(
+            "metrics が今の期間と前の期間の数を並べる",
+            r.returncode == 0
+            and table["shipped"] == ["1", "1"]
+            and table["lead_median_seconds"][1] == "86400"
+            and table["lead_max_seconds"][0] != "-"
+            and table["verify_per_task"] == ["2.0", "-"]
+            and table["verify_failed"] == ["1", "0"]
+            and table["ship_verify_failed"] == ["1", "0"]
+            and table["reclaim"] == ["1", "0"]
+            and table["reflection_none_ratio"] == ["100% (1/1)", "-"],
+            r.stdout + r.stderr,
+        )
+        r = run_task(wt1, "metrics", "--days", "30")
+        check("--days で期間が変わる（前の期間の1件が今の期間に入る）", r.stdout.splitlines()[1].split("\t")[1:] == ["2", "0"], r.stdout)
+
+        with open(os.path.join(d, "2000-01.jsonl"), "a", encoding="utf-8") as f:
+            f.write("壊れた行\n{\"t\": \"x\"}\n")
+        r = run_task(wt1, "metrics")
+        check("壊れた行は読み飛ばして件数を添える", r.returncode == 0 and r.stdout.splitlines()[-1] == "SKIPPED\t2", r.stdout)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp, branch="切らない")
+        commit_task(main_path, taskfile.Task("T-100", "書けない", "todo", "sonnet", "Y", (), PLANNED_BODY))
+        write(ledger.flow_dir(ledger.ledger_root(cwd=wt1)), "ファイルがディレクトリの場所を塞ぐ\n")
+        r = run_task(wt1, "claim", "T-100")
+        check(
+            "記録を書けなくても claim の出力と終了コードは変わらず、標準エラーに1行だけ出る",
+            r.returncode == 0 and r.stdout.startswith("CLAIMED\tT-100\t") and r.stderr.strip().startswith("flow:")
+            and len(r.stderr.strip().splitlines()) == 1,
+            r.stdout + r.stderr,
+        )
+        result_path = write(os.path.join(tmp, "result.md"), "x\n")
+        r = run_task(wt1, "done", "T-100", "--result-file", result_path)
+        check("done も変わらない", r.returncode == 0 and r.stdout.startswith("DONE\tT-100\t"), r.stdout + r.stderr)
+
+
 def test_ship_stale_verify_owed_does_not_block_nothing_or_main_worktree() -> None:
     print("task.py ship: 検証の借りの印が残っていても、main に送るものが無い・main上で起こしたときは今までどおり動く")
     with tempfile.TemporaryDirectory() as tmp:
@@ -2343,6 +2470,7 @@ def main() -> None:
         test_ship_fast_forward,
         test_ship_rebases_when_main_advances,
         test_ship_forces_verify_after_verify_failed_without_new_rebase,
+        test_flow_records_and_metrics,
         test_ship_stale_verify_owed_does_not_block_nothing_or_main_worktree,
         test_ship_conflict_aborts_rebase,
         test_ship_main_dirty_stops,
