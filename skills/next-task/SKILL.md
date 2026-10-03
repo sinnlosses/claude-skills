@@ -41,6 +41,12 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    awk '/^## ユーザーから/{f=1;next} /^## /{f=0} f' develop/direction.md | grep -cv '^\s*$'
    ```
 
+1a. **週ごとの振り返り**: `tw status` の `---` の後ろに `retrospect_due` の行があれば、選ぶ前に
+   `retrospect` スキルの SKILL.md の節「週ごとに振り返る」**だけ**を読んで1回行う（`/loop` から
+   回っているときも。出力はドラフトと記録だけなので人がいなくてよい）。ドラフトと記録を1コミットにして
+   `tw ship` で送ってから、`tw status` を取り直して手順2へ。`tw ship` が `SHIPPED` 以外なら、出力を
+   添えて終了する（手順8の表と同じ扱い）。行が無ければ何もしない
+
 2. **取り残しを見る**: 行の `着手可否` が `CLAIMED` で、印の列の作業ツリー名が自分
    （`basename "$(git rev-parse --show-toplevel)"`）なら、前のセッションが途中で落ちている。
    着手せず、ID と「`tw release T-xxx` で捨てる／作業ツリーを見て人が続ける」の2択を添えて

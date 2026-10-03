@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""`tally.py`（`docs/history/direction.md` から札を数える）の自己テスト。
+"""`tally.py`（`docs/history/direction.md` から札を数える）と `weekly.py`（横断の振り返りの材料）の自己テスト。
 
 使い方: python3 selftest.py
 
@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from datetime import date, datetime, timedelta, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -192,6 +193,165 @@ def test_roots_and_effect() -> None:
             check(f"根の行が無ければ {flag} は EMPTY", r.stdout.strip() == "EMPTY", r.stdout)
 
 
+# SKILL.md「週ごとに振り返る」の横断の振り返りのドラフトの雛形をそのまま写したもの（角括弧の穴だけ実物に差し替える）。
+CROSS_DRAFT_TEMPLATE = """# 検証の打ち直しを根から塞ぐ（横断の振り返り: 2026-09-27〜2026-10-04）
+
+- 根: flaky-check
+- 観点: 根の束ね
+- 根拠: BUNDLE flaky-check 2
+- 出し先: docs/coding-standards.md「テスト」節
+"""
+
+
+def test_cross_sections() -> None:
+    print("tally.py: 横断の振り返りの節")
+    text = HISTORY + "\n" + CROSS_DRAFT_TEMPLATE.replace("\n\n", "\n\n（GH-70 にした）\n\n", 1)
+    sections = tally.parse_sections(text)
+    cross = sections[-1]
+    check("雛形をそのまま写した横断の節を読める", cross.cross and cross.roots == ("flaky-check",) and cross.hand == ("GH-70",) and cross.reviewed == (), str(cross))
+    check("1件ごとの節は横断の節にならない", not any(s.cross for s in sections[:-1]), str(sections))
+    check("横断の節は根の件数に数えない", len(tally.roots(sections)["flaky-check"]) == 2, str(tally.roots(sections)))
+    check("横断の節は札の件数に数えない", len(tally.tally(tally.tag_rows(sections))["揺れ"]) == 3, str(tally.tag_rows(sections)))
+    hands = [hand for hand, _, _ in tally.effect(sections, "flaky-check", {})]
+    check("横断の節の手は根の手として拾う", ("GH-70",) in hands, str(hands))
+
+
+def weekly(*args: str) -> subprocess.CompletedProcess:
+    root = args[0]
+    return subprocess.run(
+        [sys.executable, os.path.join(HERE, "weekly.py"), *args],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "GIT_CEILING_DIRECTORIES": os.path.dirname(os.path.realpath(root))},
+    )
+
+
+def ago(days: float) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+
+
+def flow_row(at: str, event: str, task: str, **fields: object) -> str:
+    return json.dumps({"t": at, "event": event, "task": task, "difficulty": "opus", **fields}) + "\n"
+
+
+def git(cwd: str, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+
+def lines_of(section_name: str, out: str) -> list[str]:
+    body = out.split(f"===== {section_name} =====", 1)[-1]
+    return [l for l in body.split("=====", 1)[0].splitlines() if l]
+
+
+def test_weekly() -> None:
+    print("weekly.py")
+    today = date.today()
+    with tempfile.TemporaryDirectory() as d:
+        git(d, "init", "-q", "-b", "main")
+        git(d, "config", "user.email", "test@example.com")
+        git(d, "config", "user.name", "test")
+        write(os.path.join(d, "hook.sh"), 'echo "直近 30 日の拒否の回数"\necho "deny-a: 0"\necho "deny-b: 12"\n')
+        write(
+            os.path.join(d, "CLAUDE.md"),
+            "# x\n\n## タスク運用\n\n- 検証コマンド: なし\n- 規則の発火の集計: `sh hook.sh`（直近30日）\n",
+        )
+        write(
+            os.path.join(d, "docs", "history", "direction.md"),
+            "# 指示の履歴\n\n"
+            "## 2026-09-01 手を打った（振り返り: GH-10）\n\n（GH-20 にした）\n\n- 札: 黄 揺れ（1回目）\n- 根: flaky-check\n\n"
+            "## 2026-10-01 また出た（振り返り: GH-30）\n\n- 札: 黄 揺れ（2回目）\n- 根: flaky-check\n\n"
+            + CROSS_DRAFT_TEMPLATE,
+        )
+        write(os.path.join(d, "develop", "draft", f"{today.isoformat()}-flaky.md"), DRAFT_ITEM_TEMPLATE)
+        write(
+            os.path.join(d, "develop", "draft", f"{today.isoformat()}-no-root.md"),
+            "# 道具が足りない（振り返り: GH-31）\n\n- 札: 黄 道具（1回目）\n- 根拠: …\n- 出し先: …\n",
+        )
+        write(os.path.join(d, "develop", "draft", "2000-01-01-old.md"), "# 古い（振り返り: GH-1）\n\n- 札: 黄 道具（1回目）\n- 根: old-root\n")
+        git(d, "add", "-A")
+        git(d, "commit", "-q", "-m", "やり方を変える")
+        write(
+            os.path.join(d, ".git", "task-workflow", "flow", "2026-10.jsonl"),
+            flow_row(ago(20), "done", "GH-10", dropped=False, reflection="some")
+            + flow_row(ago(15), "done", "GH-20", dropped=False, reflection="none")
+            + flow_row(ago(10), "ship", "GH-20", result="SHIPPED")
+            + flow_row(ago(9), "ship", "GH-21", result="SHIPPED")
+            + flow_row(ago(2), "done", "GH-30", dropped=False, reflection="some"),
+        )
+
+        r = weekly(d)
+        out = r.stdout
+        print("  --- weekly.py の出力（材料が全部ある） ---")
+        for line in out.splitlines():
+            print(f"  | {line}")
+        check("材料が全部あれば終了コード0で traceback が無い", r.returncode == 0 and "Traceback" not in r.stderr, r.stderr)
+        check("記録が無ければ期間は7日で last=-", lines_of("期間", out) == [f"PERIOD\t7d\t{(today - timedelta(days=7)).isoformat()}\t{today.isoformat()}\tlast=-"], out)
+        bundles = lines_of("根の束ね", out)
+        check(
+            "期間内の札を1件ずつ並べ（期間の外・横断の節は出さない）、根が2件以上なら BUNDLE",
+            bundles
+            == [
+                f"TAG\t揺れ\tflaky-check\tGH-30\t{tally.DIRECTION_HISTORY_PATH}",
+                f"TAG\t揺れ\tflaky-check\tT-302,T-318\tdevelop/draft/{today.isoformat()}-flaky.md",
+                f"TAG\t道具\t-\tGH-31\tdevelop/draft/{today.isoformat()}-no-root.md",
+                "BUNDLE\tflaky-check\t2\tGH-30,T-302,T-318",
+            ],
+            "\n".join(bundles),
+        )
+        recur = lines_of("効かなかった手", out)
+        check(
+            "手の完了のあとに期間内で出た根は RECUR と期間内の再発件数",
+            len(recur) == 1 and recur[0].startswith("RECUR\tflaky-check\tGH-20\t") and recur[0].endswith("\t2"),
+            "\n".join(recur),
+        )
+        flow = lines_of("流れの数", out)
+        check("悪くなった数に WORSE", "WORSE\tshipped\t0\t2" in flow, "\n".join(flow))
+        check("WORSE があれば期間内のやり方の変更を CHANGE で並べる", any(l.startswith("CHANGE\tproject\t") and l.endswith("\tやり方を変える") for l in flow), "\n".join(flow))
+        check("規則の発火の集計のコマンドの出力をそのまま出す", lines_of("規則の棚卸し", out) == ["直近 30 日の拒否の回数", "deny-a: 0", "deny-b: 12"], out)
+
+        r = weekly(d, "--days", "30")
+        check("--days で期間を変えられる", lines_of("期間", r.stdout)[0].startswith("PERIOD\t30d\t"), r.stdout)
+        r = weekly(d, "--days", "0")
+        check("--days が1未満なら終了コード2", r.returncode == 2, r.stdout + r.stderr)
+
+        write(os.path.join(d, "CLAUDE.md"), "# x\n\n## タスク運用\n\n- 検証コマンド: なし\n- 規則の発火の集計: `exit 3`\n")
+        r = weekly(d)
+        check("集計のコマンドが落ちたら - と終了コード", lines_of("規則の棚卸し", r.stdout) == ["-\t終了コード 3"] and r.returncode == 0, r.stdout)
+
+        write(os.path.join(d, "CLAUDE.md"), "# x\n\n## タスク運用\n\n- 検証コマンド: なし\n")
+        r = weekly(d)
+        check(
+            "規則の発火の集計の行が無ければ - と理由で、traceback を出さない",
+            r.returncode == 0
+            and "Traceback" not in r.stderr
+            and lines_of("規則の棚卸し", r.stdout) == ["-\t「## タスク運用」に「- 規則の発火の集計:」の行が無い（この観点は飛ばす）"],
+            r.stdout + r.stderr,
+        )
+
+        write(os.path.join(d, "docs", "history", "retrospect.md"), f"# 横断の振り返りの記録\n\n## {(today - timedelta(days=10)).isoformat()}（x〜y）\n\n## 2000-01-01（x〜y）\n")
+        r = weekly(d)
+        check("最後の記録が10日前なら期間は10日", lines_of("期間", r.stdout)[0].startswith("PERIOD\t10d\t") and r.stdout.count(f"last={(today - timedelta(days=10)).isoformat()}") == 1, r.stdout)
+        write(os.path.join(d, "docs", "history", "retrospect.md"), "# 横断の振り返りの記録\n\n## 2000-01-01（x〜y）\n")
+        r = weekly(d)
+        check("期間は28日で打ち切る", lines_of("期間", r.stdout)[0].startswith("PERIOD\t28d\t"), r.stdout)
+
+    with tempfile.TemporaryDirectory() as d:
+        r = weekly(d)
+        print("  --- weekly.py の出力（記録の無い初回・材料なし） ---")
+        for line in r.stdout.splitlines():
+            print(f"  | {line}")
+        check("git でも台帳でもない空のディレクトリでも終了コード0で traceback が無い", r.returncode == 0 and "Traceback" not in r.stderr, r.stderr)
+        check("記録の無い初回は期間7日・last=-", lines_of("期間", r.stdout)[0].startswith("PERIOD\t7d\t") and r.stdout.count("last=-") == 1, r.stdout)
+        check(
+            "どの節も欠席の理由を出す",
+            lines_of("根の束ね", r.stdout) == [f"-\t{tally.DIRECTION_HISTORY_PATH} が無い（承認済みの札は読まない）", "EMPTY"]
+            and lines_of("効かなかった手", r.stdout) == ["MISSING"]
+            and lines_of("流れの数", r.stdout) == ["-\t台帳が読めない（git のリポジトリでない）"]
+            and lines_of("規則の棚卸し", r.stdout)[0].startswith("-\t"),
+            r.stdout,
+        )
+
+
 def test_cli() -> None:
     print("tally.py（CLI）")
     with tempfile.TemporaryDirectory() as d:
@@ -223,7 +383,7 @@ def test_cli() -> None:
 
 
 def main() -> None:
-    for t in (test_parse_and_tally, test_cli, test_roots_and_effect):
+    for t in (test_parse_and_tally, test_cli, test_roots_and_effect, test_cross_sections, test_weekly):
         t()
     print()
     if failures:

@@ -33,6 +33,10 @@ DRAFT_DIR = "develop/draft"
 # docs/history/tasks.md（旧形式の履歴・採番の下限。正典5.3）
 HISTORY_TASKS_PATH = "docs/history/tasks.md"
 
+# 横断の振り返りの記録（1回ごとに `## YYYY-MM-DD（開始日〜終了日）` の見出しを1つ。retrospect の SKILL.md「週ごとに振り返る」）
+RETROSPECT_RECORD_PATH = "docs/history/retrospect.md"
+RETROSPECT_RECORD_HEADING_PATTERN = re.compile(r"^## (\d{4}-\d{2}-\d{2})", re.MULTILINE)
+
 # タスクID: "T-" + 3桁以上の数字（正典3.1）
 ID_FRAGMENT = r"T-\d{3,}"
 ID_PATTERN = re.compile(rf"^{ID_FRAGMENT}$")  # 全体一致（front matter の id・--deps の各要素）

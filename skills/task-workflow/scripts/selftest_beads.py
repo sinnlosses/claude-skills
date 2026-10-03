@@ -28,6 +28,7 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -902,6 +903,32 @@ def test_stale_markers() -> None:
               and f"{b}:STALE:shipped(wt1)" in stale and f"{c}:STALE:no-owner" in stale, r.stdout)
 
 
+def test_retrospect_due() -> None:
+    say("status: 横断の振り返りの時期に retrospect_due の行を出す")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp)
+        r = run_task(wt1, "status")
+        check("記録も flow/ も無い初回は出さない", r.returncode == 0 and tail_line(r.stdout, "retrospect_due") == "",
+              r.stdout + r.stderr)
+
+        at = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat(timespec="seconds")
+        write(os.path.join(ledger.flow_dir(ledger.ledger_root(cwd=wt1)), "2000-01.jsonl"),
+              json.dumps({"t": at, "event": "claim", "task": "T-001", "difficulty": "haiku"}) + "\n")
+        r = run_task(wt1, "status")
+        check("記録が無く flow/ の最古が8日前なら -\\t8d で出る", tail_line(r.stdout, "retrospect_due") == "retrospect_due\t-\t8d",
+              r.stdout)
+
+        write(os.path.join(wt1, "docs", "history", "retrospect.md"),
+              f"# 横断の振り返りの記録\n\n## {datetime.now().date().isoformat()}（x〜y）\n")
+        r = run_task(wt1, "status")
+        check("今日の記録を書くと出なくなる", tail_line(r.stdout, "retrospect_due") == "", r.stdout)
+        git(wt1, "add", "-A")
+        git(wt1, "commit", "-q", "-m", "記録")
+        git(main_path, "merge", "--ff-only", "-q", "wt1")
+        r = run_task(wt2, "status")
+        check("主ブランチへ入れれば、ほかの作業ツリーでも出ない", tail_line(r.stdout, "retrospect_due") == "", r.stdout)
+
+
 def test_triage_and_adopt() -> None:
     say("振り分け前の課題（トラッカーから来たもの）と adopt")
     with tempfile.TemporaryDirectory() as tmp:
@@ -1497,6 +1524,7 @@ def main() -> None:
             test_verify_refuses_unplanned_work,
             test_flow_records_and_metrics,
             test_stale_markers,
+            test_retrospect_due,
             test_triage_and_adopt,
             test_tracker_github_push_only,
             test_tracker_github_bidirectional,

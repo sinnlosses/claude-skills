@@ -31,6 +31,7 @@ from typing import Callable, NoReturn
 
 import beads
 import commit_guard
+import cross_review
 import fold
 import init
 import layout
@@ -268,6 +269,7 @@ def cmd_status(toplevel: str, show_all: bool, check: bool) -> None:
             stale_entries.append(f"{tid}:{label}({detail})" if detail else f"{tid}:{label}")
 
     _print_status_table(tasks, invalid, claims, show_all, marker_of, stale_entries)
+    _print_retrospect_due(toplevel)
     _print_legacy_progress(toplevel)
 
 
@@ -331,6 +333,13 @@ def _print_status_table(
     print(f"stale\t{len(stale_entries)}\t" + (",".join(stale_entries) if stale_entries else "-"))
 
     print(f"invalid\t{len(invalid)}\t" + (",".join(sorted(invalid)) if invalid else "-"))
+
+
+def _print_retrospect_due(toplevel: str) -> None:
+    found = cross_review.due(toplevel)
+    if found is not None:
+        last, elapsed = found
+        print(f"retrospect_due\t{last}\t{elapsed}d")
 
 
 def _print_legacy_progress(toplevel: str) -> None:
@@ -1549,6 +1558,7 @@ def cmd_beads_status(toplevel: str, show_all: bool, check: bool) -> None:
     if tracker.read_tracker(toplevel).kind == "jira":
         waiting = [tid for tid, i in sorted(snap.issues.items()) if beads.JIRA_CLOSE_LABEL in i.labels]
         print(f"jira_close\t{len(waiting)}\t" + (",".join(waiting) or "-"))
+    _print_retrospect_due(toplevel)
     _print_legacy_progress(toplevel)
 
 

@@ -1956,6 +1956,47 @@ def test_flow_records_and_metrics() -> None:
         check("done も変わらない", r.returncode == 0 and r.stdout.startswith("DONE\tT-100\t"), r.stdout + r.stderr)
 
 
+def test_retrospect_due() -> None:
+    print("task.py status: 横断の振り返りの時期に retrospect_due の行を出す")
+    due_line = lambda out: next((l for l in out.splitlines() if l.startswith("retrospect_due\t")), None)
+    record = lambda day: f"# 横断の振り返りの記録\n\n## {day}（x〜y）\n\n- ドラフト: 0件（なし）\n"
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp)
+
+        r = run_task(wt1, "status")
+        check("記録も flow/ も無い初回は出さない", r.returncode == 0 and due_line(r.stdout) is None, r.stdout + r.stderr)
+
+        d = ledger.flow_dir(ledger.ledger_root(cwd=wt1))
+        claim = lambda days: json.dumps({"t": (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds"), "event": "claim", "task": "T-001", "difficulty": "haiku"}) + "\n"
+        write(os.path.join(d, "2000-01.jsonl"), claim(3))
+        r = run_task(wt1, "status")
+        check("記録が無く flow/ の最古が7日未満なら出さない", due_line(r.stdout) is None, r.stdout)
+
+        write(os.path.join(d, "2000-01.jsonl"), claim(8) + claim(3))
+        r = run_task(wt1, "status")
+        check("記録が無く flow/ の最古が8日前なら -\\t8d で出る", due_line(r.stdout) == "retrospect_due\t-\t8d", r.stdout)
+
+        write(os.path.join(main_path, "docs", "history", "retrospect.md"), record("2000-01-01"))
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "古い記録")
+        r = run_task(wt1, "status")
+        line = due_line(r.stdout) or ""
+        check("主ブランチの記録が7日以上前なら日付つきで出る", line.startswith("retrospect_due\t2000-01-01\t"), r.stdout)
+
+        today = datetime.now().date().isoformat()
+        write(os.path.join(wt1, "docs", "history", "retrospect.md"), record(today))
+        r = run_task(wt1, "status")
+        check("作業ツリーに今日の記録を書くと出なくなる", due_line(r.stdout) is None, r.stdout)
+        r = run_task(wt2, "status")
+        check("主ブランチへ入れるまでは、ほかの作業ツリーには出る", (due_line(r.stdout) or "").startswith("retrospect_due\t2000-01-01\t"), r.stdout)
+
+        write(os.path.join(main_path, "docs", "history", "retrospect.md"), record(today) + record("2000-01-01").split("\n", 2)[2])
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "今日の記録")
+        r = run_task(wt2, "status")
+        check("主ブランチへ入れれば、ほかの作業ツリーでも出なくなる", due_line(r.stdout) is None, r.stdout)
+
+
 def test_ship_stale_verify_owed_does_not_block_nothing_or_main_worktree() -> None:
     print("task.py ship: 検証の借りの印が残っていても、main に送るものが無い・main上で起こしたときは今までどおり動く")
     with tempfile.TemporaryDirectory() as tmp:
@@ -2471,6 +2512,7 @@ def main() -> None:
         test_ship_rebases_when_main_advances,
         test_ship_forces_verify_after_verify_failed_without_new_rebase,
         test_flow_records_and_metrics,
+        test_retrospect_due,
         test_ship_stale_verify_owed_does_not_block_nothing_or_main_worktree,
         test_ship_conflict_aborts_rebase,
         test_ship_main_dirty_stops,

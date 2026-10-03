@@ -20,6 +20,8 @@ retrospect の SKILL.md「札と1行の書式」）。
 
 根は `- 根: <キー>`（英小文字・数字・ハイフン）の行。キーの形でない行と、根の行の無い節は根に数えない。
 `--roots` は根ごとの件数とタスクIDを、件数の多い順に `<根>\t<件数>\t<タスクID>` で出す。
+見出しに `（横断の振り返り:` を持つ節は、札も根も件数に数えない（同じ引っかかりは1件ごとの節で
+数え済み）。その節の手だけを、根の手として拾う。
 
 手は、節の中の `（` で始まる行で `にした` の直前に並んだタスクID（`・`・`、`・`,` の区切りと
 `GH-n〜GH-m` の範囲）。完了の時刻は台帳の `flow/` の `done`（`dropped` でないもの）の記録から取り、
@@ -54,6 +56,7 @@ import metrics  # noqa: E402
 
 HEADING = re.compile(r"^#{1,6} ")
 REVIEWED = re.compile(r"（振り返り:\s*([^）]+)）")
+CROSS = re.compile(r"（横断の振り返り:")
 TAG_LINE = re.compile(r"^- 札: (?:赤|黄) (.+?)(?:（\d+回目）)?\s*$")
 ROOT_LINE = re.compile(r"^- 根: ([a-z0-9]+(?:-[a-z0-9]+)*)\s*$")
 TASK_ID = r"(?:GH|T)-\d+"
@@ -69,6 +72,7 @@ class Section:
     tags: tuple[str, ...]
     roots: tuple[str, ...]
     hand: tuple[str, ...]
+    cross: bool
 
 
 def main() -> None:
@@ -123,7 +127,7 @@ def parse_sections(text: str) -> list[Section]:
 
 
 def tag_rows(sections: list[Section]) -> list[tuple[str, list[str]]]:
-    return [(tag, list(s.reviewed)) for s in sections for tag in s.tags]
+    return [(tag, list(s.reviewed)) for s in sections if not s.cross for tag in s.tags]
 
 
 def tally(rows: list[tuple[str, list[str]]]) -> dict[str, list[list[str]]]:
@@ -138,6 +142,8 @@ def roots(sections: list[Section]) -> dict[str, list[list[str]]]:
     """根ごとに、出現1回につき1つのタスクID一覧を集める（件数 = 一覧の長さ）。"""
     occurrences: dict[str, list[list[str]]] = defaultdict(list)
     for s in sections:
+        if s.cross:
+            continue
         for root in s.roots:
             occurrences[root].append(list(s.reviewed))
     return occurrences
@@ -231,7 +237,8 @@ def _section(lines: list[str]) -> Section:
             for t in _expand(m.group(1)):
                 if t not in hand:
                     hand.append(t)
-    return Section(reviewed, tags, roots_, tuple(hand))
+    cross = bool(HEADING.match(lines[0]) and CROSS.search(lines[0]))
+    return Section(reviewed, tags, roots_, tuple(hand), cross)
 
 
 def _expand(listed: str) -> list[str]:

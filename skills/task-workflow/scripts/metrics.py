@@ -16,6 +16,15 @@ import ledger
 
 DAYS_DEFAULT = 7
 VERIFY_FAILED_RESULTS = ("FORMAT_FAILED", "VERIFY_NOT_PASSED")
+HIGHER_IS_WORSE = (
+    "lead_median_seconds",
+    "lead_max_seconds",
+    "verify_per_task",
+    "verify_failed",
+    "ship_verify_failed",
+    "reclaim",
+)
+LOWER_IS_WORSE = ("shipped", "reflection_none_ratio")
 
 
 @dataclass(frozen=True, eq=False)
@@ -59,6 +68,15 @@ def read_events(root: str) -> tuple[list[Event], int]:
     return sorted(events, key=lambda e: e.at), skipped
 
 
+def _number(value: str) -> float | None:
+    """`12`・`2.0`・`50% (1/2)` の先頭の数。`-` は `None`。"""
+    head = value.split("%")[0].strip()
+    try:
+        return float(head)
+    except ValueError:
+        return None
+
+
 def _lead_seconds(events: list[Event], shipped: Event) -> float | None:
     claims = [e for e in events if e.kind == "claim" and e.task == shipped.task and e.at <= shipped.at]
     return (shipped.at - claims[-1].at).total_seconds() if claims else None
@@ -90,6 +108,23 @@ def _column(events: list[Event], start: datetime, end: datetime) -> dict[str, st
     }
 
 
+def columns(events: list[Event], days: int) -> tuple[dict[str, str], dict[str, str]]:
+    """`(直近 days 日の数, その前の同じ長さの期間の数)`。"""
+    now = datetime.now(timezone.utc)
+    span = timedelta(days=days)
+    return _column(events, now - span, now + timedelta(seconds=1)), _column(events, now - 2 * span, now - span)
+
+
+def worse(name: str, current: str, previous: str) -> bool:
+    """前の期間より悪くなったか。どちらかが `-` なら比べない。"""
+    now, before = _number(current), _number(previous)
+    if now is None or before is None:
+        return False
+    if name in LOWER_IS_WORSE:
+        return now < before
+    return name in HIGHER_IS_WORSE and now > before
+
+
 def cmd_metrics(toplevel: str, days: int) -> None:
     if days < 1:
         print("usage: --days は1以上", file=sys.stderr)
@@ -100,10 +135,7 @@ def cmd_metrics(toplevel: str, days: int) -> None:
         if skipped:
             print(f"SKIPPED\t{skipped}")
         return
-    now = datetime.now(timezone.utc)
-    span = timedelta(days=days)
-    current = _column(events, now - span, now + timedelta(seconds=1))
-    previous = _column(events, now - 2 * span, now - span)
+    current, previous = columns(events, days)
     print(f"PERIOD\t{days}d\tcurrent\tprevious")
     for name, value in current.items():
         print(f"{name}\t{value}\t{previous[name]}")
