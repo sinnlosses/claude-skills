@@ -18,7 +18,7 @@ DAYS_DEFAULT = 7
 VERIFY_FAILED_RESULTS = ("FORMAT_FAILED", "VERIFY_NOT_PASSED")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class Event:
     at: datetime
     kind: str
@@ -73,7 +73,8 @@ def _column(events: list[Event], start: datetime, end: datetime) -> dict[str, st
     reclaims = [
         e
         for e in inside
-        if e.kind == "claim" and any(r.kind == "release" and r.task == e.task and r.at < e.at for r in events)
+        if e.kind == "claim"
+        and any(r.kind == "release" and r.task == e.task for r in events[: events.index(e)])
     ]
     dones = [e for e in inside if e.kind == "done" and not e.fields.get("dropped")]
     clean = [e for e in dones if e.fields.get("reflection") == "none"]
