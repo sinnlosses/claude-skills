@@ -70,6 +70,7 @@ def make_repo(
     verify: str | None = None,
     base: str = "main",
     config_filename: str = "CLAUDE.md",
+    format_command: str | None = None,
 ) -> tuple[str, str, str]:
     """`(本体, 作業ツリー1, 作業ツリー2)`。本体だけが主ブランチを出す。
 
@@ -92,6 +93,8 @@ def make_repo(
     config_md = "# x\n\n## タスク運用\n\n"
     if verify is not None:
         config_md += f"- 検証コマンド: {verify}\n"
+    if format_command is not None:
+        config_md += f"- 整形コマンド: {format_command}\n"
     config_md += f"- ブランチ: {branch}\n"
     write(os.path.join(main_path, config_filename), config_md)
     write(os.path.join(main_path, "shared.txt"), "line1\n")
@@ -1519,6 +1522,51 @@ def _advance_main(main_path: str, notes: str, extra: str | None = None) -> str:
     return git(main_path, "rev-parse", "HEAD").stdout.strip()
 
 
+def test_verify_runs_format_first() -> None:
+    print("task.py verify: 取り込みのあと・検証の前に整形コマンドを打ち、整形のあとの中身で鍵を控える")
+    fix = "echo fixed > formatted.txt\n"
+    saw = 'cat formatted.txt >> saw.log\necho "ok"\n'
+    with tempfile.TemporaryDirectory() as tmp:
+        _main, wt1, _wt2 = make_repo(
+            tmp, branch="切らない", verify="`sh verify.sh`", format_command="`sh format.sh`"
+        )
+        write(os.path.join(wt1, "format.sh"), fix)
+        write(os.path.join(wt1, "verify.sh"), saw)
+        write(os.path.join(wt1, ".gitignore"), "saw.log\n")
+        git(wt1, "add", "-A")
+        git(wt1, "commit", "-q", "-m", "足場")
+        r = run_task(wt1, "verify")
+        check("整形が直したうえで検証が通り VERIFIED", r.returncode == 0 and r.stdout.startswith("VERIFIED\t"), r.stdout + r.stderr)
+        with open(os.path.join(wt1, "saw.log"), encoding="utf-8") as f:
+            check("検証は整形のあとの中身を見る", f.read() == "fixed\n")
+        r = run_task(wt1, "verify-check")
+        check("整形で変わった中身でも続く verify-check は VERIFIED_SAME", r.stdout.startswith("VERIFIED_SAME\t"), r.stdout + r.stderr)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        _main, wt1, _wt2 = make_repo(tmp, branch="切らない", verify="`sh verify.sh`", format_command="なし")
+        write(os.path.join(wt1, "format.sh"), fix)
+        write(os.path.join(wt1, "verify.sh"), 'echo "ok"\n')
+        git(wt1, "add", "-A")
+        git(wt1, "commit", "-q", "-m", "足場")
+        r = run_task(wt1, "verify")
+        check("整形コマンドが なし なら整形を打たない", r.returncode == 0 and not os.path.exists(os.path.join(wt1, "formatted.txt")), r.stdout + r.stderr)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        _main, wt1, _wt2 = make_repo(
+            tmp, branch="切らない", verify="`sh verify.sh`", format_command="`sh format.sh`"
+        )
+        write(os.path.join(wt1, "format.sh"), "echo broken\nexit 1\n")
+        write(os.path.join(wt1, "verify.sh"), "echo ran > verify-ran.txt\n")
+        git(wt1, "add", "-A")
+        git(wt1, "commit", "-q", "-m", "足場")
+        r = run_task(wt1, "verify")
+        check("整形が落ちれば FORMAT_FAILED（終了コード10）で検証を打たない", r.returncode == 10
+              and r.stdout.startswith("FORMAT_FAILED\t") and "broken" in r.stdout
+              and not os.path.exists(os.path.join(wt1, "verify-ran.txt")), r.stdout + r.stderr)
+        r = run_task(wt1, "verify-check")
+        check("整形が落ちた回は控えを消す", r.stdout.strip() == "NOT_VERIFIED\tnone", r.stdout)
+
+
 def _verify_count(tmp: str) -> int:
     path = os.path.join(tmp, "verify-count.log")
     if not os.path.exists(path):
@@ -2237,6 +2285,7 @@ def main() -> None:
         test_registered_plan,
         test_verify_refuses_unplanned_work,
         test_verify_stamp,
+        test_verify_runs_format_first,
         test_verify_folds_base_before_check,
         test_worktree_tree_sees_same_size_edit_after_second_boundary,
         test_verify_conflict_before_check,

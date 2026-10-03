@@ -961,8 +961,18 @@ def cmd_verify(toplevel: str, unplanned_work: Callable[[], list[str]]) -> None:
     if folded.kind == "FOLDED":
         folded_line = f"FOLDED\t{folded.old_base}..{folded.new_base}"
         print(folded_line)
-    before = ledger.content_key(verify_command, cwd=toplevel)
     log_path = ledger.verify_log_path(cwd=toplevel)
+    format_command = ship.read_format_command(toplevel)
+    if format_command is not None:
+        with open(log_path, "w", encoding="utf-8") as log:
+            formatted = subprocess.run(["sh", "-c", format_command], cwd=toplevel, stdout=log, stderr=subprocess.STDOUT)
+        if formatted.returncode != 0:
+            ledger.clear_verify_stamp(cwd=toplevel)
+            with open(log_path, encoding="utf-8", errors="replace") as f:
+                format_tail = "\n".join(f.read().splitlines()[-VERIFY_TAIL_LINES:])
+            _print_verify_end(folded_line, f"FORMAT_FAILED\t{log_path}", format_tail)
+            raise SystemExit(10)
+    before = ledger.content_key(verify_command, cwd=toplevel)
     with open(log_path, "w", encoding="utf-8") as log:
         r = subprocess.run(["sh", "-c", verify_command], cwd=toplevel, stdout=log, stderr=subprocess.STDOUT)
     with open(log_path, encoding="utf-8", errors="replace") as f:

@@ -54,6 +54,22 @@ def read_verify_command(toplevel: str) -> str | None:
     return cmd_m.group(1) if cmd_m else None
 
 
+def read_format_command(toplevel: str) -> str | None:
+    """`- 整形コマンド:` 行の最初の `` `…` ``。行が無い、または値が `なし` で始まるなら `None`。"""
+    found = layout.find_config_file(toplevel)
+    if found is None:
+        return None
+    _path, text = found
+    m = re.search(r"^- 整形コマンド:\s*(.*)$", text, flags=re.MULTILINE)
+    if m is None:
+        return None
+    value = m.group(1).strip()
+    if value.startswith("なし"):
+        return None
+    cmd_m = re.search(r"`([^`]+)`", value)
+    return cmd_m.group(1) if cmd_m else None
+
+
 def find_base_worktree(
     worktrees: list[ledger.Worktree], own_path: str, base: str
 ) -> ledger.Worktree | None:
