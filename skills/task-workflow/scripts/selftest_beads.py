@@ -524,6 +524,66 @@ def test_edit_section() -> None:
               and metadata(b).get(beads.PLAN_KEY) == "after-work", r.stdout + r.stderr + str(metadata(b)))
 
 
+def test_edit_deps() -> None:
+    say("edit --add-deps・--remove-deps: Beads の依存を後から変える")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp)
+        check("Beads は一時ディレクトリの中にあり、環境変数で本物へ向いていない",
+              os.path.realpath(main_path).startswith(os.path.realpath(tmp)) and not {"BEADS_DIR", "BEADS_DB"} & set(env()),
+              main_path)
+        a, b, c, d = (new(main_path, "x") for _ in range(4))
+
+        def deps(task_id: str) -> list[str]:
+            issue = beads.show(main_path, beads.to_bd_id(task_id))
+            return sorted(beads.to_task_id(x) for x in issue.dependencies) if issue is not None else []
+
+        def ready(task_id: str) -> str:
+            return rows(run_task(wt1, "status").stdout).get(task_id, [""] * 8)[5]
+
+        r = run_task(wt1, "edit", b, "--add-deps", a)
+        check("--add-deps で bd の依存が入り、status が BLOCKED になる", r.returncode == 0
+              and r.stdout.startswith(f"EDITED\t{b}") and deps(b) == [a] and ready(b) == f"BLOCKED:{a}",
+              r.stdout + r.stderr)
+        r = run_task(wt1, "edit", b, "--add-deps", a)
+        check("すでにある依存の追加は通る", r.returncode == 0 and deps(b) == [a], r.stdout + r.stderr)
+        r = run_task(wt1, "edit", c, "--add-deps", f"{a},{b}")
+        check("2件を一度に足せる", r.returncode == 0 and deps(c) == sorted([a, b]), r.stdout + r.stderr)
+        r = run_task(wt1, "edit", b, "--remove-deps", a)
+        check("--remove-deps で外れ、READY に戻る", r.returncode == 0 and deps(b) == [] and ready(b) == "READY",
+              r.stdout + r.stderr)
+        run_task(wt1, "edit", d, "--add-deps", c)
+
+        snapshot = {t: deps(t) for t in (a, b, c, d)}
+        for label, args in (
+            ("自分自身", (a, "--add-deps", a)),
+            ("Beads に無い ID", (a, "--add-deps", "T-999")),
+            ("形の違う ID", (a, "--add-deps", "xyz")),
+            ("依存にない ID の削除", (a, "--remove-deps", b)),
+            ("追加と削除に同じ ID", (a, "--add-deps", b, "--remove-deps", b)),
+            ("直接の循環（C は B に依存済み）", (b, "--add-deps", c)),
+            ("間接の循環（D→C→A に A→D）", (a, "--add-deps", d)),
+            ("追加の一部が循環", (a, "--add-deps", f"{b},{d}")),
+        ):
+            r = run_task(wt1, "edit", *args)
+            check(f"{label}は終了コード2で拒み、何も書かない", r.returncode == 2 and "usage:" in r.stderr
+                  and {t: deps(t) for t in (a, b, c, d)} == snapshot, r.stdout + r.stderr)
+        r = run_task(wt1, "edit", a, "--add-deps", d)
+        check("循環の文言に道が出る", f"{a}→{d}→{c}→{a}" in r.stderr, r.stderr)
+
+        r = run_task(wt1, "edit", a)
+        check("直すものが無ければ終了コード2", r.returncode == 2, r.stdout + r.stderr)
+        r = run_task(wt1, "edit", b, "--add-deps", a, "--summary", "改題")
+        check("ほかの引数と一緒に渡せば両方が反映される", r.returncode == 0 and deps(b) == [a]
+              and "改題" in run_task(wt1, "show", b).stdout, r.stdout + r.stderr)
+
+        bd(main_path, "create", "--id", "proj-8", "--title", "キーの課題", "--force", "--silent")
+        r = run_task(wt1, "edit", "PROJ-8", "--add-deps", a)
+        check("キーの課題への edit も依存を足せる（ID の形は new と同じ）", r.returncode == 0 and deps("PROJ-8") == [a],
+              r.stdout + r.stderr)
+        r = run_task(wt1, "edit", a, "--add-deps", "PROJ-8")
+        check("キーの課題を通る循環も拒む", r.returncode == 2 and "循環" in r.stderr, r.stdout + r.stderr)
+
+
 def test_plan_check_unrecorded() -> None:
     say("plan-check: edit が印を残さない書き方は PLAN_NOT_FIRST unrecorded")
     planned = BODY.replace("## やること\n", "## やること\n1. 書く\n")
@@ -1311,6 +1371,7 @@ def main() -> None:
             test_plan_check,
             test_edit_frame_guard,
             test_edit_section,
+            test_edit_deps,
             test_plan_check_unrecorded,
             test_registered_plan,
             test_verify_stamp,

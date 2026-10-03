@@ -51,6 +51,9 @@ description: "develop/direction.md に書かれたユーザーからの指示（
    後段の `difficulty` も見直す、も同じ完了条件に入れる。** 1タスクは1コミットで説明が付く大きさに。既存タスクと重なるなら
    新しく作らず、その本文の `## 目的・背景` か `## 注意` に足す（`develop/task/T-xxx.md` を直して手順7で
    一緒にコミットする。Beads 方式では `tw show` の本文に足して `tw edit T-xxx --change-frame --body-file -`）。
+   既存のタスクどうしで後段を前段に待たせたいときは、本文の `## 注意` に書くだけにせず
+   `tw edit T-後段 --add-deps T-前段` で台帳に入れる（`tw status` の BLOCKED に出て、別のセッションの
+   `/next-task` が依存を無視して着手しなくなる。外すのは `--remove-deps`）。
 
 4. **書く**: `summary` は1行（収まらなければ大きすぎるので手順3へ戻る。正典「summary」）。
    `loopable` を `N` にしたくなったら、その場でユーザーに聞く（正典「loopable」の表。聞いて解けたら

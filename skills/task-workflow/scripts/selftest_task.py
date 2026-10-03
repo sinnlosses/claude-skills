@@ -1096,6 +1096,80 @@ def test_edit_section() -> None:
               and r2.stdout.strip() == "PLAN_NOT_FIRST\tT-111\tafter-work", r.stdout + r2.stdout + r.stderr)
 
 
+def test_edit_deps() -> None:
+    print("task.py edit --add-deps・--remove-deps: 台帳の依存を後から変える")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp)
+
+        def new() -> str:
+            r = run_task(wt1, "new", "--summary", "x", "--difficulty", "sonnet", "--loopable", "Y",
+                         "--body-file", "-", stdin=BODY)
+            return r.stdout.split("\t")[1]
+
+        def read(tid: str) -> str:
+            with open(os.path.join(wt1, "develop", "task", f"{tid}.md"), encoding="utf-8") as f:
+                return f.read()
+
+        def body_of(text: str) -> str:
+            return text.split("\n---\n", 1)[1]
+
+        def ready(tid: str) -> str:
+            for line in run_task(wt1, "status").stdout.splitlines():
+                cols = line.split("\t")
+                if cols[0] == tid:
+                    return cols[5]
+            return ""
+
+        a, b, c, d = new(), new(), new(), new()
+        r = run_task(wt1, "edit", b, "--add-deps", a)
+        check("--add-deps で依存が入り、status が BLOCKED になる", r.returncode == 0 and r.stdout.strip() == f"EDITED\t{b}"
+              and f"dependencies: [{a}]" in read(b) and ready(b) == f"BLOCKED:{a}", r.stdout + r.stderr + read(b))
+        before = read(b)
+        r = run_task(wt1, "edit", b, "--add-deps", a)
+        check("すでにある依存の追加は通り、重ならない", r.returncode == 0 and read(b) == before, r.stdout + r.stderr)
+        r = run_task(wt1, "edit", c, "--add-deps", f"{a},{b}")
+        check("2件を一度に足せる", r.returncode == 0 and ready(c) == f"BLOCKED:{a},{b}", r.stdout + r.stderr + read(c))
+        r = run_task(wt1, "edit", b, "--remove-deps", a)
+        check("--remove-deps で外れ、READY に戻る", r.returncode == 0 and ready(b) == "READY", r.stdout + r.stderr)
+        check("本文は変わらない", body_of(read(b)) == body_of(before))
+        run_task(wt1, "edit", d, "--add-deps", c)
+
+        snapshot = {t: read(t) for t in (a, b, c, d)}
+        for label, args in (
+            ("自分自身", (a, "--add-deps", a)),
+            ("存在しない ID", (a, "--add-deps", "T-999")),
+            ("形の違う ID", (a, "--add-deps", "xyz")),
+            ("依存にない ID の削除", (a, "--remove-deps", b)),
+            ("追加と削除に同じ ID", (a, "--add-deps", b, "--remove-deps", b)),
+            ("直接の循環（C は B に依存済み）", (b, "--add-deps", c)),
+            ("間接の循環（D→C→A に A→D）", (a, "--add-deps", d)),
+        ):
+            r = run_task(wt1, "edit", *args)
+            check(f"{label}は終了コード2で拒み、何も書かない", r.returncode == 2 and "usage:" in r.stderr
+                  and {t: read(t) for t in (a, b, c, d)} == snapshot, r.stdout + r.stderr)
+        r = run_task(wt1, "edit", a, "--add-deps", d)
+        check("循環の文言に道が出る", f"{a}→{d}→{c}→{a}" in r.stderr, r.stderr)
+        r = run_task(wt1, "edit", a, "--add-deps", f"{b},{d}")
+        check("追加の一部が循環なら全体を書かない",r.returncode == 2 and read(a) == snapshot[a], r.stdout + r.stderr)
+
+        r = run_task(wt1, "edit", a)
+        check("直すものが無ければ終了コード2", r.returncode == 2, r.stdout + r.stderr)
+        r = run_task(wt1, "edit", a, "--section", "やること", "--add-deps", b)
+        check("--body-file 無しの --section は終了コード2", r.returncode == 2 and read(a) == snapshot[a], r.stdout + r.stderr)
+        r = run_task(wt1, "edit", b, "--add-deps", a, "--body-file", "-", stdin=body_of(read(b)).lstrip("\n"))
+        check("--body-file と一緒に渡せば両方が反映される", r.returncode == 0 and f"dependencies: [{a}]" in read(b),
+              r.stdout + r.stderr)
+
+        commit_task(main_path, taskfile.Task("T-900", "終わり", "done", "sonnet", "Y", (), BODY))
+        git(wt1, "merge", "-q", "main")
+        r = run_task(wt1, "edit", "T-900", "--add-deps", a)
+        check("done のタスクは NOT_READY（終了コード4）", r.returncode == 4 and r.stdout.startswith("NOT_READY\tT-900"),
+              r.stdout + r.stderr)
+        r = run_task(wt1, "edit", b, "--remove-deps", a, "--add-deps", "T-900")
+        check("done のタスクへの依存は足せる（解決済みなので READY のまま）", r.returncode == 0 and ready(b) == "READY",
+              r.stdout + r.stderr)
+
+
 def test_registered_plan() -> None:
     print("task.py new --with-plan・claim・plan-check: 登録時の計画が名指すファイルが着手時までに変わったかを知らせる")
 
@@ -2085,6 +2159,7 @@ def main() -> None:
         test_commit_guard,
         test_edit_and_plan_check,
         test_edit_section,
+        test_edit_deps,
         test_registered_plan,
         test_verify_refuses_unplanned_work,
         test_verify_stamp,

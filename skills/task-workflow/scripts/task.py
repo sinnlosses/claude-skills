@@ -26,7 +26,8 @@ import time
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable
+from collections.abc import Collection, Mapping
+from typing import Callable, NoReturn
 
 import beads
 import commit_guard
@@ -648,10 +649,75 @@ PLAN_AFTER_WORK = "after-work"
 PLAN_REGISTERED = "registered"
 
 
+def _parse_dep_list(raw: str | None, pattern: re.Pattern[str], flag: str, form: str) -> tuple[str, ...]:
+    deps = tuple(d for d in (x.strip() for x in raw.split(",")) if d) if raw else ()
+    for d in deps:
+        if not pattern.match(d):
+            print(f"usage: {flag} の {d!r} が {form} の形式でない", file=sys.stderr)
+            raise SystemExit(2)
+    return deps
+
+
+def _find_cycle(graph: Mapping[str, tuple[str, ...]], task_id: str, new_dep: str) -> list[str] | None:
+    """`task_id` が `new_dep` に依存する辺を足すと閉じる道（`A→B→A`）。閉じなければ None。自分自身は長さ1の循環。"""
+    if new_dep == task_id:
+        return [task_id, task_id]
+    seen = {new_dep}
+    stack = [(new_dep, [task_id, new_dep])]
+    while stack:
+        node, path = stack.pop()
+        for nxt in graph.get(node, ()):
+            if nxt == task_id:
+                return [*path, task_id]
+            if nxt not in seen:
+                seen.add(nxt)
+                stack.append((nxt, [*path, nxt]))
+    return None
+
+
+def _apply_dep_edit(
+    task_id: str,
+    current: tuple[str, ...],
+    add: tuple[str, ...],
+    remove: tuple[str, ...],
+    known: Collection[str],
+    graph: Mapping[str, tuple[str, ...]],
+) -> tuple[str, ...]:
+    """削除してから追加した依存の並び。誤りは何も書かずに終了コード2。"""
+
+    def refuse(message: str) -> NoReturn:
+        print(f"usage: {message}", file=sys.stderr)
+        raise SystemExit(2)
+
+    both = [d for d in add if d in remove]
+    if both:
+        refuse(f"--add-deps と --remove-deps に同じ {','.join(both)} がある")
+    absent = [d for d in remove if d not in current]
+    if absent:
+        refuse(f"--remove-deps の {','.join(absent)} は {task_id} の依存にない")
+    unknown = [d for d in add if d not in known]
+    if unknown:
+        refuse(f"--add-deps の {','.join(unknown)} が台帳に無い（解決済みなら足さない）")
+    # 辺を足す順に調べる。先に足した辺も道に入るので、追加どうしで閉じる循環も拾う。
+    edges = {**graph, task_id: tuple(d for d in current if d not in remove)}
+    for d in add:
+        if d in edges[task_id]:
+            continue
+        cycle = _find_cycle(edges, task_id, d)
+        if cycle is not None:
+            refuse(f"--add-deps の {d} は循環になる（{'→'.join(cycle)}）")
+        edges[task_id] = (*edges[task_id], d)
+    return edges[task_id]
+
+
 def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
-    """ファイル方式の `edit`。本文だけを書き換え、`## やること` を初めて書いた時点の判定を印に残す。"""
-    if any([args.summary, args.difficulty, args.loopable, args.status]) or not args.body_file:
-        print("usage: ファイル方式の edit は --body-file（と --section・--after-work・--change-frame）だけ（ほかはタスクファイルを直に直す）", file=sys.stderr)
+    """ファイル方式の `edit`。本文と依存を書き換え、`## やること` を初めて書いた時点の判定を印に残す。"""
+    edits_deps = bool(args.add_deps or args.remove_deps)
+    if any([args.summary, args.difficulty, args.loopable, args.status]) or not (args.body_file or edits_deps):
+        print("usage: ファイル方式の edit は --body-file（と --section・--after-work・--change-frame）か --add-deps・--remove-deps だけ（ほかはタスクファイルを直に直す）", file=sys.stderr)
+        raise SystemExit(2)
+    if not args.body_file and any([args.section, args.after_work, args.change_frame]):
+        print("usage: --section・--after-work・--change-frame は --body-file と一緒に使う", file=sys.stderr)
         raise SystemExit(2)
     task_id = args.task_id
     if not taskfile.ID_PATTERN.match(task_id):
@@ -668,18 +734,28 @@ def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
     if task.status not in ("todo", "hold"):
         print(f"NOT_READY\t{task_id}\t{task.status}")
         raise SystemExit(4)
-    body = _section_body(args, task.body, read_body(args.body_file))
-    error = taskfile.validate_body(body)
-    if error is not None:
-        print(f"usage: {error}", file=sys.stderr)
-        raise SystemExit(2)
-    _refuse_frame_change(task_id, taskfile.changed_frame_sections(task.body, body), args.change_frame)
+    dependencies = task.dependencies
+    if edits_deps:
+        add = _parse_dep_list(args.add_deps, taskfile.ID_PATTERN, "--add-deps", "T-999")
+        remove = _parse_dep_list(args.remove_deps, taskfile.ID_PATTERN, "--remove-deps", "T-999")
+        tasks, _, _ = load_tasks(toplevel)
+        graph = {i: t.dependencies for i, t in tasks.items()}
+        dependencies = _apply_dep_edit(task_id, task.dependencies, add, remove, set(tasks), graph)
+    body = task.body
+    if args.body_file:
+        body = _section_body(args, task.body, read_body(args.body_file))
+        error = taskfile.validate_body(body)
+        if error is not None:
+            print(f"usage: {error}", file=sys.stderr)
+            raise SystemExit(2)
+        _refuse_frame_change(task_id, taskfile.changed_frame_sections(task.body, body), args.change_frame)
 
     root = ledger.ledger_root(cwd=toplevel)
     owner = ledger.read_owner(ledger.claim_dir(root, task_id))
     state = None
     if (
-        owner is not None
+        args.body_file
+        and owner is not None
         and owner.get("worktree") == toplevel
         and taskfile.has_plan(body)
         and ledger.read_plan_mark(root, task_id) is None
@@ -689,7 +765,7 @@ def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
         _refuse_plan_after_work(task_id, state, args.after_work)
 
     rendered = taskfile.render(
-        taskfile.Task(task.id, task.summary, task.status, task.difficulty, task.loopable, task.dependencies, body)
+        taskfile.Task(task.id, task.summary, task.status, task.difficulty, task.loopable, dependencies, body)
     )
     with open(path, "w", encoding="utf-8") as f:
         f.write(rendered)
@@ -1648,15 +1724,25 @@ def cmd_beads_edit(toplevel: str, args: argparse.Namespace) -> None:
     if args.section is not None and not args.body_file:
         print("usage: --section は --body-file と一緒に使う", file=sys.stderr)
         raise SystemExit(2)
-    if not any([args.body_file, args.summary, args.difficulty, args.loopable, args.status]):
-        print("usage: 直すもの（--body-file・--summary・--difficulty・--loopable・--status）が無い", file=sys.stderr)
+    if not any([args.body_file, args.summary, args.difficulty, args.loopable, args.status, args.add_deps, args.remove_deps]):
+        print("usage: 直すもの（--body-file・--summary・--difficulty・--loopable・--status・--add-deps・--remove-deps）が無い", file=sys.stderr)
         raise SystemExit(2)
+    add = _parse_dep_list(args.add_deps, layout.ANY_ID_PATTERN, "--add-deps", "T-999・GH-5・PROJ-123")
+    remove = _parse_dep_list(args.remove_deps, layout.ANY_ID_PATTERN, "--remove-deps", "T-999・GH-5・PROJ-123")
     trk = tracker.session(toplevel)
     pulled = trk.before([bd_id])
     issue = beads.show(toplevel, bd_id)
     if issue is None:
         print(f"NOT_READY\t{shown}\t存在しない")
         raise SystemExit(4)
+    dep_edges: list[list[str]] = []
+    if add or remove:
+        snap = _beads_snapshot(toplevel)
+        graph = {k: tuple(beads.to_task_id(d) for d in i.dependencies) for k, i in snap.issues.items()}
+        current = tuple(beads.to_task_id(d) for d in issue.dependencies)
+        wanted = _apply_dep_edit(shown, current, add, remove, set(snap.issues), graph)
+        dep_edges = [["dep", "remove", bd_id, beads.to_bd_id(d)] for d in current if d not in wanted]
+        dep_edges += [["dep", "add", bd_id, beads.to_bd_id(d)] for d in wanted if d not in current]
     cmd = ["update", bd_id]
     stdin = None
     state = None
@@ -1701,9 +1787,14 @@ def cmd_beads_edit(toplevel: str, args: argparse.Namespace) -> None:
             print(f"NOT_READY\t{shown}\t{issue.status}（todo↔hold は着手前だけ）")
             raise SystemExit(4)
         cmd += ["--status", "open" if args.status == "todo" else beads.HOLD_STATUS]
-    r = beads.run(toplevel, cmd, _actor(toplevel), stdin)
-    if r.returncode != 0:
-        raise beads.BeadsError(f"bd update が失敗: {(r.stderr or r.stdout).strip()}")
+    if len(cmd) > 2:
+        r = beads.run(toplevel, cmd, _actor(toplevel), stdin)
+        if r.returncode != 0:
+            raise beads.BeadsError(f"bd update が失敗: {(r.stderr or r.stdout).strip()}")
+    for edge in dep_edges:
+        r = beads.run(toplevel, edge, _actor(toplevel))
+        if r.returncode != 0:
+            raise beads.BeadsError(f"bd {' '.join(edge[:2])} が失敗: {(r.stderr or r.stdout).strip()}")
     print(f"EDITED\t{shown}")
     if state == PLAN_AFTER_WORK:
         print(f"PLAN_AFTER_WORK\t{shown}\t作業の後に書いた")
@@ -1903,6 +1994,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_edit.add_argument("--difficulty", default=None, choices=taskfile.DIFFICULTY_VALUES)
     p_edit.add_argument("--loopable", default=None, choices=taskfile.LOOPABLE_VALUES)
     p_edit.add_argument("--status", default=None, choices=("todo", "hold"))
+    p_edit.add_argument("--add-deps", dest="add_deps", default=None)
+    p_edit.add_argument("--remove-deps", dest="remove_deps", default=None)
     p_edit.add_argument("--after-work", dest="after_work", action="store_true")
     p_edit.add_argument("--change-frame", dest="change_frame", action="store_true")
 
