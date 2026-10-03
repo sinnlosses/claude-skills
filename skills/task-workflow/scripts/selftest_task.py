@@ -71,6 +71,7 @@ def make_repo(
     base: str = "main",
     config_filename: str = "CLAUDE.md",
     format_command: str | None = None,
+    preship: str | None = None,
 ) -> tuple[str, str, str]:
     """`(本体, 作業ツリー1, 作業ツリー2)`。本体だけが主ブランチを出す。
 
@@ -95,6 +96,8 @@ def make_repo(
         config_md += f"- 検証コマンド: {verify}\n"
     if format_command is not None:
         config_md += f"- 整形コマンド: {format_command}\n"
+    if preship is not None:
+        config_md += f"- 送る前の検証コマンド: {preship}\n"
     config_md += f"- ブランチ: {branch}\n"
     write(os.path.join(main_path, config_filename), config_md)
     write(os.path.join(main_path, "shared.txt"), "line1\n")
@@ -1500,9 +1503,9 @@ COUNTING_VERIFY_SCRIPT = 'echo x >> ../verify-count.log\necho "3 pass"\n'
 NOTES = "a\nb\nc\nd\ne\n"
 
 
-def _fold_repo(tmp: str) -> tuple[str, str]:
+def _fold_repo(tmp: str, preship: str | None = None) -> tuple[str, str]:
     """`(本体, 作業ツリー1)`。wt1 が T-120 を claim 済みで、検証コマンドは打たれるたびに `verify-count.log` へ1行足す。"""
-    main_path, wt1, _wt2 = make_repo(tmp, branch="切らない", verify="`sh ../verify-count.sh`")
+    main_path, wt1, _wt2 = make_repo(tmp, branch="切らない", verify="`sh ../verify-count.sh`", preship=preship)
     write(os.path.join(tmp, "verify-count.sh"), COUNTING_VERIFY_SCRIPT)
     write(os.path.join(main_path, "notes.txt"), NOTES)
     planned = BODY.replace("## やること\n", "## やること\n1. 書く\n")
@@ -1613,6 +1616,40 @@ def test_verify_folds_base_before_check() -> None:
         check("ship は付け替えずに送る（verify=skipped）", r.returncode == 0 and r.stdout.startswith("SHIPPED\t")
               and "rebased=no" in r.stdout and "verify=skipped" in r.stdout, r.stdout + r.stderr)
         check("検証コマンドは1回だけ", _verify_count(tmp) == 1, str(_verify_count(tmp)))
+        check("送る前の検証コマンドの行が無ければ preship は出ない", "preship=" not in r.stdout, r.stdout)
+
+
+def test_ship_runs_preship_verify_even_when_verify_is_same() -> None:
+    print("task.py ship: 送る前の検証コマンドの行があれば、控えが VERIFIED_SAME でも主ブランチへ入れる直前に打つ")
+    for passes in (True, False):
+        with tempfile.TemporaryDirectory() as tmp:
+            exit_code = 0 if passes else 1
+            write(os.path.join(tmp, "preship.sh"), f"echo x >> ../preship-count.log\nexit {exit_code}\n")
+            main_path, wt1 = _fold_repo(tmp, preship="`sh ../preship.sh`")
+            write(os.path.join(wt1, "work.txt"), "x\n")
+            r = run_task(wt1, "verify")
+            check("verify は VERIFIED（控えた）", r.returncode == 0 and "VERIFIED\t" in r.stdout, r.stdout + r.stderr)
+            check("verify は送る前の検証コマンドを打たない", not os.path.exists(os.path.join(tmp, "preship-count.log")))
+            r = run_task(wt1, "verify-check")
+            check("控えは VERIFIED_SAME", r.stdout.startswith("VERIFIED_SAME\t"), r.stdout)
+
+            head_before = git(main_path, "rev-parse", "HEAD").stdout.strip()
+            r = _commit_and_ship(wt1, tmp, "work.txt", "develop/task/T-120.md")
+            with open(os.path.join(tmp, "preship-count.log"), encoding="utf-8") as f:
+                preship_count = len(f.read().splitlines())
+            check("送る前の検証コマンドは ship で1回打たれる", preship_count == 1, str(preship_count))
+            check("通常の検証コマンドは verify の1回だけ", _verify_count(tmp) == 1, str(_verify_count(tmp)))
+            head_after = git(main_path, "rev-parse", "HEAD").stdout.strip()
+            if passes:
+                check("通れば verify=skipped のまま preship=ran で送る",
+                      r.returncode == 0 and r.stdout.startswith("SHIPPED\t") and "verify=skipped" in r.stdout
+                      and "preship=ran" in r.stdout, r.stdout + r.stderr)
+                check("主ブランチへ入った", head_after != head_before)
+            else:
+                check("落ちれば VERIFY_FAILED で終了コード8（送る前のコマンドを名指す）",
+                      r.returncode == 8 and r.stdout.startswith("VERIFY_FAILED\tsh ../preship.sh"), r.stdout + r.stderr)
+                check("主ブランチは進んでいない", head_after == head_before)
+                check("作業ツリーはきれい", git(wt1, "status", "--porcelain").stdout.strip() == "")
 
 
 def test_worktree_tree_sees_same_size_edit_after_second_boundary() -> None:
@@ -2290,6 +2327,7 @@ def main() -> None:
         test_worktree_tree_sees_same_size_edit_after_second_boundary,
         test_verify_conflict_before_check,
         test_verify_check_reports_base,
+        test_ship_runs_preship_verify_even_when_verify_is_same,
         test_ship_fast_forward,
         test_ship_rebases_when_main_advances,
         test_ship_forces_verify_after_verify_failed_without_new_rebase,

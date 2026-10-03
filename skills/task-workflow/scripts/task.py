@@ -1091,7 +1091,14 @@ def cmd_ship(toplevel: str, hooks: "ShipHooks | None" = None) -> None:
     old_base = _run_git(toplevel, ["rev-parse", base]).stdout.strip()
     verify_command = ship.read_verify_command(toplevel)
     verify_owed = ledger.is_verify_owed(cwd=toplevel)
-    outcome = ship.attempt(toplevel, base_worktree, verify_command, base, verify_owed=verify_owed)
+    outcome = ship.attempt(
+        toplevel,
+        base_worktree,
+        verify_command,
+        base,
+        verify_owed=verify_owed,
+        preship_command=ship.read_preship_command(toplevel),
+    )
 
     if outcome.kind == "CONFLICT":
         print("CONFLICT\t" + (",".join(outcome.conflict_files) or "?"))
@@ -1118,9 +1125,10 @@ def cmd_ship(toplevel: str, hooks: "ShipHooks | None" = None) -> None:
 
     released = hooks.release_shipped()
     new_base = _run_git(toplevel, ["rev-parse", base]).stdout.strip()
+    preship_note = "\tpreship=ran" if outcome.preship_ran else ""
     print(
         f"SHIPPED\t{old_base}..{new_base}\trebased={'yes' if outcome.rebased else 'no'}"
-        f"\tverify={outcome.verify_state}\ttries={outcome.tries}\treleased={','.join(released) or '-'}"
+        f"\tverify={outcome.verify_state}{preship_note}\ttries={outcome.tries}\treleased={','.join(released) or '-'}"
         f"\t{branch_note}"
     )
     _print_lines(hooks.after_send())

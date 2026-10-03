@@ -30,6 +30,7 @@ class ShipOutcome:
     conflict_files: tuple[str, ...] = field(default_factory=tuple)
     verify_command: str | None = None
     verify_tail: str = ""
+    preship_ran: bool = False
 
 
 def read_verify_command(toplevel: str) -> str | None:
@@ -40,27 +41,25 @@ def read_verify_command(toplevel: str) -> str | None:
     ファイルに節があれば `layout.ConfigConflict`（呼ぶ側の `task.py` の `main` が
     `INVALID`・終了コード3にする）。
     """
-    found = layout.find_config_file(toplevel)
-    if found is None:
-        return None
-    _path, text = found
-    m = re.search(r"^- 検証コマンド:\s*(.*)$", text, flags=re.MULTILINE)
-    if m is None:
-        return None
-    value = m.group(1).strip()
-    if value.startswith("なし"):
-        return None
-    cmd_m = re.search(r"`([^`]+)`", value)
-    return cmd_m.group(1) if cmd_m else None
+    return _read_command_line(toplevel, "検証コマンド")
 
 
 def read_format_command(toplevel: str) -> str | None:
     """`- 整形コマンド:` 行の最初の `` `…` ``。行が無い、または値が `なし` で始まるなら `None`。"""
+    return _read_command_line(toplevel, "整形コマンド")
+
+
+def read_preship_command(toplevel: str) -> str | None:
+    """`- 送る前の検証コマンド:` 行の最初の `` `…` ``。行が無い、または値が `なし` で始まるなら `None`。"""
+    return _read_command_line(toplevel, "送る前の検証コマンド")
+
+
+def _read_command_line(toplevel: str, label: str) -> str | None:
     found = layout.find_config_file(toplevel)
     if found is None:
         return None
     _path, text = found
-    m = re.search(r"^- 整形コマンド:\s*(.*)$", text, flags=re.MULTILINE)
+    m = re.search(rf"^- {label}:\s*(.*)$", text, flags=re.MULTILINE)
     if m is None:
         return None
     value = m.group(1).strip()
@@ -87,6 +86,7 @@ def attempt(
     verify_command: str | None,
     base: str,
     verify_owed: bool = False,
+    preship_command: str | None = None,
 ) -> ShipOutcome:
     """最大 `MAX_TRIES` 回、rebase → 検証（付け替えた回だけ）→ 送る、を繰り返す（6.2手順5・6）。
 
@@ -97,6 +97,9 @@ def attempt(
     `verify_owed` は前回の `ship` が `VERIFY_FAILED` で終わった印（`ledger.is_verify_owed`）。
     立っていれば、1回目の試行で付け替えが起きなくても検証を打つ——付け替え済みのまま次の
     `ship` を打つと、そのままでは検証を素通りして送ってしまうため（T-777）。
+
+    `preship_command` があれば、付け替えと上の検証のあと・送る直前に毎回打つ。付け替えの有無も
+    借りも見ない。落ちたら `VERIFY_FAILED`（`verify_command` はこのコマンド）。
     """
     rebased_any = False
     verify_state = "none" if verify_command is None else "skipped"
@@ -128,6 +131,19 @@ def attempt(
                     verify_tail=tail,
                 )
 
+        if preship_command is not None:
+            pr = subprocess.run(["sh", "-c", preship_command], cwd=toplevel, capture_output=True, text=True)
+            if pr.returncode != 0:
+                tail = "\n".join(((pr.stdout or "") + (pr.stderr or "")).splitlines()[-40:])
+                return ShipOutcome(
+                    kind="VERIFY_FAILED",
+                    rebased=rebased_any,
+                    verify_state=verify_state,
+                    tries=tries,
+                    verify_command=preship_command,
+                    verify_tail=tail,
+                )
+
         # 枝の名前ではなくコミットで送る（detached HEAD の `HEAD` は本体の側では本体自身を指す）。
         head = _run(toplevel, ["rev-parse", "HEAD"]).stdout.strip()
         if base_worktree is not None:
@@ -139,6 +155,12 @@ def attempt(
             sent = _run(toplevel, ["update-ref", f"refs/heads/{base}", head, seen]).returncode == 0
 
         if sent:
-            return ShipOutcome(kind="SENT", rebased=rebased_any, verify_state=verify_state, tries=tries)
+            return ShipOutcome(
+                kind="SENT",
+                rebased=rebased_any,
+                verify_state=verify_state,
+                tries=tries,
+                preship_ran=preship_command is not None,
+            )
 
     return ShipOutcome(kind="RACE", rebased=rebased_any, verify_state=verify_state, tries=MAX_TRIES)
