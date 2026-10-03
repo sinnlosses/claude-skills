@@ -791,6 +791,7 @@ def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
         and owner is not None
         and owner.get("worktree") == toplevel
         and taskfile.has_plan(body)
+        and taskfile.plan_changed(task.body, body)
         and ledger.read_plan_mark(root, task_id) is None
     ):
         own = f"{layout.TASK_DIR}/{task_id}.md"
@@ -1819,6 +1820,7 @@ def cmd_beads_edit(toplevel: str, args: argparse.Namespace) -> None:
             issue.status == "in_progress"
             and issue.assignee == _actor(toplevel)
             and taskfile.has_plan(body)
+            and taskfile.plan_changed(current, body)
             and not metadata.get(beads.PLAN_KEY)
         ):
             state = _plan_state(toplevel, metadata.get(beads.CLAIM_HEAD_KEY), args.body_file, None)

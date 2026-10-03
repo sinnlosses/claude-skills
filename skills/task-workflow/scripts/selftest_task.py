@@ -1130,6 +1130,18 @@ def test_edit_section() -> None:
               and r.stdout.splitlines()[:2] == ["EDITED\tT-111", "PLAN_AFTER_WORK\tT-111\t作業の後に書いた"]
               and r2.stdout.strip() == "PLAN_NOT_FIRST\tT-111\tafter-work", r.stdout + r2.stdout + r.stderr)
 
+        r = run_task(wt1, "edit", "T-110", "--section", "注意", "--body-file", "-", stdin="- 申し送り\n")
+        r2 = run_task(wt1, "plan-check", "T-110")
+        check("作業のあとでも ## やること を変えない --section 注意 は拒まず、記録も変えない", r.returncode == 0
+              and r.stdout.strip() == "EDITED\tT-110" and "- 申し送り" in read("T-110")
+              and r2.stdout.strip() == "PLAN_FIRST\tT-110", r.stdout + r2.stdout + r.stderr)
+        whole, _ = taskfile.read_task_file(path("T-110"))
+        stdin = whole.body.replace("- 申し送り", "- 別の申し送り") if whole is not None else ""
+        r = run_task(wt1, "edit", "T-110", "--body-file", "-", stdin=stdin)
+        r2 = run_task(wt1, "plan-check", "T-110")
+        check("本文ごと渡しても ## やること が同じなら同じ", r.returncode == 0 and r.stdout.strip() == "EDITED\tT-110"
+              and "- 別の申し送り" in read("T-110") and r2.stdout.strip() == "PLAN_FIRST\tT-110", r.stdout + r2.stdout + r.stderr)
+
 
 def test_edit_deps() -> None:
     print("task.py edit --add-deps・--remove-deps: 台帳の依存を後から変える")

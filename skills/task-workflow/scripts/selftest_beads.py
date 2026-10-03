@@ -539,6 +539,14 @@ def test_edit_section() -> None:
               and r.stdout.splitlines()[:2] == [f"EDITED\t{b}", f"PLAN_AFTER_WORK\t{b}\t作業の後に書いた"]
               and metadata(b).get(beads.PLAN_KEY) == "after-work", r.stdout + r.stderr + str(metadata(b)))
 
+        r = run_task(wt1, "edit", a, "--section", "注意", "--body-file", "-", stdin="- 申し送り\n")
+        check("作業のあとでも ## やること を変えない --section 注意 は拒まず、記録も変えない", r.returncode == 0
+              and r.stdout.strip() == f"EDITED\t{a}" and "- 申し送り" in text(a)
+              and metadata(a).get(beads.PLAN_KEY) == "first", r.stdout + r.stderr + str(metadata(a)))
+        r = run_task(wt1, "edit", a, "--body-file", "-", stdin=text(a).replace("- 申し送り", "- 別の申し送り"))
+        check("本文ごと渡しても ## やること が同じなら同じ", r.returncode == 0 and r.stdout.strip() == f"EDITED\t{a}"
+              and "- 別の申し送り" in text(a) and metadata(a).get(beads.PLAN_KEY) == "first", r.stdout + r.stderr)
+
 
 def test_edit_deps() -> None:
     say("edit --add-deps・--remove-deps: Beads の依存を後から変える")

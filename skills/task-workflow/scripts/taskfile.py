@@ -275,6 +275,13 @@ def has_plan(body: str) -> bool:
     return not is_blank(dict(_frame_sections(body)[1]).get(PLAN_HEADING, ""))
 
 
+def plan_changed(old_body: str, new_body: str) -> bool:
+    """`## やること` の中身が `old_body` と違うか。行末の空白と連続する空行の数は無視する。"""
+    old = dict(_frame_sections(old_body)[1]).get(PLAN_HEADING, "")
+    new = dict(_frame_sections(new_body)[1]).get(PLAN_HEADING, "")
+    return _squeeze(old) != _squeeze(new)
+
+
 def changed_frame_sections(old_body: str, new_body: str) -> list[str]:
     """`## 目的・背景`・`## 完了条件` のうち、中身が `old_body` と違う節の見出し。
 
