@@ -28,12 +28,13 @@ Claude Code のユーザー単位スキル（`~/.claude/skills/`）のソース�
 
 ## 由来
 
-全24スキル。`skills/` にあるものが全てで、この一覧がその索引。
+全27スキル。`skills/` にあるものが全てで、この一覧がその索引。
 
-- [mattpocock/skills](https://github.com/mattpocock/skills) を日本語化したもの（11件）:
+- [mattpocock/skills](https://github.com/mattpocock/skills) を日本語化したもの（14件）:
   `code-review` `codebase-design` `diagnosing-bugs` `domain-modeling` `grilling`
-  `grill-with-docs` `implement` `improve-codebase-architecture` `research`
-  `resolving-merge-conflicts` `tdd`
+  `grill-with-docs` `implement` `improve-codebase-architecture` `prototype` `research`
+  `resolving-merge-conflicts` `retro` `tdd` `wizard`
+  （`retro` は札・色・ドラフトの形を `retrospect` に合わせ、選ばれた改善案を `develop/draft/` に積む）
 - [anthropics/skills](https://github.com/anthropics/skills) を日本語化したもの（3件。Apache-2.0。
   各スキルの `LICENSE.txt` を同梱）: `frontend-design` `webapp-testing` `skill-creator`
 - [openclaw/openclaw](https://github.com/openclaw/openclaw/tree/main/.agents/skills/test-audit) を
