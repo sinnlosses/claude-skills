@@ -289,8 +289,17 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    報告の文字（「3幅とも一致・はみ出し 0px」など）だけで受け入れない。開いたパスは手順7の `## 結果` に書く。
 
    `## やること` は手順5と5bで見たので（計画どおりに委譲したときは `tw plan-check T-xxx` が
-   `PLAN_REGISTERED` を返し、`PLAN_FIRST` と同じに読む）、ここでは `git diff` を読み、整形コマンド → `tw verify-check` を打つ
-   （下の表。検証を省くか `tw verify` で打つかを決める）。方針からズレた実装はその場で直す。
+   `PLAN_REGISTERED` を返し、`PLAN_FIRST` と同じに読む）、ここでは `git diff` を読む。
+
+   **コメント行を拾い出す**（`tw verify-check` の前。`git diff` を読むのと同じ段）:
+   `python3 ${CLAUDE_SKILL_DIR}/../comment-audit/scripts/diff_added_comment_lines.py` を打ち、
+   差分で足されたコメント行を機械で拾い出す。拾った行1つずつに `comment-audit` スキルの
+   「判定の1問」を当て、消す・正典へ移す対象に当たるものがあれば、`tw verify-check` へ進まずに
+   `SendMessage` で委譲先へ当たった行と理由を伝えて差し戻す（直った差分が届いたらこの段をやり直す）。
+   当たるものが無ければ次へ進む。
+
+   整形コマンド → `tw verify-check` を打つ（下の表。検証を省くか `tw verify` で打つかを決める）。
+   方針からズレた実装はその場で直す。
    作業ツリーを cwd にした残りのプロセスが無いかを `ps` で見て、あれば止める。
    **検証コマンドが1回で通らず、打ち直したら通った**ときは、落ちた・打ち直した・通った、を
    一言メモしておく（手順6aで `retrospect` の兆候「運良く助かった」に使う。委譲先の friction log の
@@ -307,7 +316,9 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    **作業先が別のリポジトリのとき**（タスクが直す対象が自分の作業ツリーの外のリポジトリ）: 控えは
    cwd の作業ツリーごとに別なので、`git diff` と `tw verify-check` は、委譲先が残した作業先の作業ツリー
    （報告のパス）で `cd <パス> && tw verify-check` と打つ（自分の作業ツリーで打つと `NOT_VERIFIED none`
-   になるだけ）。表は同じに読む。`VERIFIED_SAME` なら、検証コマンドを打たずに作業先の本体で
+   になるだけ）。コメント行の拾い出しも同じ作業ツリーで、主ブランチから委譲先の枝までの範囲
+   （`python3 ${CLAUDE_SKILL_DIR}/../comment-audit/scripts/diff_added_comment_lines.py main..<枝>`）を
+   渡して打つ。表は同じに読む。`VERIFIED_SAME` なら、検証コマンドを打たずに作業先の本体で
    `git merge --ff-only <枝>` して、作業ツリーと枝を消す（`git worktree remove`・`git branch -d`）。
    `NOT_VERIFIED` ならその作業ツリーで `tw verify` を打ち直してから同じ段取りへ進む。受け入れで直すなら
    その作業ツリーで直してコミットしてから打つ。`tw` が `MISSING` を返す作業先では控えが無いので、
