@@ -7,7 +7,7 @@
 - 各 SKILL.md の frontmatter が読めて、`name` がディレクトリ名と一致すること
 - 各 `agents/*.md`（`install.sh` が `~/.claude/agents/` へ張るエージェント定義）の frontmatter が
   読めて、`name` がファイル名と一致し、`description` があること。`no-delegate` の frontmatter が
-  コミットを拒む hook（`tw commit-guard`）を持つこと
+  コミットを拒む hook（`tw commit-guard`）と返却を拒む hook（`tw handback-guard`）を持つこと
 - README の「由来」一覧が `skills/` と過不足なく一致すること（README が索引なので）
 - スキル同士の相互参照が実在するスキルを指していること
 - `docs/` に書くスキルが、索引 `docs/README.md` に1行足す指示を持っていること
@@ -33,8 +33,11 @@ AGENTS = os.path.join(ROOT, "agents")
 # 「索引 `docs/README.md` に1行足す」指示を持っていなければならない。
 DOCS_WRITING_SKILLS = ("architecture-proposal", "domain-modeling", "research")
 
-# `agents/no-delegate.md` の frontmatter の hooks に要る1行。
-COMMIT_GUARD_HOOK_LINE = "command: tw commit-guard 2>/dev/null || true"
+# `agents/no-delegate.md` の frontmatter の hooks に要る行。
+NO_DELEGATE_HOOK_LINES = (
+    "command: tw commit-guard 2>/dev/null || true",
+    "command: tw handback-guard 2>/dev/null || true",
+)
 
 problems: list[str] = []
 
@@ -106,8 +109,10 @@ def check_agent_frontmatter(names: list[str]) -> None:
     if "no-delegate" in names:
         text = read(os.path.join(AGENTS, "no-delegate.md"))
         head = text[: text.find("\n---\n", 3)]
-        if not any(line.strip() == COMMIT_GUARD_HOOK_LINE for line in head.splitlines()):
-            fail(f"agents/no-delegate.md: frontmatter に hook の行 {COMMIT_GUARD_HOOK_LINE!r} が無い")
+        lines = [line.strip() for line in head.splitlines()]
+        for hook_line in NO_DELEGATE_HOOK_LINES:
+            if hook_line not in lines:
+                fail(f"agents/no-delegate.md: frontmatter に hook の行 {hook_line!r} が無い")
 
 
 def check_readme_index(names: list[str]) -> None:

@@ -885,12 +885,12 @@ def run_guard(tmp: str, where: str, command: str) -> str | None:
     return out["permissionDecisionReason"]
 
 
-def _hook_command() -> str:
+def _hook_command(subcommand: str) -> str:
     with open(NO_DELEGATE, encoding="utf-8") as f:
         for line in f:
-            if line.strip().startswith("command: tw commit-guard"):
+            if line.strip().startswith(f"command: tw {subcommand}"):
                 return line.strip()[len("command: "):]
-    raise RuntimeError("no-delegate.md に hook の行が無い")
+    raise RuntimeError(f"no-delegate.md に tw {subcommand} の hook の行が無い")
 
 
 def test_commit_guard() -> None:
@@ -947,10 +947,17 @@ def test_commit_guard() -> None:
         check("release のあとは通る", run_guard(tmp, wt2, "git commit -m x") is None)
 
 
-def _check_hook_line(tmp: str, claimed: str) -> None:
-    """`no-delegate.md` の hook の行を `sh -c` で打つ。`claimed` は印が立った作業ツリー。"""
-    hook = _hook_command()
-    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git commit -m x"}, "cwd": claimed})
+def _check_hook_line(
+    tmp: str,
+    claimed: str,
+    subcommand: str = "commit-guard",
+    payload_fields: dict | None = None,
+    refused: str = '"deny"',
+) -> None:
+    """`no-delegate.md` の hook の行を `sh -c` で打つ。`claimed` は拒まれる状態の作業ツリー。"""
+    hook = _hook_command(subcommand)
+    fields = payload_fields or {"tool_name": "Bash", "tool_input": {"command": "git commit -m x"}}
+    payload = json.dumps({**fields, "cwd": claimed})
     bare_path = "/usr/bin:/bin"
 
     def run_hook(tw_script: str | None) -> subprocess.CompletedProcess:
@@ -963,12 +970,86 @@ def _check_hook_line(tmp: str, claimed: str) -> None:
         return subprocess.run(["sh", "-c", hook], input=payload, capture_output=True, text=True, env={"PATH": path})
 
     r = run_hook(f'#!/bin/sh\nexec {sys.executable} {TASK_PY} "$@"\n')
-    check("hook の行は tw commit-guard を呼んで拒む", r.returncode == 0 and '"deny"' in r.stdout, r.stdout + r.stderr)
+    check(f"hook の行は tw {subcommand} を呼んで拒む", r.returncode == 0 and refused in r.stdout, r.stdout + r.stderr)
     r = run_hook(None)
-    check("tw が PATH に無くても hook は何も出さず0で通す", r.returncode == 0 and r.stdout == "", r.stdout + r.stderr)
-    r = run_hook(f"#!/bin/sh\nexec {sys.executable} -c 'raise RuntimeError(\"x\")'\n")
-    check("tw commit-guard が例外で落ちても hook は何も出さず0で通す",
+    check(f"tw が PATH に無くても {subcommand} の hook は何も出さず0で通す",
           r.returncode == 0 and r.stdout == "", r.stdout + r.stderr)
+    r = run_hook(f"#!/bin/sh\nexec {sys.executable} -c 'raise RuntimeError(\"x\")'\n")
+    check(f"tw {subcommand} が例外で落ちても hook は何も出さず0で通す",
+          r.returncode == 0 and r.stdout == "", r.stdout + r.stderr)
+
+
+def run_handback_guard(tmp: str, where: str, event: str = "SubagentStop", tool: str | None = None) -> dict | None:
+    """`tw handback-guard` を git の外（`tmp`）から打つ。拒んだら出した JSON、通したら `None`。"""
+    fields: dict = {"hook_event_name": event, "cwd": where}
+    if tool is not None:
+        fields["tool_name"] = tool
+    r = run_task(tmp, "handback-guard", stdin=json.dumps(fields))
+    if r.returncode != 0:
+        raise RuntimeError(f"handback-guard が {r.returncode} で終わった: {r.stderr}")
+    return json.loads(r.stdout) if r.stdout else None
+
+
+def _block_reason(out: dict | None) -> str:
+    return str(out.get("reason", "")) if out is not None and out.get("decision") == "block" else ""
+
+
+def test_handback_guard() -> None:
+    print("task.py handback-guard・pause: 作業があるのに計画か検証が欠けた返却を拒む")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp, verify="`true`")
+        commit_task(main_path, taskfile.Task("T-100", "先に計画", "todo", "sonnet", "Y", (), BODY))
+        commit_task(main_path, taskfile.Task("T-101", "計画なしで作業", "todo", "sonnet", "Y", (), BODY))
+
+        check("着手の印が無い委譲は通す", run_handback_guard(tmp, wt1) is None)
+        run_task(wt1, "claim", "T-100")
+        check("印があっても作業が無ければ通す（前提が誤り・dropped）", run_handback_guard(tmp, wt1) is None)
+        r = run_task(wt1, "edit", "T-100", "--section", "やること", "--body-file", "-", stdin="1. 書く\n")
+        check("計画だけの回は通す（タスクのファイルの変更は作業に数えない）",
+              r.returncode == 0 and run_handback_guard(tmp, wt1) is None, r.stdout + r.stderr)
+
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        reason = _block_reason(run_handback_guard(tmp, wt1))
+        check("計画があっても検証が無ければ SubagentStop を block し、理由に verify-check の行と次の一手",
+              "NOT_VERIFIED\tnone" in reason and "PLAN_NOT_FIRST" not in reason and "tw verify" in reason
+              and "tw pause" in reason and "T-100" in reason, reason)
+        out = run_handback_guard(tmp, wt1, "PreToolUse", "SubagentHandback")
+        check("SubagentHandback の PreToolUse は deny で理由を返す",
+              out is not None and out["hookSpecificOutput"]["permissionDecision"] == "deny"
+              and "NOT_VERIFIED" in out["hookSpecificOutput"]["permissionDecisionReason"], str(out))
+        check("ほかのツールの PreToolUse には何も出さない", run_handback_guard(tmp, wt1, "PreToolUse", "Bash") is None)
+        check("ほかのイベントには何も出さない", run_handback_guard(tmp, wt1, "PostToolUse", "SubagentHandback") is None)
+        _check_hook_line(tmp, wt1, "handback-guard", {"hook_event_name": "SubagentStop"}, '"block"')
+
+        r = run_task(wt1, "verify")
+        check("plan-check が PLAN_FIRST で tw verify が通れば通す",
+              r.returncode == 0 and run_handback_guard(tmp, wt1) is None, r.stdout + r.stderr)
+        write(os.path.join(wt1, "work.txt"), "y\n")
+        check("検証のあとに中身を変えると block（NOT_VERIFIED content）",
+              "NOT_VERIFIED\tcontent" in _block_reason(run_handback_guard(tmp, wt1)))
+        r = run_task(wt1, "pause")
+        check("tw pause で PAUSED を出し、いまの中身なら通す（目視待ち・止めて返す）",
+              r.returncode == 0 and r.stdout.startswith("PAUSED\t") and run_handback_guard(tmp, wt1) is None,
+              r.stdout + r.stderr)
+        write(os.path.join(wt1, "work.txt"), "z\n")
+        check("pause のあとに中身を変えると block", _block_reason(run_handback_guard(tmp, wt1)) != "")
+
+        run_task(wt2, "claim", "T-101")
+        git(wt2, "commit", "-q", "--allow-empty", "-m", "claim のあとのコミット")
+        reason = _block_reason(run_handback_guard(tmp, wt2))
+        check("claim のあとのコミットも作業に数え、計画も検証も無ければ両方の行を理由に書く",
+              "PLAN_NOT_FIRST\tT-101\tmissing" in reason and "NOT_VERIFIED\tnone" in reason, reason)
+        r = run_task(wt2, "edit", "T-101", "--section", "やること", "--after-work", "--body-file", "-", stdin="1. 書く\n")
+        run_task(wt2, "verify")
+        check("作業の後に書いた計画は検証が通っても block（PLAN_NOT_FIRST after-work）",
+              "PLAN_NOT_FIRST\tT-101\tafter-work" in _block_reason(run_handback_guard(tmp, wt2)), r.stdout)
+        run_task(wt2, "pause")
+        check("pause を打てば通す", run_handback_guard(tmp, wt2) is None)
+        run_task(wt2, "release", "T-101")
+        check("release のあとは印が無いので通す", run_handback_guard(tmp, wt2) is None)
+
+        r = run_task(tmp, "handback-guard", stdin="not json")
+        check("読めない入力は何も出さずに通す", r.returncode == 0 and r.stdout == "", r.stdout + r.stderr)
 
 
 # --- task.py: edit・plan-check ----------------------------------------------
@@ -2496,6 +2577,7 @@ def main() -> None:
         test_body_frame_check,
         test_done_commits_since_claim,
         test_commit_guard,
+        test_handback_guard,
         test_edit_and_plan_check,
         test_edit_section,
         test_edit_deps,

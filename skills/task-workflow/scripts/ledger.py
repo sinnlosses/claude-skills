@@ -445,6 +445,7 @@ def clear_verify_owed(cwd: str | None = None) -> None:
 
 VERIFY_STAMP_FILE_NAME = "task-verify-stamp"
 VERIFY_LOG_FILE_NAME = "task-verify.log"
+PAUSE_STAMP_FILE_NAME = "task-pause-stamp"
 
 
 @dataclass(frozen=True)
@@ -486,15 +487,36 @@ def verify_log_path(cwd: str | None = None) -> str:
 
 
 def write_verify_stamp(key: ContentKey, cwd: str | None = None) -> None:
+    _write_key(os.path.join(git_dir(cwd), VERIFY_STAMP_FILE_NAME), key)
+
+
+def read_verify_stamp(cwd: str | None = None) -> ContentKey | None:
+    return _read_key(os.path.join(git_dir(cwd), VERIFY_STAMP_FILE_NAME))
+
+
+def clear_verify_stamp(cwd: str | None = None) -> None:
     path = os.path.join(git_dir(cwd), VERIFY_STAMP_FILE_NAME)
+    if os.path.exists(path):
+        os.remove(path)
+
+
+def write_pause_stamp(key: ContentKey, cwd: str | None = None) -> None:
+    """`tw pause` を打った時点の中身の鍵。"""
+    _write_key(os.path.join(git_dir(cwd), PAUSE_STAMP_FILE_NAME), key)
+
+
+def read_pause_stamp(cwd: str | None = None) -> ContentKey | None:
+    return _read_key(os.path.join(git_dir(cwd), PAUSE_STAMP_FILE_NAME))
+
+
+def _write_key(path: str, key: ContentKey) -> None:
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(f"{key.head}\n{key.tree}\n{key.verify_command}\n")
     os.replace(tmp, path)
 
 
-def read_verify_stamp(cwd: str | None = None) -> ContentKey | None:
-    path = os.path.join(git_dir(cwd), VERIFY_STAMP_FILE_NAME)
+def _read_key(path: str) -> ContentKey | None:
     if not os.path.exists(path):
         return None
     with open(path, encoding="utf-8") as f:
@@ -502,12 +524,6 @@ def read_verify_stamp(cwd: str | None = None) -> ContentKey | None:
     if len(lines) < 3:
         return None
     return ContentKey(lines[0], lines[1], lines[2])
-
-
-def clear_verify_stamp(cwd: str | None = None) -> None:
-    path = os.path.join(git_dir(cwd), VERIFY_STAMP_FILE_NAME)
-    if os.path.exists(path):
-        os.remove(path)
 
 
 # --- flow（着手・検証・送り出し・完了の出来事。月ごとの JSONL）-------------

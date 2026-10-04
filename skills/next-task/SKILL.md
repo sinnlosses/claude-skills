@@ -137,8 +137,10 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    `Agent` を外したエージェント定義。claude-skills の `agents/no-delegate.md` を `install.sh` が
    `~/.claude/agents/` へ張ったもの）があればそれを使う。一覧に無ければ、`install.sh` を打つ前
    （人がやること）とみなして、これまでどおり `general-purpose` を使う。`no-delegate` は、着手の印が
-   立った作業ツリーでのコミットを hook（`tw commit-guard`）で拒む定義でもある。`general-purpose` に
-   落ちたときは拒む仕組みが無く、手順6の `COMMITS_SINCE_CLAIM` だけが頼りになる。
+   立った作業ツリーでのコミットを hook（`tw commit-guard`）で拒み、作業があるのに計画か検証が欠けた
+   返却を hook（`tw handback-guard`）で拒む定義でもある。`general-purpose` に
+   落ちたときは拒む仕組みが無く、手順6の `COMMITS_SINCE_CLAIM` と手順5bの `plan-check`・手順6の
+   `verify-check` だけが頼りになる。
    本文は貼らず、次を渡す（`retrospect` の SKILL.md を指す箇所は
    `${CLAUDE_SKILL_DIR}/../retrospect/SKILL.md` を解決した絶対パスに置き換えて渡す。委譲先は
    `${CLAUDE_SKILL_DIR}` を持たない）:
@@ -154,7 +156,10 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
      見本と食い違わないようにする」
    - 「`develop/task/T-xxx.md` 以外の `develop/` を触らない。コミットしない
      （`git add -A` もしない。着手の印が立った作業ツリーでコミットしようとすると拒まれる。拒まれたら
-     回避せず、コミットせずに報告で返す）。`tw show`・`tw edit` のほかの `tw` コマンドは打たない」
+     回避せず、コミットせずに報告で返す）。`tw show`・`tw edit`・`tw pause` のほかの `tw` コマンドは打たない」
+   - 「作業があるのに `## やること` を作業より先に書いていないか、`tw verify` が今の中身で通っていないまま
+     返そうとすると、hook が拒んで理由を返す。判断が要って止めて返すとき・`CONFLICT` で止まるとき・
+     計画を作業の後に書いたときは、返す直前に `tw pause` を打つ（打ったあとに中身を変えたら打ち直す）」
    - 「`git stash` を使わない（stash の山は作業ツリーの間で共有され、別のセッションの退避を
      取り違える）。変更の前後を見比べるなら一時コミットか `git show HEAD:<path>` で見る」
    - 「グローバルへのリンク（例: パッケージマネージャのグローバルリンク）・ホームのファイル・グローバル設定を
@@ -200,7 +205,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
      `FOLDED` が出る。通ると作業ツリーの中身の鍵が控えられ、受け入れで中身が同じなら検証を省ける。
      落ちたら `VERIFY_NOT_PASSED` とログのパスが出る）。検証コマンド（check の全段）は `tw verify`
      以外で打たない（対象を絞った単体テスト・E2E のファイル単位の実行は打ってよい）。`CONFLICT` が出たら解かずに、衝突した
-     ファイルを添えて報告して止まる。通したあとにファイルを変えたら打ち直す。`tw show`・`tw edit`・`tw verify` のほかの `tw` コマンドは打たない」
+     ファイルを添えて報告して止まる。通したあとにファイルを変えたら打ち直す。`tw show`・`tw edit`・`tw verify`・`tw pause` のほかの `tw` コマンドは打たない」
    - 作業先が別のリポジトリのときだけ渡す（下の手順6の「作業先が別のリポジトリのとき」）: 「作業先の
      リポジトリでは、別の作業ツリー（`git worktree add -b <枝> <パス> main`）で直してコミットし、**コミットの
      あと**にその作業ツリーを cwd にして `tw verify` を打つ（控えは cwd の作業ツリーごとで、鍵に `HEAD` の
@@ -233,7 +238,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    - 「完了条件に目視（画面・見た目）があるタスクでは、撮った画像のパス（幅ごとに1行。いちばん狭い
      幅がどれかも書く）を報告に書く。画像は作業ツリーの外の、受け入れまで消えない場所に置く」
    - 「描画を変えるタスクでは、部品を差し替えて組み立てた直後に画を撮り、E2E の期待値の撮り直しと
-     `tw verify` の前に、画像のパスを書いた『目視待ち』の報告を返して止まる。メインが `SendMessage` で
+     `tw verify` の前に、`tw pause` を打ってから画像のパスを書いた『目視待ち』の報告を返して止まる。メインが `SendMessage` で
      承認を返してから、期待値の撮り直しと `tw verify` に進む。差し戻されたら直して撮り直し、もう一度
      『目視待ち』で返す」
 

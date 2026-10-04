@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """1件1ファイル＋台帳の形のタスク運用を操作する入口コマンド。
 
-使い方: tw <status|new|claim|release|done|ship|prune|migrate|config-doctor|show|edit|plan-check|verify|verify-check|commit-guard> ...
+使い方: tw <status|new|claim|release|done|ship|prune|migrate|config-doctor|show|edit|plan-check|verify|verify-check|pause|commit-guard|handback-guard> ...
 
 正典は `docs/task-workflow-redesign.md`（5章が `task` コマンド、4章が状態と台帳、
 3章がタスクファイル、6章が送り出し、5.9・10章が `migrate`）。`install.sh` が PATH 上に張る
@@ -16,6 +16,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import re
@@ -33,6 +35,7 @@ import beads
 import commit_guard
 import cross_review
 import fold
+import handback_guard
 import init
 import layout
 import ledger
@@ -1078,6 +1081,85 @@ def cmd_verify_check(toplevel: str) -> None:
     print(f"NOT_VERIFIED\t{reason}")
 
 
+# --- pause・handback-guard（委譲先の返却の関門） ------------------------------
+
+HANDBACK_PLAN_OK = ("PLAN_FIRST", "PLAN_REGISTERED")
+HANDBACK_VERIFY_OK = ("VERIFIED_SAME", "NOTHING")
+
+
+def cmd_pause(toplevel: str) -> None:
+    key = ledger.content_key(ship.read_verify_command(toplevel) or "", cwd=toplevel)
+    ledger.write_pause_stamp(key, cwd=toplevel)
+    _record_claimed(toplevel, "pause")
+    print(f"PAUSED\t{key.tree}")
+
+
+def _handback_refusal(where: str) -> str | None:
+    """`where` の作業ツリーから委譲先が返すのを拒む理由。通すなら `None`。
+
+    通すのは、着手の控えが無いとき、控えのどのタスクも作業が無い（`claim` 時の `HEAD` より後の
+    コミットも、タスク自身のファイル以外の変更も無い）か、`plan-check` と `verify-check` がそろって
+    通っているか、`tw pause` の控えがいまの中身と同じとき。
+    """
+    if not os.path.isdir(where):
+        return None
+    claims = ledger.open_claims(cwd=where)
+    if not claims:
+        return None
+    toplevel = ledger.git_toplevel(where)
+    store = layout.read_store(toplevel)
+    gaps = [line for task_id in claims for line in _handback_gaps(toplevel, task_id, store)]
+    if not gaps or _paused_on_current_content(toplevel):
+        return None
+    shown = ",".join(claims)
+    return (
+        f"着手の印（{shown}）がある作業ツリー（{toplevel}）に作業があるのに、計画か検証が欠けたまま返そうとした"
+        f"（{' / '.join(gaps)}）。## やること が無ければ tw edit <ID> --section 'やること' --body-file - で書き、"
+        f"tw verify を通してから返す。目視待ちで返すとき・判断が要って止めて返すとき・計画を作業の後に書いたときは、"
+        f"tw pause を打ってから返す（打ったあとに中身を変えたら打ち直す）"
+    )
+
+
+def _handback_gaps(toplevel: str, task_id: str, store: str) -> list[str]:
+    """作業があるのに通っていない `plan-check`・`verify-check` の行。作業が無ければ空。"""
+    if store == layout.STORE_BEADS:
+        issue = beads.show(toplevel, beads.to_bd_id(task_id))
+        metadata = issue.raw.get("metadata") if issue is not None else None
+        head = metadata.get(beads.CLAIM_HEAD_KEY) if isinstance(metadata, dict) else None
+        own_path = None
+        plan_line = _first_output_line(lambda: cmd_beads_plan_check(toplevel, task_id))
+    else:
+        owner = ledger.read_owner(ledger.claim_dir(ledger.ledger_root(cwd=toplevel), task_id)) or {}
+        head = owner.get("head")
+        own_path = f"{layout.TASK_DIR}/{task_id}.md"
+        plan_line = _first_output_line(lambda: cmd_plan_check(toplevel, task_id))
+    if _plan_state(toplevel, head, "-", own_path) == PLAN_FIRST:
+        return []
+    verify_line = _first_output_line(lambda: cmd_verify_check(toplevel))
+    gaps = []
+    if plan_line.split("\t")[0] not in HANDBACK_PLAN_OK:
+        gaps.append(plan_line)
+    if verify_line.split("\t")[0] not in HANDBACK_VERIFY_OK:
+        gaps.append(verify_line)
+    return gaps
+
+
+def _paused_on_current_content(toplevel: str) -> bool:
+    stamp = ledger.read_pause_stamp(cwd=toplevel)
+    return stamp is not None and stamp == ledger.content_key(ship.read_verify_command(toplevel) or "", cwd=toplevel)
+
+
+def _first_output_line(command: Callable[[], None]) -> str:
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        try:
+            command()
+        except SystemExit:
+            pass
+    lines = buffer.getvalue().splitlines()
+    return lines[0] if lines else "?"
+
+
 # --- ship（5.8・6章） --------------------------------------------------------
 
 
@@ -2120,6 +2202,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_metrics = sub.add_parser("metrics")
     p_metrics.add_argument("--days", type=int, default=metrics.DAYS_DEFAULT)
     sub.add_parser("commit-guard")
+    sub.add_parser("pause")
+    sub.add_parser("handback-guard")
 
     # ファイル方式は --body-file だけ（ほかはタスクファイルを直に直す）。
     p_edit = sub.add_parser("edit")
@@ -2161,6 +2245,9 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "commit-guard":
         commit_guard.run(sys.stdin, sys.stdout)
+        return
+    if args.command == "handback-guard":
+        handback_guard.run(sys.stdin, sys.stdout, _handback_refusal)
         return
 
     try:
@@ -2218,6 +2305,8 @@ def main(argv: list[str] | None = None) -> None:
             cmd_verify(toplevel, lambda: _file_unplanned_work(toplevel))
         elif args.command == "verify-check":
             cmd_verify_check(toplevel)
+        elif args.command == "pause":
+            cmd_pause(toplevel)
         elif args.command == "metrics":
             metrics.cmd_metrics(toplevel, args.days)
     except (ledger.NoBaseBranch, layout.ConfigConflict, layout.StoreSettingError, tracker.TrackerSettingError) as e:
@@ -2255,6 +2344,8 @@ def _main_beads(toplevel: str, args: argparse.Namespace) -> None:
             cmd_verify(toplevel, lambda: _beads_unplanned_work(toplevel))
         elif args.command == "verify-check":
             cmd_verify_check(toplevel)
+        elif args.command == "pause":
+            cmd_pause(toplevel)
         elif args.command == "metrics":
             metrics.cmd_metrics(toplevel, args.days)
         elif args.command == "adopt":

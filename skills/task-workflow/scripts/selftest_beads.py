@@ -400,6 +400,45 @@ def test_commit_guard() -> None:
               r.returncode == 0 and ledger.open_claims(cwd=wt2) == [] and not guard_denies(tmp, wt2), r.stdout)
 
 
+def handback_reason(tmp: str, where: str) -> str | None:
+    """`tw handback-guard` に SubagentStop を渡し、block の理由。通したら `None`。"""
+    payload = json.dumps({"hook_event_name": "SubagentStop", "cwd": where})
+    r = run_task(tmp, "handback-guard", stdin=payload)
+    if r.returncode != 0:
+        raise RuntimeError(f"handback-guard が {r.returncode} で終わった: {r.stderr}")
+    return json.loads(r.stdout)["reason"] if r.stdout else None
+
+
+def test_handback_guard() -> None:
+    say("handback-guard・pause: 作業があるのに計画か検証が欠けた返却を拒む")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp, verify="`echo verified`")
+        a = new_unplanned(main_path, "先に計画")
+        b = new_unplanned(main_path, "計画なしで作業")
+
+        check("着手の印が無い委譲は通す", handback_reason(tmp, wt1) is None)
+        run_task(wt1, "claim", a)
+        check("印があっても作業が無ければ通す", handback_reason(tmp, wt1) is None)
+        run_task(wt1, "edit", a, "--section", "やること", "--body-file", "-", stdin="1. 書く\n")
+        check("計画だけの回は通す", handback_reason(tmp, wt1) is None)
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        reason = handback_reason(tmp, wt1) or ""
+        check("計画があっても検証が無ければ block（NOT_VERIFIED）",
+              "NOT_VERIFIED\tnone" in reason and "PLAN_NOT_FIRST" not in reason, reason)
+        r = run_task(wt1, "verify")
+        check("PLAN_FIRST と tw verify がそろえば通す", r.returncode == 0 and handback_reason(tmp, wt1) is None,
+              r.stdout + r.stderr)
+
+        run_task(wt2, "claim", b)
+        write(os.path.join(wt2, "work.txt"), "x\n")
+        reason = handback_reason(tmp, wt2) or ""
+        check("計画も検証も無ければ両方の行で block", f"PLAN_NOT_FIRST\t{b}\tmissing" in reason
+              and "NOT_VERIFIED\tnone" in reason, reason)
+        r = run_task(wt2, "pause")
+        check("tw pause を打てば通す", r.stdout.startswith("PAUSED\t") and handback_reason(tmp, wt2) is None,
+              r.stdout + r.stderr)
+
+
 def test_plan_check() -> None:
     say("edit・plan-check: ## やること を作業より先に書いたかを知らせる")
     planned = BODY.replace("## やること\n", "## やること\n1. 書く\n")
@@ -1514,6 +1553,7 @@ def main() -> None:
             test_cycle_done_ship_and_dropped,
             test_done_commits_since_claim,
             test_commit_guard,
+            test_handback_guard,
             test_plan_check,
             test_edit_frame_guard,
             test_edit_section,

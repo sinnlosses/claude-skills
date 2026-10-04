@@ -18,7 +18,7 @@ Claude Code のユーザー単位スキル（`~/.claude/skills/`）のソース�
 
 `agents/` にはサブエージェントの定義（1ファイル1エージェント）を置き、`./install.sh` が同じ安全策で
 `~/.claude/agents/`（`CLAUDE_CONFIG_DIR` があればその下の `agents/`）へ張る。スキル名の絞り込みは
-効かず常に全件が対象。`no-delegate` は frontmatter の hooks で `tw commit-guard` を呼ぶので、`tw` も
+効かず常に全件が対象。`no-delegate` は frontmatter の hooks で `tw commit-guard`・`tw handback-guard` を呼ぶので、`tw` も
 張っておく（`task-workflow` を対象に含める。`tw` が無ければ hook は何もせずに通す）。
 
 `task-workflow` が対象なら、`./install.sh` はタスク運用のコマンド `tw`（`skills/task-workflow/scripts/task.py`
