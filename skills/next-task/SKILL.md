@@ -300,8 +300,34 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    `python3 ${CLAUDE_SKILL_DIR}/../comment-audit/scripts/diff_added_comment_lines.py` を打ち、
    差分で足されたコメント行を機械で拾い出す。拾った行1つずつに `comment-audit` スキルの
    「判定の1問」を当て、消す・正典へ移す対象に当たるものがあれば、`tw verify-check` へ進まずに
-   `SendMessage` で委譲先へ当たった行と理由を伝えて差し戻す（直った差分が届いたらこの段をやり直す）。
+   `SendMessage` で委譲先へ当たった行と理由を伝えて差し戻す（直った差分が届いたらこの段からやり直す）。
    当たるものが無ければ次へ進む。
+
+   **新しい文脈でレビューする**（コメント行の段のあと、`tw verify-check` の前）:
+   `python3 ${CLAUDE_SKILL_DIR}/scripts/review_needed.py --difficulty <タスクの difficulty>` を打つ。
+
+   | 出力 | すること |
+   | --- | --- |
+   | `REVIEW\topus`・`REVIEW\tcode\t<数>` | 下のレビュアーを起こす |
+   | `SKIP\tdocs-only`・`NOTHING` | レビューせずに次へ |
+
+   レビュアーは Agent ツールで、`difficulty` と同じモデルの新しいサブエージェント（`subagent_type` は
+   手順5の共通の依頼文と同じ選び方）。渡すのは、作業ツリーのパス・差分を出すコマンド（`git diff HEAD` と、
+   未追跡の新しいファイルを並べる `git ls-files --others --exclude-standard`）・`tw show T-xxx` の
+   `## 完了条件` の本文・プロジェクトの規約のファイル（AGENTS.md・CLAUDE.md と、そこから引かれる
+   コーディング規約）のパスだけ。委譲の依頼文・委譲先の報告や合図・`## やること`・`## 目的・背景` は渡さない。
+   依頼文には次を書く:
+   - 「ファイルを書き換えない。差分と完了条件だけを見て、指摘を2種類に絞る: 正しさ（差分の挙動が壊れている・
+     規約が決めた前提に反して動かない）と完了条件（満たしていない・満たし方が誤っている行）。
+     書き方・名前・コメント・設計の好みは指摘しない。指摘ごとに `- <正しさ|完了条件>: <何が>（<path:行> /
+     <完了条件の行>）` の1行で、無ければ `指摘なし` だけを返す。300語以内」
+
+   返ってきた指摘は1つずつ差分で確かめ、当たるものだけを `SendMessage` で委譲先へ伝えて差し戻す
+   （メインは直さない。委譲先が終わっていても `SendMessage` で再開できる）。2種類の外の指摘と、確かめて
+   当たらない指摘は捨てる。直った差分が届いたら、コメント行の段からやり直してレビューも掛け直す。
+   差し戻しは2往復まで。3回目のレビューにも当たる指摘が残れば、`tw done` へ進まず、指摘と差分の
+   場所を添えて人に預けて終了する。差し戻したときは一言メモしておく（手順6aの兆候「受け入れのときに
+   メインが直したもの」）。
 
    整形コマンド → `tw verify-check` を打つ（下の表。検証を省くか `tw verify` で打つかを決める）。
    方針からズレた実装はその場で直す。
@@ -323,7 +349,9 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    （報告のパス）で `cd <パス> && tw verify-check` と打つ（自分の作業ツリーで打つと `NOT_VERIFIED none`
    になるだけ）。コメント行の拾い出しも同じ作業ツリーで、主ブランチから委譲先の枝までの範囲
    （`python3 ${CLAUDE_SKILL_DIR}/../comment-audit/scripts/diff_added_comment_lines.py main..<枝>`）を
-   渡して打つ。表は同じに読む。`VERIFIED_SAME` なら、検証コマンドを打たずに作業先の本体で
+   渡して打つ。レビューの判定も同じ作業ツリーで同じ範囲を渡して打ち
+   （`python3 ${CLAUDE_SKILL_DIR}/scripts/review_needed.py --difficulty <difficulty> main..<枝>`）、
+   レビュアーに渡す差分のコマンドも `git diff main...<枝>` にする。表は同じに読む。`VERIFIED_SAME` なら、検証コマンドを打たずに作業先の本体で
    `git merge --ff-only <枝>` して、作業ツリーと枝を消す（`git worktree remove`・`git branch -d`）。
    `NOT_VERIFIED` ならその作業ツリーで `tw verify` を打ち直してから同じ段取りへ進む。受け入れで直すなら
    その作業ツリーで直してコミットしてから打つ。`tw` が `MISSING` を返す作業先では控えが無いので、

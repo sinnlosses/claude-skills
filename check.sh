@@ -6,7 +6,8 @@
 # 3. task-workflow のスクリプトの自己テスト
 # 4. retrospect のスクリプトの自己テスト
 # 5. comment-audit のスクリプトの自己テスト
-# 6. リポジトリ全体の整合（frontmatter・README の索引・参照先の実在）
+# 6. next-task のスクリプトの自己テスト
+# 7. リポジトリ全体の整合（frontmatter・README の索引・参照先の実在）
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 
@@ -36,6 +37,10 @@ python3 "$here/skills/retrospect/scripts/selftest.py"
 echo
 echo "== comment-audit scripts の自己テスト =="
 python3 "$here/skills/comment-audit/scripts/selftest_diff_added_comment_lines.py"
+
+echo
+echo "== next-task scripts の自己テスト =="
+python3 "$here/skills/next-task/scripts/selftest_review_needed.py"
 
 echo
 echo "== リポジトリの整合 =="
