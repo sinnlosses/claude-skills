@@ -450,6 +450,7 @@ class Session:
         return _parse_time(self._load_synced().get(str(n))) if n is not None else None
 
     def _mark_synced(self, bd_ids: list[str]) -> None:
+        """送った・取り込んだ時刻を控え、その場で `bd kv` へ書く（あとの Status 欄の書き込みが落ちても残す）。"""
         if not self.bidirectional or not bd_ids:
             return
         wanted = set(bd_ids)
@@ -460,6 +461,9 @@ class Session:
             if issue.bd_id in wanted and n is not None:
                 synced[str(n)] = now
                 self._synced_dirty = True
+        if self._synced_dirty:
+            beads.run_ok(self.toplevel, ["kv", "set", SYNCED_KEY, json.dumps(synced)])
+            self._synced_dirty = False
 
     def _save(self) -> None:
         if self._items_dirty and self._items is not None:

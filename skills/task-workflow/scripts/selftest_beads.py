@@ -1006,6 +1006,7 @@ class FakeGitHub:
         self.option_prefix = "O-"
         self.graphql: list[str] = []  # 受けた GraphQL の問い合わせの種類（最初の語）
         self.clock_offset = 0  # 秒。GitHub 側の編集を後の時刻にする
+        self.graphql_down = False  # 真のあいだ GraphQL（Project の Status 欄）だけを落とす
         self.lock = threading.Lock()
         fake = self
 
@@ -1098,6 +1099,8 @@ class FakeGitHub:
         return 404, {"message": f"fake: {method} {u.path}"}
 
     def answer_graphql(self, query: str, v: dict) -> dict:
+        if self.graphql_down:
+            return {"errors": [{"message": "fake: GraphQL を落とす"}]}
         names = ["Pending", "Todo", "In progress", "Done", "Cancel"]
         if "repositoryOwner" in query:
             self.graphql.append("project")
@@ -1421,6 +1424,7 @@ def test_tracker_github_keeps_claim_marks() -> None:
             d = new(main_path, "印を戻せない")
             e = new(main_path, "GitHub で手放す")
             f = new(main_path, "GitHub で閉じる")
+            g = new(main_path, "Project の書き込みが落ちたあと GitHub で手放す")
             write(os.path.join(main_path, "shared.txt"), "line1\nline2\n")
             git(main_path, "commit", "-q", "-am", "主ブランチが進む")
             for t in (a, d, e):
@@ -1435,13 +1439,19 @@ def test_tracker_github_keeps_claim_marks() -> None:
             env()["GITHUB_API_URL"] = fake.url
             check("送りが届かない着手は GitHub に label が付かない", "TRACKER\tFAILED" in r.stdout
                   and "status::in_progress" not in fake.issues[num(b)]["labels"], r.stdout + repr(fake.issues[num(b)]))
+            fake.graphql_down = True
+            r = run_task(wt1, "claim", g)
+            fake.graphql_down = False
+            check("push が通って Project の書き込みだけ落ちた着手は GitHub に label が付く", "TRACKER\tFAILED" in r.stdout
+                  and "status::in_progress" in fake.issues[num(g)]["labels"], r.stdout + repr(fake.issues[num(g)]))
             claimed = state(a)
 
             write(os.path.join(tmp, "bd.log.before-pull"),
                   json.dumps({"cwd": wt1, "argv": [sys.executable, TASK_PY, "claim", c]}))
             fake.edit(num(a))
             fake.edit(num(c))
-            fake.edit(num(e), labels=[l for l in fake.issues[num(e)]["labels"] if not l.startswith("status")])
+            for t in (e, g):
+                fake.edit(num(t), labels=[l for l in fake.issues[num(t)]["labels"] if not l.startswith("status")])
             r = run_task(main_path, "sync")
             marks = (beads.CLAIM_BRANCH_KEY, beads.CLAIM_HEAD_KEY, beads.PLAN_BASE_KEY, beads.PLAN_TIP_KEY)
             check("取り込みが上書きしても assignee と metadata が戻る", r.returncode == 0
@@ -1456,6 +1466,8 @@ def test_tracker_github_keeps_claim_marks() -> None:
             check("着手を送ったあと GitHub で label が外れた（手放した）課題は着手に戻さず、metadata だけ戻す",
                   state(e)[:2] == ("open", None) and bool(state(e)[2].get(beads.CLAIM_HEAD_KEY)),
                   r.stdout + repr(state(e)))
+            check("push は通り Project の書き込みが落ちたあと GitHub で label を外した課題は着手に戻さない",
+                  state(g)[:2] == ("open", None), r.stdout + repr(state(g)))
 
             r = run_task(wt1, "edit", a, "--section", "やること", "--body-file", "-",
                          stdin="### 1. 直す\nx\n\n### 名指すファイル\n- `shared.txt`\n")
