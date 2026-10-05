@@ -1308,7 +1308,7 @@ def cmd_ship(toplevel: str, hooks: "ShipHooks | None" = None) -> None:
     if outcome.kind == "VERIFY_FAILED":
         # 付け替え済みのまま送っていない。次の `ship` は打ち直しでも検証を飛ばさない（T-777）。
         ledger.mark_verify_owed(outcome.verify_command or "", cwd=toplevel)
-        print(f"VERIFY_FAILED\t{outcome.verify_command}")
+        print(f"VERIFY_FAILED\t{outcome.verify_command}\t{outcome.verify_log}")
         if outcome.verify_tail:
             print(outcome.verify_tail)
         raise SystemExit(8)

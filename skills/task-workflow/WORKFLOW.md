@@ -467,7 +467,7 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 | 5 | `LEGACY` | 旧形式 | 下の「旧形式からの移行」を案内して止まる |
 | 6 | `MISSING` | タスク運用を始めていない | `/setup-tasks` を案内して止まる |
 | 7 | `CONFLICT` | `ship` の rebase が衝突した（`--abort` 済み）か、`verify` の主ブランチの取り込みが衝突した（何も書き換えていない） | 衝突したファイルを添えて人に預ける。`verify` の衝突を解いたあとは `tw verify` を打ち直す |
-| 8 | `VERIFY_FAILED` | 付け替えのあとの検証が落ちた（送っていない） | 出力の末尾を添えて人に預ける |
+| 8 | `VERIFY_FAILED` | 付け替えのあとの検証が落ちた（送っていない）。行は `VERIFY_FAILED\t<コマンド>\t<ログのパス>` で、続けて出力の末尾40行。ログは stdout と stderr を出た順に残した全文 | ログを読み、落ちた箇所を添えて人に預ける |
 | 9 | `RACE` | `--ff-only` が3回続けて落ちた | 人に預ける |
 | 10 | `VERIFY_NOT_PASSED`・`FORMAT_FAILED`・`PLAN_MISSING` | `verify` の検証コマンドが落ちた／整形コマンドが落ちた（検証は打っていない）／`## やること` が空のまま作業があるので打たなかった（どちらも控えは消えた） | `VERIFY_NOT_PASSED`・`FORMAT_FAILED` は出力の末尾（全体はログ）を読んで直し、`PLAN_MISSING` は `## やること` を書いて `tw edit T-xxx --after-work` で渡し、打ち直す |
 
