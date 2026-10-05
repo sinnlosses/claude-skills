@@ -1068,6 +1068,46 @@ def test_handback_guard() -> None:
         check("読めない入力は何も出さずに通す", r.returncode == 0 and r.stdout == "", r.stdout + r.stderr)
 
 
+def test_handback_guard_step() -> None:
+    print("task.py step・handback-guard: 途中の段の返却は tw step で通し、最後の段は検証を求める")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp, verify="`true`")
+        commit_task(main_path, taskfile.Task("T-100", "段ごと", "todo", "sonnet", "Y", (), BODY))
+        commit_task(main_path, taskfile.Task("T-101", "後から書く", "todo", "sonnet", "Y", (), BODY))
+        run_task(wt1, "claim", "T-100")
+        run_task(wt1, "edit", "T-100", "--section", "やること", "--body-file", "-", stdin="### 1. 書く\n\n### 2. 試す\n")
+
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        check("段の印も検証も無ければ block", "NOT_VERIFIED" in _block_reason(run_handback_guard(tmp, wt1)))
+        r = run_task(wt1, "step", "T-100", "1")
+        check("途中の段は STEPPED（n/N）を出し、いまの中身なら返却を通す", r.returncode == 0
+              and r.stdout.startswith("STEPPED\tT-100\t1/2\t") and run_handback_guard(tmp, wt1) is None,
+              r.stdout + r.stderr)
+        write(os.path.join(wt1, "work.txt"), "y\n")
+        check("段の印のあとに中身を変えると block", "NOT_VERIFIED" in _block_reason(run_handback_guard(tmp, wt1)))
+        r = run_task(wt1, "step", "T-100", "2")
+        check("最後の段は LAST_STEP（終了コード4）で印を残さず、返却は検証が無ければ block", r.returncode == 4
+              and r.stdout.startswith("LAST_STEP\tT-100\t2/2\t")
+              and "NOT_VERIFIED" in _block_reason(run_handback_guard(tmp, wt1)), r.stdout + r.stderr)
+        r = run_task(wt1, "verify")
+        check("最後の段は tw verify が通れば通す", r.returncode == 0 and run_handback_guard(tmp, wt1) is None,
+              r.stdout + r.stderr)
+        for label, args in (("段の外の番号", ("T-100", "3")), ("数でない番号", ("T-100", "x"))):
+            r = run_task(wt1, "step", *args)
+            check(f"{label}は終了コード2", r.returncode == 2 and "usage:" in r.stderr, r.stdout + r.stderr)
+        r = run_task(wt1, "step", "T-101", "1")
+        check("自分が着手していないタスクは NOT_OWNER（終了コード4）", r.returncode == 4
+              and r.stdout.strip() == "NOT_OWNER\tT-101", r.stdout + r.stderr)
+
+        run_task(wt2, "claim", "T-101")
+        write(os.path.join(wt2, "work.txt"), "x\n")
+        run_task(wt2, "edit", "T-101", "--section", "やること", "--after-work", "--body-file", "-",
+                 stdin="### 1. 書く\n\n### 2. 試す\n")
+        r = run_task(wt2, "step", "T-101", "1")
+        check("段の印があっても計画を作業の後に書いたなら block（PLAN_NOT_FIRST after-work）", r.returncode == 0
+              and "PLAN_NOT_FIRST\tT-101\tafter-work" in _block_reason(run_handback_guard(tmp, wt2)), r.stdout + r.stderr)
+
+
 # --- task.py: edit・plan-check ----------------------------------------------
 
 
@@ -2605,6 +2645,7 @@ def main() -> None:
         test_done_commits_since_claim,
         test_commit_guard,
         test_handback_guard,
+        test_handback_guard_step,
         test_edit_and_plan_check,
         test_edit_section,
         test_edit_deps,

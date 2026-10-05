@@ -443,6 +443,24 @@ def test_handback_guard() -> None:
               r.stdout + r.stderr)
 
 
+def test_handback_guard_step() -> None:
+    say("step・handback-guard: 途中の段の返却は tw step で通し、最後の段は検証を求める")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp, verify="`echo verified`")
+        a = new_unplanned(main_path, "段ごと")
+        run_task(wt1, "claim", a)
+        run_task(wt1, "edit", a, "--section", "やること", "--body-file", "-", stdin="### 1. 書く\n\n### 2. 試す\n")
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        r = run_task(wt1, "step", a, "1")
+        check("途中の段は STEPPED（n/N）を出し、返却を通す", r.returncode == 0
+              and r.stdout.startswith(f"STEPPED\t{a}\t1/2\t") and handback_reason(tmp, wt1) is None, r.stdout + r.stderr)
+        write(os.path.join(wt1, "work.txt"), "y\n")
+        r = run_task(wt1, "step", a, "2")
+        check("最後の段は LAST_STEP（終了コード4）で、返却は検証が無ければ block", r.returncode == 4
+              and r.stdout.startswith(f"LAST_STEP\t{a}\t2/2\t") and "NOT_VERIFIED" in (handback_reason(tmp, wt1) or ""),
+              r.stdout + r.stderr)
+
+
 def test_plan_check() -> None:
     say("edit・plan-check: ## やること を作業より先に書いたかを知らせる")
     planned = BODY.replace("## やること\n", "## やること\n### 1. 書く\n")
@@ -1694,6 +1712,7 @@ def main() -> None:
             test_done_commits_since_claim,
             test_commit_guard,
             test_handback_guard,
+            test_handback_guard_step,
             test_plan_check,
             test_edit_frame_guard,
             test_edit_section,

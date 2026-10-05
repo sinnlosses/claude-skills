@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """1件1ファイル＋台帳の形のタスク運用を操作する入口コマンド。
 
-使い方: tw <status|new|claim|release|done|ship|prune|migrate|config-doctor|show|edit|plan-check|verify|verify-check|pause|commit-guard|handback-guard> ...
+使い方: tw <status|new|claim|release|done|ship|prune|migrate|config-doctor|show|edit|plan-check|verify|verify-check|pause|step|commit-guard|handback-guard> ...
 
 正典は `docs/task-workflow-redesign.md`（5章が `task` コマンド、4章が状態と台帳、
 3章がタスクファイル、6章が送り出し、5.9・10章が `migrate`）。`install.sh` が PATH 上に張る
@@ -1101,12 +1101,43 @@ def cmd_pause(toplevel: str) -> None:
     print(f"PAUSED\t{key.tree}")
 
 
+def cmd_step(toplevel: str, task_id: str, step: str) -> None:
+    """途中の段（`## やること` の最後でない段）を済ませた印を、いまの中身の鍵と一緒に残す。"""
+    shown = beads.to_task_id(beads.to_bd_id(task_id)) if layout.read_store(toplevel) == layout.STORE_BEADS else task_id
+    if shown not in _claimed_here(toplevel):
+        print(f"NOT_OWNER\t{shown}")
+        raise SystemExit(4)
+    steps, error = taskfile.plan_steps(_claimed_plan_body(toplevel, shown))
+    if error is not None:
+        print(f"usage: {error}", file=sys.stderr)
+        raise SystemExit(2)
+    if not step.isdigit() or not 1 <= int(step) <= len(steps):
+        print(f"usage: 段の番号 {step!r} が 1〜{len(steps)} でない", file=sys.stderr)
+        raise SystemExit(2)
+    if int(step) == len(steps):
+        print(f"LAST_STEP\t{shown}\t{step}/{len(steps)}\t最後の段は tw verify を通してから返す")
+        raise SystemExit(4)
+    key = ledger.content_key(ship.read_verify_command(toplevel) or "", cwd=toplevel)
+    ledger.write_step_stamp(ledger.StepStamp(key, shown, int(step)), cwd=toplevel)
+    _record(toplevel, "step", shown, step=int(step), steps=len(steps))
+    print(f"STEPPED\t{shown}\t{step}/{len(steps)}\t{key.tree}")
+
+
+def _claimed_plan_body(toplevel: str, task_id: str) -> str:
+    """着手中のタスクの `## やること` を含む本文（Beads 方式は `## やること` の節だけ）。読めなければ空。"""
+    if layout.read_store(toplevel) == layout.STORE_BEADS:
+        issue = beads.show(toplevel, beads.to_bd_id(task_id))
+        return f"{taskfile.PLAN_HEADING}\n{issue.raw.get('notes') or ''}\n" if issue is not None else ""
+    task, _ = taskfile.read_task_file(taskfile.task_path(os.path.join(toplevel, layout.TASK_DIR), task_id))
+    return task.body if task is not None else ""
+
+
 def _handback_refusal(where: str) -> str | None:
     """`where` の作業ツリーから委譲先が返すのを拒む理由。通すなら `None`。
 
     通すのは、着手の控えが無いとき、控えのどのタスクも作業が無い（`claim` 時の `HEAD` より後の
-    コミットも、タスク自身のファイル以外の変更も無い）か、`plan-check` と `verify-check` がそろって
-    通っているか、`tw pause` の控えがいまの中身と同じとき。
+    コミットも、タスク自身のファイル以外の変更も無い）か、`plan-check` が通ったうえで `verify-check` が
+    通っているか `tw step` の印が最後でない段をいまの中身で指しているか、`tw pause` の控えがいまの中身と同じとき。
     """
     if not os.path.isdir(where):
         return None
@@ -1122,7 +1153,7 @@ def _handback_refusal(where: str) -> str | None:
     return (
         f"着手の印（{shown}）がある作業ツリー（{toplevel}）に作業があるのに、計画か検証が欠けたまま返そうとした"
         f"（{' / '.join(gaps)}）。## やること が無ければ tw edit <ID> --section 'やること' --body-file - で書き、"
-        f"tw verify を通してから返す。目視待ちで返すとき・判断が要って止めて返すとき・計画を作業の後に書いたときは、"
+        f"tw verify を通してから返す。最後でない段を済ませて返すときは tw step <ID> <段の番号> を打ってから返す。目視待ちで返すとき・判断が要って止めて返すとき・計画を作業の後に書いたときは、"
         f"tw pause を打ってから返す（打ったあとに中身を変えたら打ち直す）"
     )
 
@@ -1142,13 +1173,24 @@ def _handback_gaps(toplevel: str, task_id: str, store: str) -> list[str]:
         plan_line = _first_output_line(lambda: cmd_plan_check(toplevel, task_id))
     if _plan_state(toplevel, head, "-", own_path) == PLAN_FIRST:
         return []
+    plan_ok = plan_line.split("\t")[0] in HANDBACK_PLAN_OK
+    gaps = [] if plan_ok else [plan_line]
+    if plan_ok and _stepped_on_current_content(toplevel, task_id):
+        return gaps
     verify_line = _first_output_line(lambda: cmd_verify_check(toplevel))
-    gaps = []
-    if plan_line.split("\t")[0] not in HANDBACK_PLAN_OK:
-        gaps.append(plan_line)
     if verify_line.split("\t")[0] not in HANDBACK_VERIFY_OK:
         gaps.append(verify_line)
     return gaps
+
+
+def _stepped_on_current_content(toplevel: str, task_id: str) -> bool:
+    """`tw step` の印がこのタスクのもので、いまの中身と同じで、段がいまの計画の最後より前か。"""
+    stamp = ledger.read_step_stamp(cwd=toplevel)
+    if stamp is None or stamp.task_id != task_id:
+        return False
+    if stamp.key != ledger.content_key(ship.read_verify_command(toplevel) or "", cwd=toplevel):
+        return False
+    return stamp.step < len(taskfile.plan_steps(_claimed_plan_body(toplevel, task_id))[0])
 
 
 def _paused_on_current_content(toplevel: str) -> bool:
@@ -2208,6 +2250,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_metrics.add_argument("--days", type=int, default=metrics.DAYS_DEFAULT)
     sub.add_parser("commit-guard")
     sub.add_parser("pause")
+    p_step = sub.add_parser("step")
+    p_step.add_argument("task_id")
+    p_step.add_argument("step")
     sub.add_parser("handback-guard")
 
     # ファイル方式は --body-file だけ（ほかはタスクファイルを直に直す）。
@@ -2312,6 +2357,8 @@ def main(argv: list[str] | None = None) -> None:
             cmd_verify_check(toplevel)
         elif args.command == "pause":
             cmd_pause(toplevel)
+        elif args.command == "step":
+            cmd_step(toplevel, args.task_id, args.step)
         elif args.command == "metrics":
             metrics.cmd_metrics(toplevel, args.days)
     except (ledger.NoBaseBranch, layout.ConfigConflict, layout.StoreSettingError, tracker.TrackerSettingError) as e:
@@ -2351,6 +2398,8 @@ def _main_beads(toplevel: str, args: argparse.Namespace) -> None:
             cmd_verify_check(toplevel)
         elif args.command == "pause":
             cmd_pause(toplevel)
+        elif args.command == "step":
+            cmd_step(toplevel, args.task_id, args.step)
         elif args.command == "metrics":
             metrics.cmd_metrics(toplevel, args.days)
         elif args.command == "adopt":

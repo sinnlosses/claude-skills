@@ -446,6 +446,7 @@ def clear_verify_owed(cwd: str | None = None) -> None:
 VERIFY_STAMP_FILE_NAME = "task-verify-stamp"
 VERIFY_LOG_FILE_NAME = "task-verify.log"
 PAUSE_STAMP_FILE_NAME = "task-pause-stamp"
+STEP_STAMP_FILE_NAME = "task-step-stamp"
 
 
 @dataclass(frozen=True)
@@ -509,10 +510,34 @@ def read_pause_stamp(cwd: str | None = None) -> ContentKey | None:
     return _read_key(os.path.join(git_dir(cwd), PAUSE_STAMP_FILE_NAME))
 
 
-def _write_key(path: str, key: ContentKey) -> None:
+@dataclass(frozen=True)
+class StepStamp:
+    key: ContentKey
+    task_id: str
+    step: int
+
+
+def write_step_stamp(stamp: StepStamp, cwd: str | None = None) -> None:
+    """`tw step` を打った時点の中身の鍵と、済ませた段。"""
+    _write_key(os.path.join(git_dir(cwd), STEP_STAMP_FILE_NAME), stamp.key, (stamp.task_id, str(stamp.step)))
+
+
+def read_step_stamp(cwd: str | None = None) -> StepStamp | None:
+    path = os.path.join(git_dir(cwd), STEP_STAMP_FILE_NAME)
+    key = _read_key(path)
+    if key is None:
+        return None
+    with open(path, encoding="utf-8") as f:
+        lines = f.read().split("\n")
+    if len(lines) < 5 or not lines[4].isdigit():
+        return None
+    return StepStamp(key, lines[3], int(lines[4]))
+
+
+def _write_key(path: str, key: ContentKey, extra: tuple[str, ...] = ()) -> None:
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        f.write(f"{key.head}\n{key.tree}\n{key.verify_command}\n")
+        f.write("".join(f"{line}\n" for line in (key.head, key.tree, key.verify_command, *extra)))
     os.replace(tmp, path)
 
 
