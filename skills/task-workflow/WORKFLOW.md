@@ -43,7 +43,7 @@
 | `docs/history/tasks.md`・`docs/history/progress.md` | 旧形式の時代の履歴。**読むだけで書き足さない** |
 | 台帳 `$(git rev-parse --path-format=absolute --git-common-dir)/task-workflow/` | 着手の印（`claim/T-xxx/owner`）・採番の錠（`lock/`）・最後の番号（`last-id`）・登録時に `## やること` を書いたときの主ブランチの SHA（`plan-base/T-xxx`。`ship` で消える）・着手から送り出しまでの出来事（`flow/<YYYY-MM>.jsonl`。1行1出来事で、時刻（UTC）・出来事・タスクID・`difficulty` と、`verify`・`ship` の結果の先頭語と `verify` の所要秒、`done` の `dropped` と振り返りが「兆候なし」か。会話・コマンド・パスは入れない。消えない）。コミットしない。全作業ツリーで1つ |
 | 作業ツリー固有の git dir `$(git rev-parse --path-format=absolute --git-dir)/task-open-claims/T-xxx` | `claim` から `done`・`release`・`ship` までの控え（中身は空）。`tw commit-guard`・`tw handback-guard` が読む。コミットしない。作業ツリーごと |
-| 作業ツリー固有の git dir の `task-verify-stamp`・`task-pause-stamp` | `tw verify` が通った中身の鍵と、`tw pause` を打った時点の中身の鍵（どちらも `HEAD` の SHA・作業ツリーの木の SHA・検証コマンドの3行）。コミットしない。作業ツリーごと |
+| 作業ツリー固有の git dir の `task-verify-stamp`・`task-pause-stamp`・`task-step-stamp` | `tw verify` が通った中身の鍵と、`tw pause`・`tw step` を打った時点の中身の鍵（どれも `HEAD` の SHA・作業ツリーの木の SHA・検証コマンドの3行。`task-step-stamp` は続けてタスクIDと段の番号の2行）。コミットしない。作業ツリーごと |
 
 **プロジェクトごとに変わる値は3行だけで、置き場は「## タスク運用」節を持つ設定ファイル**。
 設定ファイルは `AGENTS.md` → `CLAUDE.md` の順で探し、**節を持つ最初のファイルを設定とする**
@@ -133,7 +133,7 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 | `## 目的・背景` | 登録時（`/plan-tasks`）。何のためか、コードのどこがどうなっているか。待ち時間・実行時間を縮めるタスクは小見出し `### 実測の内訳`（段ごとの時間と測り方）を置く | 不可 |
 | `## 決まっていること（蒸し返さない）` | 登録時（聞いて決まったこと・承認の範囲。検討の経緯は書かない） | 可 |
 | `## 解くべき論点` | 登録時（`opus` には必ず） | 可 |
-| `## やること` | **登録時**（`/plan-tasks`）に、そのときの主ブランチで調べて書く（下の「登録時に書く `## やること`」）。`### 1. …` の形で実行の順に番号を振った段で書き、完了条件の各行をどの段で満たすかが分かるようにする。着手時に `tw plan-check` が `PLAN_STALE`（名指したファイルが変わった）・`PLAN_NOT_FIRST missing`・`unrecorded` を返したら、委譲先が実装の前に調べ直して書き直す（`tw edit T-xxx --section 'やること' --body-file -` で節の中身だけを渡す。作業より先だったかを `tw plan-check` が見る） | 不可（`--hold` で登録するものだけ可。todo に戻したあと着手時に書く） |
+| `## やること` | **登録時**（`/plan-tasks`）に、そのときの主ブランチで調べて書く（下の「登録時に書く `## やること`」）。`### 1. …` の形で実行の順に番号を振った段で書き、完了条件の各行をどの段で満たすかが分かるようにする（段は委譲の単位で、委譲先は1段ずつ返す）。着手時に `tw plan-check` が `PLAN_STALE`（名指したファイルが変わった）・`PLAN_NOT_FIRST missing`・`unrecorded`・`steps` を返したら、委譲先が実装の前に調べ直して書き直す（`tw edit T-xxx --section 'やること' --body-file -` で節の中身だけを渡す。作業より先だったかを `tw plan-check` が見る） | 不可（`--hold` で登録するものだけ可。todo に戻したあと着手時に書く） |
 | `## 完了条件` | 登録時。検証可能な言葉で | 不可 |
 | `## 注意` | 登録時・着手時・作業中の知見 | 可 |
 | `## 参考情報` | 登録時・作業中（関係する文書・Issue・過去のタスク・URL） | 可 |
@@ -142,6 +142,13 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 枠と違う本文（見出しの欠け・順・枠の外の見出し）、空か「なし」の `## 目的・背景`・`## 完了条件`、
 空か「なし」の `## やること`（`--hold` を除く）、下の形に沿わない計画、`## 結果` を拒む。
 `tw edit` も枠を検査する（`## やること` は書いてよい。ファイル方式が受けるのは `--body-file`（と `--section`）と、依存を直す `--add-deps`・`--remove-deps` だけ）。
+
+**段の形**: `## やること` の `### ` 見出しは、段 `### <n>. <名前>`（`n` は `### 1.` から1つずつ増える）と
+`### 名指すファイル`・`### 作業先` だけで、段は1つ以上置く（名指すファイル・作業先は段に数えない）。
+`tw new`・`tw adopt` と、`## やること` を変えて中身を入れる `tw edit`（`--section 'やること'` も本文ごとも）は、
+この形に沿わない計画を理由つきで終了コード2で拒み、何も書かない。`## やること` を変えない `tw edit` は
+段を見ない。入口を通らずに入った段の読めない計画は、`tw plan-check` が `PLAN_NOT_FIRST\tT-xxx\tsteps` で
+書き直しへ回す。
 いまの `## 目的・背景`・`## 完了条件` と違う本文は `--change-frame` なしでは `FRAME_CHANGED` で拒む
 （別のタスクの下書きを渡す事故を防ぐ。この2節を変えるのは `tw show` から作り直した本文のときだけ）。`tw migrate` で移した
 ファイルは本文の節の検査を受けない。
@@ -200,8 +207,10 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
   タスク自身のファイル以外の変更）があるのに、`plan-check` が `PLAN_FIRST`・`PLAN_REGISTERED` でないか
   `verify-check` が `VERIFIED_SAME`・`NOTHING` でないまま `no-delegate` の委譲先が返そうとすると、hook
   （`tw handback-guard`）が拒んで理由を委譲先へ返す。作業の無い返却（前提が誤り・`dropped`・計画だけの回・
-  作業先が別のリポジトリの回）は通す。目視待ち・判断が要って止める返却は、委譲先が `tw pause` で
-  いまの中身に印を付けてから返す（印のあとに中身が変われば効かない）。`general-purpose` への委譲には効かない
+  作業先が別のリポジトリの回）は通す。最後でない段を済ませた返却は、委譲先が `tw step T-xxx <n>` で
+  いまの中身に段の印を付けてから返す（`plan-check` は通っている要がある。最後の段は印を付けられず、
+  `verify-check` を求める）。目視待ち・判断が要って止める返却は、委譲先が `tw pause` で
+  いまの中身に印を付けてから返す（どちらの印も、印のあとに中身が変われば効かない）。`general-purpose` への委譲には効かない
 - **取り残し**（前提: 1つの作業ツリーでは同時に1セッション）:
 
 | 状態 | 表示 | 誰が何をする |
@@ -288,11 +297,11 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 2. `tw claim T-xxx`（主ブランチへ追い付き、印を立て、必要なら作業ブランチを切る）→ `tw plan-check T-xxx`
 3. 確かめる: `PLAN_REGISTERED`（登録時に書いた `## やること` が名指すファイルが変わっていない）なら、メインが
    `## やること` が `## 完了条件` の各行を覆うかを読んで確かめ、覆っていれば計画どおりに委譲する。
-   `PLAN_STALE`（変わった）・`PLAN_NOT_FIRST missing`・`unrecorded`、または覆っていなければ、書き直しから委譲する
-   （委譲先が**いまの主ブランチで調べ直して `## やること` を書き直してから**実装する。`tw edit T-xxx --section 'やること' --body-file -`
+   `PLAN_STALE`（変わった）・`PLAN_NOT_FIRST missing`・`unrecorded`・`steps`、または覆っていなければ、書き直しから委譲する
+   （委譲先が**いまの主ブランチで調べ直して `## やること` を書き直し、作業せずに返す**。`tw edit T-xxx --section 'やること' --body-file -`
    が作業より先に書いたかを印に残し、作業の後の初回の記入は拒む）。設計を利用者とすでに決め、正典・コードを
    読んでいるときはメインが書いてもよい。条件・渡す言葉は `next-task/rewrite-plan.md`
-4. 委譲（どちらの形でも実装まで1回。`## やること` だけを書かせる委譲はしない）: 前提が崩れていれば作業せず、`tw done --dropped` にする理由を報告させる。計画どおりに委譲するときは、条件を満たせば文書の担当（`sonnet` 固定、同時に1匹まで）を並べて起こす（条件・渡す言葉は `next-task/parallel-docs.md`）。返りではメインが `tw plan-check T-xxx`（`PLAN_REGISTERED` か `PLAN_FIRST` か）と `## やること` の中身を見る（`next-task/SKILL.md` 手順5b）。`develop/task/` 以外の `develop/` は触らない。検証コマンドは `tw verify` で打つ（打つ前に主ブランチを未コミットの中身ごと取り込み、衝突したら打たずに `CONFLICT`。通ると作業ツリーの中身の鍵を控える。`## やること` が空のまま作業があれば打たない）。描画を変えるタスクでは、組み立てた直後に画を撮ってメインの目視を受けてから、E2E の期待値の撮り直しと `tw verify` に進む（`next-task/visual-review.md`）
+4. 委譲（段ごと。`next-task/SKILL.md` 手順5・5b）: 最初の委譲で段1を渡し、委譲先は段を1つ済ませるたびに返す。最後でない段は `tw step T-xxx <n>` を打ってから、最後の段は `tw verify` を通してから返す。メインは同じ委譲先を `SendMessage` で再開して次の段を渡す（`difficulty` を上げるときだけ上のモデルで起こし直す）。前提が崩れていれば作業せず、`tw done --dropped` にする理由を報告させる。計画どおりに委譲するときは、条件を満たせば文書の担当（`sonnet` 固定、同時に1匹まで）を並べて起こす（条件・渡す言葉は `next-task/parallel-docs.md`）。返りではメインが `tw plan-check T-xxx`（`PLAN_REGISTERED` か `PLAN_FIRST` か）と `## やること` の中身を見る（`next-task/SKILL.md` 手順5b）。`develop/task/` 以外の `develop/` は触らない。検証コマンドは `tw verify` で打つ（打つ前に主ブランチを未コミットの中身ごと取り込み、衝突したら打たずに `CONFLICT`。通ると作業ツリーの中身の鍵を控える。`## やること` が空のまま作業があれば打たない）。描画を変えるタスクでは、組み立てた直後に画を撮ってメインの目視を受けてから、E2E の期待値の撮り直しと `tw verify` に進む（`next-task/visual-review.md`）
 5. 受け入れ: 完了条件に目視があれば委譲先の画像を最低1枚（いちばん狭い幅）開いて見比べる → 差分を読む → 整形コマンド → `tw verify-check`（作業先が別のリポジトリなら、委譲先が残したそのリポジトリの作業ツリーで打つ。`next-task/other-repo.md`。`VERIFIED_SAME` なら検証を省く。ほかは `tw verify`。主ブランチが進んでいれば `NOT_VERIFIED base` で、`tw verify` が取り込んでから打つ）
 5a. 振り返り（`/loop` からも。`retrospect` の SKILL.md「1件だけ振り返る」）: 兆候に当たったときと、
    変更量の観点（コード・文書）で減らせる形が見つかったときだけ `develop/draft/` にドラフトのファイルを足す
@@ -429,7 +438,7 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 | サブコマンド | すること | 主な出力 |
 | --- | --- | --- |
 | `status [--all] [--check]` | 一覧（done/dropped は件数だけ。`--all` で行も）。`--check` は検証コマンド向けの厳しい判定（`todo`・`hold` は本文の7節の枠も検査する） | 行 `id/status/difficulty/loopable/dependencies/着手可否/印/summary`、`---` の後に `counts`・`ready`・`todo_loopable`・`stale`・`invalid`・（横断の振り返りの時期なら）`retrospect_due`・（残っていれば）`legacy_progress`。`retrospect_due\t<最後の記録の日付>\t<経過日数>d` は `docs/history/retrospect.md` の見出しの日付（主ブランチの版と作業ツリーの版の遅いほう）から7日以上経ったときに出る。記録が無いあいだは台帳の `flow/` の最も古い出来事から7日以上で `retrospect_due\t-\t<経過日数>d`（`flow/` が無ければ出ない） |
-| `new --summary … --difficulty … --loopable Y\|N [--deps T-001,…] [--hold] --body-file <path\|->` | 錠の中で採番してファイルを作る（コミットしない）。`## やること` の中身が要る（空にできるのは `--hold` だけ。`### 名指すファイル` が無い・形が違う・パスが木に無い・`### 作業先` が絶対パス1行でないか git のリポジトリの根でなければ、何も作らずに終了コード2）。中身があれば、計画のリポジトリ（`### 作業先` があればそこ）の `HEAD` と主ブランチの分かれ目の SHA を控える（ファイル方式は台帳の `plan-base/T-xxx`、Beads 方式は metadata `task_plan_base`） | `CREATED`・`LOCKED` |
+| `new --summary … --difficulty … --loopable Y\|N [--deps T-001,…] [--hold] --body-file <path\|->` | 錠の中で採番してファイルを作る（コミットしない）。`## やること` の中身が要る（空にできるのは `--hold` だけ。段の形に沿わない・`### 名指すファイル` が無い・形が違う・パスが木に無い・`### 作業先` が絶対パス1行でないか git のリポジトリの根でなければ、何も作らずに終了コード2）。中身があれば、計画のリポジトリ（`### 作業先` があればそこ）の `HEAD` と主ブランチの分かれ目の SHA を控える（ファイル方式は台帳の `plan-base/T-xxx`、Beads 方式は metadata `task_plan_base`） | `CREATED`・`LOCKED` |
 | `claim T-xxx` | clean・未送りなしを確かめ、主ブランチへ追い付き、印を立て（作業ツリー固有の git dir に `task-open-claims/T-xxx` の控えも置く）、設定なら枝を切る。登録時の計画の控えがあれば、名指したファイルが控えから主ブランチの先端までに変わったかを判定し、比べた先端を印に控え（台帳の印の `plan-tip`、metadata `task_plan_tip`）、変わっていなければ印に `registered` を残す（出力は変えない） | `CLAIMED`・`TAKEN`・`NOT_READY`・`DIRTY`・`UNSHIPPED` |
 | `release T-xxx [--force]` | 印と `task-open-claims/T-xxx` の控えを消すだけ（ファイルは戻さない）。`--force` は人が取り残しを片付けるときで、控えは印の持ち主の作業ツリーのものを消す（その作業ツリーが消えていれば何もしない） | `RELEASED`・`NOT_CLAIMED`・`NOT_OWNER` |
 | `done T-xxx [--dropped] --result-file <path\|->` | `status` と `## 結果` を書いて stage（コミットしない・印は残す）。`task-open-claims/T-xxx` の控えは消すので、このあとのコミットを `commit-guard` は拒まない。本文が枠（`## 結果` を除く7節）と違えば書かずに `INVALID`（終了コード3）。`claim` した時点の `HEAD` より後に、主ブランチに無いコミットがあれば `DONE` に続けて知らせる（`commit-guard` をすり抜けたコミットの事後の知らせ。控えの無い古い印では出さない） | `DONE`（`COMMITS_SINCE_CLAIM` が続くことがある）・`NOT_OWNER`・`INVALID` |
@@ -438,14 +447,15 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 | `migrate [--dry-run]` | 旧形式を変換する（下の「旧形式からの移行」） | `WRITE`・`MOVE`・`LEFTOVER`・`REMOVE`・`PLAN`/`MIGRATED` |
 | `show T-xxx` | タスク1件をタスクファイルの形で出す（読むだけ。ファイル方式は作業ツリーの版、無ければ主ブランチの版） | 本文。無ければ `NOT_READY` |
 | `edit T-xxx [--section <節名>] [--after-work] [--change-frame] [--add-deps T-001,…] [--remove-deps T-001,…] [--body-file <path\|->]` | `--add-deps`・`--remove-deps`（両方式。`--body-file` が無くてもよく、その場合は本文に触れない）は台帳の依存を直す。削除してから追加し、すでにある依存の追加は通る。自分自身・台帳に無い ID・循環になる辺・形の違う ID・依存にない ID の削除・追加と削除に同じ ID は、何も書かずに終了コード2。以下は本文について。本文を丸ごと書き換える。`--section` を付けると、その節の中身だけを渡した中身に置き換え、ほかの節は1バイトも変えない（節名は `やること`・`## やること` のどちらでも受ける。枠に無い見出し・渡した中身に行頭の `## ` の行があれば、書き込まずに終了コード2。置き換えた全文に下の検査が効く）（ファイル方式は作業ツリーのタスクファイルで、`todo`・`hold` だけ。`--summary` などの属性の引数は Beads 方式だけ）。渡した本文の `## 目的・背景`・`## 完了条件` がいまの本文と違えば、書き込まずに `FRAME_CHANGED\tT-xxx\t<違う節>` で止まる（終了コード4。行末の空白と空行の数の差は違いに数えない。いまの本文に節が無い旧形式は比べない）。変えてよいときだけ `--change-frame`（両方式）を付けて打ち直す。ほかの節だけの書き換えは今までどおり通る。`claim` の後に、着手の印の持ち主が `## やること` に初めて中身を入れたとき、その時点で作業が始まっていたか（`claim` した時点の `HEAD` より後のコミットか、タスク自身のファイルと渡した本文のファイル以外の変更があるか）を1回だけ印に残す（ファイル方式は台帳の印の `plan`、Beads 方式は metadata `task_plan`。値は `first`／`after-work`）。`after-work` になるときは書き込まずに `WORK_BEFORE_PLAN\tT-xxx\t<次の一手>` で止まる（終了コード4）。`--after-work`（両方式）を付けると書き込んで `after-work` を残し、`EDITED` の次に `PLAN_AFTER_WORK\tT-xxx\t作業の後に書いた` の行を足す（作業が始まっていなければ `--after-work` は何も変えず `first`）。front matter 付きの本文は拒む（終了コード2。除いて渡す） | `EDITED`・`NOT_READY`・`WORK_BEFORE_PLAN`・`FRAME_CHANGED` |
-| `plan-check T-xxx` | 自分の着手の印について、`## やること` を作業より先に `tw edit` で書いたかを出す（読むだけ） | `PLAN_FIRST\tT-xxx`、そうでなければ `PLAN_NOT_FIRST\tT-xxx\t<理由>`（`missing`＝空か「なし」／`after-work`＝作業が始まってから書いた／`unrecorded`＝`tw edit` が印を残さなかった。`claim` の前に書いた・着手の印の持ち主でない作業ツリーから書いた・`tw edit` を通さずに書いた）。登録時に書いた計画（`new`・`adopt`）は、名指したファイルが変わっていなければ `PLAN_REGISTERED\tT-xxx\t<控えた SHA>`（`PLAN_FIRST` と同じに扱ってよい）、変わっていて書き直していなければ `PLAN_STALE\tT-xxx\t<変わったファイル,…>`（書き直すと `PLAN_FIRST`）。比べる先は `claim` が控えた着手時の主ブランチの先端なので、受け入れで打っても変わらない。どれも終了コード0。`NOT_OWNER` |
+| `plan-check T-xxx` | 自分の着手の印について、`## やること` を作業より先に `tw edit` で書いたかを出す（読むだけ） | `PLAN_FIRST\tT-xxx`、そうでなければ `PLAN_NOT_FIRST\tT-xxx\t<理由>`（`missing`＝空か「なし」／`after-work`＝作業が始まってから書いた／`unrecorded`＝`tw edit` が印を残さなかった。`claim` の前に書いた・着手の印の持ち主でない作業ツリーから書いた・`tw edit` を通さずに書いた／`steps`＝中身はあるが段の形（「タスクファイル」の「段の形」）に沿わない。印によらずこれを先に出す）。登録時に書いた計画（`new`・`adopt`）は、名指したファイルが変わっていなければ `PLAN_REGISTERED\tT-xxx\t<控えた SHA>`（`PLAN_FIRST` と同じに扱ってよい）、変わっていて書き直していなければ `PLAN_STALE\tT-xxx\t<変わったファイル,…>`（書き直すと `PLAN_FIRST`）。比べる先は `claim` が控えた着手時の主ブランチの先端なので、受け入れで打っても変わらない。どれも終了コード0。`NOT_OWNER` |
 | `verify` | 主ブランチを取り込んでから検証コマンドを打つ。取り込むのは、主ブランチが `HEAD` より先へ進んでいて `HEAD` がその祖先のとき（`claim` のあとに自分のコミットがあれば取り込まず、`ship` が付け替える）で、未コミットの中身を一時のコミットにして `git merge-tree` で主ブランチと合わせ、衝突が無ければ作業ツリーに当てて `HEAD` を主ブランチへ進める（作業は未コミットのまま残る。`git add` 済みの区別は消える）。衝突すれば何も書き換えず、検証コマンドを打たずに控えを消して `CONFLICT` で止まる。取り込みのあと・検証の前に、節に整形コマンドがあれば打つ（`なし` なら打たない。整形で変わった中身を鍵に取るので、続く `verify-check` は `VERIFIED_SAME` になる。整形が落ちたら検証コマンドを打たずに控えを消して `FORMAT_FAILED` で止まる）。打つ前後で作業ツリーの中身の鍵（`HEAD` の SHA・一時の index に `git add -A` して `write-tree` した木の SHA・検証コマンドの文字列。本物の index は変えない）を取り、通って前後で同じなら作業ツリー固有の git dir の `task-verify-stamp` に控える。落ちたら控えを消す。全出力は同じ場所の `task-verify.log`。この作業ツリーが着手の印を持つタスク（`done`・`dropped` にしたものを除く）の `## やること` が空か「なし」のまま作業が始まっていれば（`edit` と同じ判定）、検証コマンドを打たずに控えを消して `PLAN_MISSING` で止まる | 取り込んだときは先頭に `FOLDED\t<前の HEAD>..<主ブランチ>` の1行。`CONFLICT\t<ファイル,…>`（終了コード7）。`VERIFIED\t<木の SHA>\t<ログのパス>`（控えた）／`VERIFIED_UNSTAMPED\t<ログのパス>`（通ったが検証のあいだに中身が変わったので控えない）／`VERIFY_NOT_PASSED\t<ログのパス>`（終了コード10）／`FORMAT_FAILED\t<ログのパス>`（整形コマンドが落ちた。終了コード10）。どれも出力の末尾40行が続き、そのあとに同じ判定行をもう一度出す（取り込んだときは `FOLDED` の行も判定行の前にもう一度出す）。出力を `tail` で切るときは、最後の行（取り込んだときは最後の2行）だけで判定と `FOLDED` の有無が取れる。`PLAN_MISSING\tT-xxx\t<次の一手>`（終了コード10。該当するタスクごとに1行）。検証コマンドが無ければ `NOTHING` |
 | `verify-check` | いまの中身の鍵を `verify` の控えと照らす（読むだけ） | `VERIFIED_SAME\t<木の SHA>`（検証を省いてよい）、そうでなければ `NOT_VERIFIED\t<理由>`（`none`＝控えが無い／`base`＝主ブランチが進んでいて `verify` が取り込める／`head`／`content`／`command`）。どちらも終了コード0。検証コマンドが無ければ `NOTHING` |
-| `metrics [--days N]` | 台帳の `flow/` の記録（`claim`・`release`・`verify`・`pause`・`ship`・`done` のたびに両方式で `tw` が1行足す。書けなくても元のサブコマンドの出力と終了コードは変わらず、標準エラーに1行出るだけ）から、直近 N 日（既定 7）と、その前の同じ長さの期間の数を並べる（読むだけ）。`verify` は着手の印を持つタスクごと、`ship` は送れたタスクごと（`VERIFY_FAILED`・`CONFLICT`・`RACE` は印を持つタスクごと）に1行 | 1行目 `PERIOD\t<N>d\tcurrent\tprevious`、続けて `shipped`（送り出した件数）・`lead_median_seconds`・`lead_max_seconds`（着手から送り出しまで）・`verify_per_task`（1件あたりの `verify` の回数の平均）・`verify_failed`（`FORMAT_FAILED`・`VERIFY_NOT_PASSED` の件数）・`ship_verify_failed`（`ship` の `VERIFY_FAILED`）・`reclaim`（`release` のあとの `claim`）・`reflection_none_ratio`（`done` のうち振り返りが兆候なしの割合。`dropped` は除く）の各行が `<名前>\t<今>\t<前>`（無ければ `-`）。壊れた行は読み飛ばし `SKIPPED\t<件数>`。記録が無ければ `EMPTY` |
+| `metrics [--days N]` | 台帳の `flow/` の記録（`claim`・`release`・`verify`・`pause`・`step`・`ship`・`done` のたびに両方式で `tw` が1行足す。書けなくても元のサブコマンドの出力と終了コードは変わらず、標準エラーに1行出るだけ）から、直近 N 日（既定 7）と、その前の同じ長さの期間の数を並べる（読むだけ）。`verify` は着手の印を持つタスクごと、`ship` は送れたタスクごと（`VERIFY_FAILED`・`CONFLICT`・`RACE` は印を持つタスクごと）に1行 | 1行目 `PERIOD\t<N>d\tcurrent\tprevious`、続けて `shipped`（送り出した件数）・`lead_median_seconds`・`lead_max_seconds`（着手から送り出しまで）・`verify_per_task`（1件あたりの `verify` の回数の平均）・`verify_failed`（`FORMAT_FAILED`・`VERIFY_NOT_PASSED` の件数）・`ship_verify_failed`（`ship` の `VERIFY_FAILED`）・`reclaim`（`release` のあとの `claim`）・`reflection_none_ratio`（`done` のうち振り返りが兆候なしの割合。`dropped` は除く）の各行が `<名前>\t<今>\t<前>`（無ければ `-`）。壊れた行は読み飛ばし `SKIPPED\t<件数>`。記録が無ければ `EMPTY` |
 | `config-doctor` | このリポジトリが今の読み取りに合っているかを点検する（**読むだけ。`--fix` は無い**）。主ブランチが何で決まったか・設定ファイルがどちらか・「## タスク運用」の3行・旧形式の残り、の4検査を必ず1行ずつ出す | `base_branch`・`config_file`・`claude_md_lines`・`legacy` の4行。各行の2語目が `OK`／`MISSING`／`MISSING_LINE`／`BAD_BRANCH`／`NO_SECTION`／`FOUND`／`INVALID` |
 | `commit-guard` | Claude Code の PreToolUse hook（`agents/no-delegate.md` の frontmatter）から呼ばれる。stdin の hook の入力を読み、Bash のコマンドのうちコミットを作る git のサブコマンド（`commit`・`merge`・`pull`・`cherry-pick`・`revert`・`am`・`rebase`）の実効の作業先（入力の `cwd`・`cd <dir>`・`git -C <dir>`）に `task-open-claims/` の控えがあれば拒む。両方式で同じ（`bd` を呼ばない） | 拒むときだけ PreToolUse の deny の JSON 1行（理由は「コミットせず…報告で返す」）。通すときは何も出さない |
 | `pause` | いまの中身の鍵（`verify` と同じ取り方）を作業ツリー固有の git dir の `task-pause-stamp` に控え、`flow/` に `pause` を1行足す。`handback-guard` は、この控えがいまの中身と同じなら計画・検証が欠けていても返却を通す（目視待ち・判断が要って止める・計画を作業の後に書いた回の委譲先が、返す直前に打つ） | `PAUSED\t<木の SHA>` |
-| `handback-guard` | Claude Code の hook（`agents/no-delegate.md` の frontmatter の `Stop`（委譲先では `SubagentStop` として効く）と、`SubagentHandback` の `PreToolUse`）から呼ばれる。入力の `cwd` の作業ツリーに `task-open-claims/` の控えがあり、控えのタスクのどれかに作業（`claim` した時点の `HEAD` より後のコミットか、タスク自身のファイル以外の変更）があって、`plan-check` が `PLAN_FIRST`・`PLAN_REGISTERED` でないか `verify-check` が `VERIFIED_SAME`・`NOTHING` でなく、`pause` の控えもいまの中身と違えば拒む。Beads 方式では `bd` を呼ぶ | 拒むときだけ JSON 1行（`SubagentStop` は `{"decision":"block","reason":…}`、`PreToolUse` は deny。理由は欠けた `plan-check`・`verify-check` の行と次の一手）。通すとき・ほかのイベントやツールには何も出さない |
+| `step T-xxx <n>` | 自分の着手の印のタスクの `## やること` の段 `n` を済ませた印として、いまの中身の鍵（`verify` と同じ取り方）とタスクID・段の番号を作業ツリー固有の git dir の `task-step-stamp` に控え、`flow/` に `step` を1行足す。`handback-guard` は、この控えがそのタスク・いまの中身と同じで、段がいまの計画の最後より前なら、`plan-check` が通っている限り検証が欠けていても返却を通す（最後でない段を済ませた委譲先が、返す直前に打つ）。段の読めない計画・1〜段の数の外の番号は終了コード2。最後の段は控えずに `LAST_STEP`（終了コード4。`tw verify` を通して返す） | `STEPPED\tT-xxx\t<n>/<段の数>\t<木の SHA>`・`LAST_STEP\tT-xxx\t<n>/<段の数>\t<次の一手>`・`NOT_OWNER` |
+| `handback-guard` | Claude Code の hook（`agents/no-delegate.md` の frontmatter の `Stop`（委譲先では `SubagentStop` として効く）と、`SubagentHandback` の `PreToolUse`）から呼ばれる。入力の `cwd` の作業ツリーに `task-open-claims/` の控えがあり、控えのタスクのどれかに作業（`claim` した時点の `HEAD` より後のコミットか、タスク自身のファイル以外の変更）があって、`plan-check` が `PLAN_FIRST`・`PLAN_REGISTERED` でないか、`verify-check` が `VERIFIED_SAME`・`NOTHING` でなく `step` の控えも効かず、`pause` の控えもいまの中身と違えば拒む。Beads 方式では `bd` を呼ぶ | 拒むときだけ JSON 1行（`SubagentStop` は `{"decision":"block","reason":…}`、`PreToolUse` は deny。理由は欠けた `plan-check`・`verify-check` の行と次の一手）。通すとき・ほかのイベントやツールには何も出さない |
 
 | 終了コード | 先頭語 | 意味 | スキルがすること |
 | --- | --- | --- | --- |
@@ -453,7 +463,7 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 | 1 | （traceback） | 環境の故障 | エラー出力を報告して止まる。**手で代用しない** |
 | 2 | （stderr） | 渡した引数・本文の誤り | 直して打ち直す |
 | 3 | `INVALID` | データの不備（読めないタスクファイル、移行途中、`- ブランチ:` が読めない、主ブランチが決まらない、`--check` の重複） | 理由をそのまま報告して止まる。**直しに行かない** |
-| 4 | `TAKEN`・`NOT_READY`・`DIRTY`・`MAIN_DIRTY`・`UNSHIPPED`・`LOCKED`・`NOT_OWNER`・`WORK_BEFORE_PLAN`・`FRAME_CHANGED` | いまの状態では進めない | 各スキルの表のとおり（別の1件を選ぶか止まる） |
+| 4 | `TAKEN`・`NOT_READY`・`DIRTY`・`MAIN_DIRTY`・`UNSHIPPED`・`LOCKED`・`NOT_OWNER`・`WORK_BEFORE_PLAN`・`FRAME_CHANGED`・`LAST_STEP` | いまの状態では進めない | 各スキルの表のとおり（別の1件を選ぶか止まる） |
 | 5 | `LEGACY` | 旧形式 | 下の「旧形式からの移行」を案内して止まる |
 | 6 | `MISSING` | タスク運用を始めていない | `/setup-tasks` を案内して止まる |
 | 7 | `CONFLICT` | `ship` の rebase が衝突した（`--abort` 済み）か、`verify` の主ブランチの取り込みが衝突した（何も書き換えていない） | 衝突したファイルを添えて人に預ける。`verify` の衝突を解いたあとは `tw verify` を打ち直す |
