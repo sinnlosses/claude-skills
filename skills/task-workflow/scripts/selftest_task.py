@@ -1978,6 +1978,32 @@ def test_ship_forces_verify_after_verify_failed_without_new_rebase() -> None:
         check("送るものが無ければ今までどおりNOTHING", r3.returncode == 0 and r3.stdout.startswith("NOTHING\t"), r3.stdout + r3.stderr)
 
 
+def test_ship_verify_failed_keeps_full_log_in_order() -> None:
+    print("task.py ship: 検証が落ちると、全文が出た順のログに残り、VERIFY_FAILED の行にそのパスが出る")
+    with tempfile.TemporaryDirectory() as tmp:
+        verify_script = write(
+            os.path.join(tmp, "verify.sh"),
+            "echo out-1\necho err-1 >&2\necho out-2\necho err-2 >&2\nexit 1\n",
+        )
+        main_path, wt1, _wt2 = make_repo(tmp, branch="切らない", verify=f"`sh {verify_script}`")
+        commit_task(main_path, taskfile.Task("T-100", "ログ", "todo", "sonnet", "Y", (), BODY))
+
+        run_task(wt1, "claim", "T-100")
+        write(os.path.join(main_path, "unrelated.txt"), "x")
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "mainだけの変更")
+        _claim_work_and_done(wt1, "T-100")
+
+        r = run_task(wt1, "ship")
+        first = r.stdout.splitlines()[0] if r.stdout else ""
+        check("VERIFY_FAILED で終了コード8", r.returncode == 8 and first.startswith("VERIFY_FAILED\t"), r.stdout + r.stderr)
+        log_path = first.split("\t")[-1]
+        check("行の末尾がログのパス", log_path == ledger.ship_verify_log_path(cwd=wt1), first)
+        with open(log_path, encoding="utf-8") as f:
+            log = f.read()
+        check("stdout と stderr が出た順に残る", log.split() == ["out-1", "err-1", "out-2", "err-2"], log)
+
+
 def flow_rows(wt: str) -> list[dict]:
     """台帳の `flow/` の記録を、ファイル名の順に読む。"""
     d = ledger.flow_dir(ledger.ledger_root(cwd=wt))
@@ -2661,6 +2687,7 @@ def main() -> None:
         test_ship_fast_forward,
         test_ship_rebases_when_main_advances,
         test_ship_forces_verify_after_verify_failed_without_new_rebase,
+        test_ship_verify_failed_keeps_full_log_in_order,
         test_flow_records_and_metrics,
         test_retrospect_due,
         test_ship_stale_verify_owed_does_not_block_nothing_or_main_worktree,
