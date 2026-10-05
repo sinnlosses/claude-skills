@@ -142,7 +142,7 @@ description: "develop/direction.md に書かれたユーザーからの指示（
    `docs/history/direction.md`（と直した既存タスク、移したドラフトのファイル）を**個別に** `git add`
    し、手順6の `git rm` と合わせて1コミット（Beads 方式ではタスクファイルが無いので、それ以外だけ）（件名に
    タスクIDを付けない。例「指示をタスクにする（T-531〜T-533）」）→ `tw ship`。`SHIPPED` 以外の
-   扱いは `next-task` スキルの手順8の表と同じ（止まって預ける）。push はしない。
+   扱いは `next-task` スキルの `ship-stopped.md` の表と同じ（止まって預ける）。push はしない。
 
 ## 完了報告のフォーマット
 

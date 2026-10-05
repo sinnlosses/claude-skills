@@ -277,23 +277,23 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 （決まっていない判断そのものが待っている）。`hold` は `/loop` の `/next-task` が選ばない。ユーザーが
 直接呼んだときは選んでよいが、判断は**委譲せずメインで** `AskUserQuestion` で聞き、答えを
 `## 決まっていること（蒸し返さない）` に焼いて `todo` に戻してから `claim` する（サブエージェントは
-ユーザーに聞けないので、委譲すると決める人がすり替わる。手順は `next-task/SKILL.md` の手順3a）。
+ユーザーに聞けないので、委譲すると決める人がすり替わる。手順は `next-task/hold.md`）。
 
 ## 1サイクル
 
 `/next-task` の1回。各段で打つものと、止まる出力は `skills/next-task/SKILL.md`。
 
 1. `tw status` で見渡す → `READY` を1件選ぶ（`retrospect_due` の行があれば、選ぶ前に横断の振り返りを1回行って送る。
-   `next-task/SKILL.md` 手順1a）
+   `next-task/weekly-retrospect.md`）
 2. `tw claim T-xxx`（主ブランチへ追い付き、印を立て、必要なら作業ブランチを切る）→ `tw plan-check T-xxx`
 3. 確かめる: `PLAN_REGISTERED`（登録時に書いた `## やること` が名指すファイルが変わっていない）なら、メインが
    `## やること` が `## 完了条件` の各行を覆うかを読んで確かめ、覆っていれば計画どおりに委譲する。
    `PLAN_STALE`（変わった）・`PLAN_NOT_FIRST missing`・`unrecorded`、または覆っていなければ、書き直しから委譲する
    （委譲先が**いまの主ブランチで調べ直して `## やること` を書き直してから**実装する。`tw edit T-xxx --section 'やること' --body-file -`
    が作業より先に書いたかを印に残し、作業の後の初回の記入は拒む）。設計を利用者とすでに決め、正典・コードを
-   読んでいるときはメインが書いてもよい。条件・渡す言葉は `next-task/SKILL.md` 手順5
-4. 委譲（どちらの形でも実装まで1回。`## やること` だけを書かせる委譲はしない）: 前提が崩れていれば作業せず、`tw done --dropped` にする理由を報告させる。計画どおりに委譲するときは、条件を満たせば文書の担当（`sonnet` 固定、同時に1匹まで）を並べて起こす（条件・渡す言葉は `next-task/SKILL.md` 手順5c）。返りではメインが `tw plan-check T-xxx`（`PLAN_REGISTERED` か `PLAN_FIRST` か）と `## やること` の中身を見る（`next-task/SKILL.md` 手順5b）。`develop/task/` 以外の `develop/` は触らない。検証コマンドは `tw verify` で打つ（打つ前に主ブランチを未コミットの中身ごと取り込み、衝突したら打たずに `CONFLICT`。通ると作業ツリーの中身の鍵を控える。`## やること` が空のまま作業があれば打たない）。描画を変えるタスクでは、組み立てた直後に画を撮ってメインの目視を受けてから、E2E の期待値の撮り直しと `tw verify` に進む（`next-task/SKILL.md` 手順5c・6）
-5. 受け入れ: 完了条件に目視があれば委譲先の画像を最低1枚（いちばん狭い幅）開いて見比べる → 差分を読む → 整形コマンド → `tw verify-check`（作業先が別のリポジトリなら、委譲先が残したそのリポジトリの作業ツリーで打つ。`next-task/SKILL.md` 手順6「作業先が別のリポジトリのとき」。`VERIFIED_SAME` なら検証を省く。ほかは `tw verify`。主ブランチが進んでいれば `NOT_VERIFIED base` で、`tw verify` が取り込んでから打つ）
+   読んでいるときはメインが書いてもよい。条件・渡す言葉は `next-task/rewrite-plan.md`
+4. 委譲（どちらの形でも実装まで1回。`## やること` だけを書かせる委譲はしない）: 前提が崩れていれば作業せず、`tw done --dropped` にする理由を報告させる。計画どおりに委譲するときは、条件を満たせば文書の担当（`sonnet` 固定、同時に1匹まで）を並べて起こす（条件・渡す言葉は `next-task/parallel-docs.md`）。返りではメインが `tw plan-check T-xxx`（`PLAN_REGISTERED` か `PLAN_FIRST` か）と `## やること` の中身を見る（`next-task/SKILL.md` 手順5b）。`develop/task/` 以外の `develop/` は触らない。検証コマンドは `tw verify` で打つ（打つ前に主ブランチを未コミットの中身ごと取り込み、衝突したら打たずに `CONFLICT`。通ると作業ツリーの中身の鍵を控える。`## やること` が空のまま作業があれば打たない）。描画を変えるタスクでは、組み立てた直後に画を撮ってメインの目視を受けてから、E2E の期待値の撮り直しと `tw verify` に進む（`next-task/visual-review.md`）
+5. 受け入れ: 完了条件に目視があれば委譲先の画像を最低1枚（いちばん狭い幅）開いて見比べる → 差分を読む → 整形コマンド → `tw verify-check`（作業先が別のリポジトリなら、委譲先が残したそのリポジトリの作業ツリーで打つ。`next-task/other-repo.md`。`VERIFIED_SAME` なら検証を省く。ほかは `tw verify`。主ブランチが進んでいれば `NOT_VERIFIED base` で、`tw verify` が取り込んでから打つ）
 5a. 振り返り（`/loop` からも。`retrospect` の SKILL.md「1件だけ振り返る」）: 兆候に当たったときと、
    変更量の観点（コード・文書）で減らせる形が見つかったときだけ `develop/draft/` にドラフトのファイルを足す
 6. `tw done T-xxx --result-file -`（`status` と `## 結果` を書いて stage。印はまだ消さない）
