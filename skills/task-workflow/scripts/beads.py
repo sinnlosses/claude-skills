@@ -32,7 +32,7 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 
 import layout
 import taskfile
@@ -210,33 +210,43 @@ def history(toplevel: str, bd_id: str) -> list[dict]:
 
 
 def overwritten_by(toplevel: str, bd_id: str, actor: str, since: datetime) -> Issue | None:
-    """`actor` が `since` 以後（秒の単位）に書いた最後の更新の、書く直前の版。無ければ `None`。
+    """`actor` が `since` 以後（秒の単位）に書いた最後の更新の、書く直前の版。無ければ（作った課題も）`None`。
 
     `bd history` の版には metadata が載らないので、監査の出来事（`--events`。新しい順で、`old_value` に
     書く前の課題が metadata ごと入る）から読む。出来事の種類は書いた中身で変わる（status も変えれば
-    `status_changed`）ので見ない。
+    `status_changed`）ので見ない。時刻か `old_value` が読めなければ `BeadsError`。
     """
     data = run_json(toplevel, ["history", bd_id, "--events"])
     for event in data if isinstance(data, list) else []:
         if not isinstance(event, dict) or event.get("actor") != actor:
             continue
-        at = _event_time(event.get("created_at"))
-        if at is None or at < since:
+        at = parse_time(event.get("created_at"))
+        if at is None:
+            raise BeadsError(f"bd history {bd_id} --events の時刻が読めない: {event.get('created_at')!r}")
+        if at < since or not event.get("old_value"):
             return None
         try:
-            before = json.loads(str(event.get("old_value") or ""))
-        except ValueError:
-            return None
-        return _issue(before) if isinstance(before, dict) and "id" in before else None
+            before = json.loads(str(event["old_value"]))
+        except ValueError as e:
+            raise BeadsError(f"bd history {bd_id} --events の old_value が読めない: {e}") from e
+        if not isinstance(before, dict) or "id" not in before:
+            raise BeadsError(f"bd history {bd_id} --events の old_value が課題の形でない")
+        return _issue(before)
     return None
 
 
-def _event_time(value) -> datetime | None:
+def parse_time(value) -> datetime | None:
+    """`bd` の時刻（`2026-10-05T08:12:39Z`・`2026-10-05T17:02:14.78+09:00` など。小数は0〜9桁）を読む。
+    Python 3.9 の `fromisoformat` は小数が3桁か6桁でないと読めないので、6桁にそろえる。"""
+    m = re.fullmatch(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,9}))?(Z|[+-]\d\d:\d\d)?", str(value or "").strip())
+    if m is None:
+        return None
+    fraction = (m.group(2) or "").ljust(6, "0")[:6]
+    zone = "+00:00" if m.group(3) in (None, "Z") else m.group(3)
     try:
-        at = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+        return datetime.fromisoformat(f"{m.group(1)}.{fraction}{zone}")
     except ValueError:
         return None
-    return at if at.tzinfo else at.replace(tzinfo=timezone.utc)
 
 
 def _issue(d: dict) -> Issue:

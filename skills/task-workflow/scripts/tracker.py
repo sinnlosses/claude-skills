@@ -215,7 +215,8 @@ class Session:
         `bd github pull` は前回の同期より後に Beads で変えた課題を飛ばす（両側で変えたら Beads が勝つ）が、
         飛ばしたかを教えないので、課題ごとの同期の時刻より後に両側で更新されたものを `CONFLICT` にする。
         取り込みのあとは必ず送る（`bd` の前回の同期の時刻は取り込みでも進むので、送らずにもう一度
-        取り込むと GitHub の版が勝つ）。着手の印を戻せなかった課題は、送り終えてから `_Failed` にする。
+        取り込むと GitHub の版が勝つ）。着手の印を戻せなかった課題は `TRACKER\\tFAILED` の行にして、
+        ほかの行と送りは続ける。
         """
         if not remote:
             return []
@@ -234,20 +235,28 @@ class Session:
         pulled_at = _now()
         self._bd_ok(["--actor", pull_actor, "github", "pull", *(str(n) for n in sorted(remote))], "bd github pull")
         new = _by_number(beads.list_issues(self.toplevel))
+        # 別の作業ツリーの送りも見るので、この Session の控えではなく今の値を読む。
+        pushed = _loads(beads.run(self.toplevel, ["kv", "get", SYNCED_KEY]).stdout)
+        pushed = pushed if isinstance(pushed, dict) else {}
         fixed: list[str] = []
-        unrestored: list[str] = []
         for n in sorted(remote):
             issue, was = new.get(n), old.get(n)
             if issue is None:
                 continue
-            overwritten = beads.overwritten_by(self.toplevel, issue.bd_id, pull_actor, pulled_at)
-            restore = _claim_restore_args(overwritten, issue) if overwritten is not None else []
+            try:
+                overwritten = beads.overwritten_by(self.toplevel, issue.bd_id, pull_actor, pulled_at)
+            except beads.BeadsError as e:
+                lines.append(f"TRACKER\tFAILED\tgithub\t{beads.to_task_id(issue.bd_id)} の着手の印を戻せない: {e}")
+                overwritten = None
+            restore = [] if overwritten is None else _claim_restore_args(
+                overwritten, issue, _parse_time(pushed.get(str(n)))
+            )
             if restore:
                 r = beads.run(self.toplevel, ["update", issue.bd_id, *restore], self._actor)
                 if r.returncode == 0:
                     fixed.append(issue.bd_id)
                 else:
-                    unrestored.append(f"{beads.to_task_id(issue.bd_id)}（{_tail(r)}）")
+                    lines.append(f"TRACKER\tFAILED\tgithub\t{beads.to_task_id(issue.bd_id)} の着手の印を戻せない: {_tail(r)}")
             was_closed = was is not None and was.status == "closed"
             if issue.status == "closed" and not was_closed and beads.ship_mark(issue) is None:
                 if beads.CANCELLED_LABEL not in issue.labels:
@@ -269,9 +278,6 @@ class Session:
         if fixed:
             self._bd_ok(["github", "push", *fixed], "bd github push")
         self._mark_synced([renamed.get(new[n].bd_id, new[n].bd_id) for n in remote if n in new])
-        if unrestored:
-            self._save()
-            raise _Failed("取り込みで消えた着手の印を戻せない: " + "、".join(unrestored))
         return lines + rename_lines
 
     def _rename(self, bd_ids: list[str]) -> tuple[dict[str, str], list[str]]:
@@ -622,21 +628,26 @@ def _by_number(issues: list[beads.Issue]) -> dict[int, beads.Issue]:
     return {n: i for i in issues if (n := _ref_number(i.external_ref)) is not None}
 
 
-def _claim_restore_args(was: beads.Issue, issue: beads.Issue) -> list[str]:
+def _claim_restore_args(was: beads.Issue, issue: beads.Issue, pushed_at: datetime | None) -> list[str]:
     """取り込みが `was` を `issue` へ上書きして消した着手の印（status・assignee と `beads.MARK_KEYS` の
-    metadata）を戻す `bd update` の引数。戻すものが無ければ空。
+    metadata）を戻す `bd update` の引数。戻すものが無ければ空。`pushed_at` はこの課題を最後に送った時刻。
 
     `was` は取り込みの前に読んだ一覧ではなく、取り込みが書く直前の版
     （取り込みの最中に別の作業ツリーが着手すると、前に読んだ一覧にはその着手が無い）。
+    GitHub で手放された着手（担当者が付いた、または着手を送ったあとで label `status::in_progress` が
+    外れて `open` に戻った）は戻さない。着手を送る前の GitHub の版で `open` に戻ったものは戻す。
     """
     if issue.status == "closed":
         return []
     args: list[str] = []
-    if was.status == "in_progress" and was.assignee and issue.status in ("open", "in_progress") \
-            and (issue.status, issue.assignee) != ("in_progress", was.assignee):
-        args += ["--status", "in_progress", "--assignee", was.assignee]
-        if issue.assignee:
-            args.append("--force")
+    claimed = was.status == "in_progress" and bool(was.assignee)
+    if claimed and not issue.assignee:
+        started = beads.parse_time(was.started_at)
+        unsent = started is not None and (pushed_at is None or pushed_at < started.replace(microsecond=0))
+        if issue.status == "in_progress":
+            args += ["--assignee", was.assignee]
+        elif issue.status == "open" and unsent:
+            args += ["--status", "in_progress", "--assignee", was.assignee]
     had, has = _marks(was), _marks(issue)
     args += [x for k, v in had.items() if k not in has for x in ("--set-metadata", f"{k}={v}")]
     return args

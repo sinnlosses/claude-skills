@@ -1134,7 +1134,7 @@ def _fake_bin(tmp: str) -> str:
     偽の `gh`（呼ばれ方を記録し、`api` は偽の GitHub へ転送）。
 
     偽の `bd` は、`<FAKE_BD_LOG>.before-pull`（`{"cwd", "argv"}` の JSON）があれば `github pull` の前に
-    1回だけそれを打ち、`<FAKE_BD_LOG>.fail-update` があるあいだは `update` を落とす。"""
+    1回だけそれを打ち、`<FAKE_BD_LOG>.fail-update` があるあいだは assignee か metadata を書く `update` を落とす。"""
     bin_dir = os.path.join(tmp, "bin")
     real_bd = shutil.which("bd") or "bd"
     write(os.path.join(bin_dir, "bd"), f"""#!{sys.executable}
@@ -1148,7 +1148,8 @@ if core[:2] == ["github", "pull"] and os.path.exists(before_pull):
         hook = json.load(f)
     os.remove(before_pull)
     subprocess.run(hook["argv"], cwd=hook["cwd"], capture_output=True)
-if core[:1] == ["update"] and os.path.exists(os.environ["FAKE_BD_LOG"] + ".fail-update"):
+if core[:1] == ["update"] and ("--assignee" in core or "--set-metadata" in core) \\
+        and os.path.exists(os.environ["FAKE_BD_LOG"] + ".fail-update"):
     sys.stderr.write("fake bd: update を落とす\\n")
     sys.exit(1)
 if core[:1] == ["jira"] and "sync" in core:
@@ -1418,31 +1419,43 @@ def test_tracker_github_keeps_claim_marks() -> None:
             b = new_unplanned(main_path, "作業のあとに計画を書く")
             c = new(main_path, "取り込みの最中に着手する")
             d = new(main_path, "印を戻せない")
+            e = new(main_path, "GitHub で手放す")
+            f = new(main_path, "GitHub で閉じる")
             write(os.path.join(main_path, "shared.txt"), "line1\nline2\n")
             git(main_path, "commit", "-q", "-am", "主ブランチが進む")
-            for t in (a, b, d):
+            for t in (a, d, e):
                 run_task(wt1, "claim", t)
             r = run_task(wt1, "plan-check", a)
             check("名指したファイルが変わっていれば着手で PLAN_STALE", r.stdout.strip() == f"PLAN_STALE\t{a}\tshared.txt",
                   r.stdout + r.stderr)
+            check("着手の送りは GitHub に label status::in_progress を付ける",
+                  "status::in_progress" in fake.issues[num(e)]["labels"], repr(fake.issues[num(e)]))
+            env()["GITHUB_API_URL"] = "http://127.0.0.1:9"
+            r = run_task(wt1, "claim", b)
+            env()["GITHUB_API_URL"] = fake.url
+            check("送りが届かない着手は GitHub に label が付かない", "TRACKER\tFAILED" in r.stdout
+                  and "status::in_progress" not in fake.issues[num(b)]["labels"], r.stdout + repr(fake.issues[num(b)]))
             claimed = state(a)
 
             write(os.path.join(tmp, "bd.log.before-pull"),
                   json.dumps({"cwd": wt1, "argv": [sys.executable, TASK_PY, "claim", c]}))
             fake.edit(num(a))
-            fake.edit(num(b), labels=[l for l in fake.issues[num(b)]["labels"] if not l.startswith("status")])
             fake.edit(num(c))
+            fake.edit(num(e), labels=[l for l in fake.issues[num(e)]["labels"] if not l.startswith("status")])
             r = run_task(main_path, "sync")
             marks = (beads.CLAIM_BRANCH_KEY, beads.CLAIM_HEAD_KEY, beads.PLAN_BASE_KEY, beads.PLAN_TIP_KEY)
             check("取り込みが上書きしても assignee と metadata が戻る", r.returncode == 0
                   and state(a)[:2] == ("in_progress", "wt1")
                   and all(state(a)[2].get(k) == claimed[2].get(k) and claimed[2].get(k) for k in marks),
                   r.stdout + r.stderr + repr(claimed) + repr(state(a)))
-            check("取り込みが status を open に戻しても着手を戻す", state(b)[:2] == ("in_progress", "wt1"),
+            check("着手の送りが届く前の GitHub の版で open に戻ったら着手を戻す", state(b)[:2] == ("in_progress", "wt1"),
                   r.stdout + repr(state(b)))
             check("取り込みの最中の着手も戻す", not os.path.exists(os.path.join(tmp, "bd.log.before-pull"))
                   and state(c)[:2] == ("in_progress", "wt1") and bool(state(c)[2].get(beads.CLAIM_HEAD_KEY)),
                   r.stdout + repr(state(c)))
+            check("着手を送ったあと GitHub で label が外れた（手放した）課題は着手に戻さず、metadata だけ戻す",
+                  state(e)[:2] == ("open", None) and bool(state(e)[2].get(beads.CLAIM_HEAD_KEY)),
+                  r.stdout + repr(state(e)))
 
             r = run_task(wt1, "edit", a, "--section", "やること", "--body-file", "-",
                          stdin="### 1. 直す\nx\n\n### 名指すファイル\n- `shared.txt`\n")
@@ -1463,11 +1476,13 @@ def test_tracker_github_keeps_claim_marks() -> None:
 
             write(os.path.join(tmp, "bd.log.fail-update"), "")
             fake.edit(num(d))
+            fake.edit(num(f), state="closed")
             r = run_task(main_path, "sync")
             os.remove(os.path.join(tmp, "bd.log.fail-update"))
             check("戻せなければ TRACKER FAILED（終了コード10）", r.returncode == 10
                   and any(l.startswith("TRACKER\tFAILED\tgithub") and d in l for l in r.stdout.splitlines()),
                   r.stdout + r.stderr)
+            check("戻しが落ちても同じ取り込みの CLOSED の行は出る", f"TRACKER\tCLOSED\t{f}" in r.stdout, r.stdout)
         finally:
             fake.close()
             del _local.env
@@ -1615,6 +1630,21 @@ def test_id_forms() -> None:
           ordered == ["T-045", "T-123", "GH-5", "ABC-9", "PROJ-1", "PROJ-2", "GH-new-x"], repr(ordered))
 
 
+def test_bd_time_forms() -> None:
+    """`bd` の時刻は小数の桁（0〜9桁）と `Z`・時差によらず読め、時刻でないものは `None`。"""
+    forms = {
+        "2026-10-05T08:12:39Z": 0,
+        "2026-10-05T08:12:39.7Z": 700000,
+        "2026-10-05T17:12:39.78+09:00": 780000,
+        "2026-10-05T08:12:39.1234Z": 123400,
+        "2026-10-05T08:12:39.123456789Z": 123456,
+    }
+    for text, micro in forms.items():
+        check(f"{text} を読む", beads.parse_time(text) == datetime(2026, 10, 5, 8, 12, 39, micro, tzinfo=timezone.utc),
+              repr(beads.parse_time(text)))
+    check("時刻でないものは None", beads.parse_time("昨日") is None and beads.parse_time(None) is None)
+
+
 def main() -> None:
     only = sys.argv[1:]  # テストの関数名を渡すとそれだけを走らせる（手で直すとき）
     if shutil.which("bd") is None:
@@ -1632,6 +1662,7 @@ def main() -> None:
         BASE_ENV.pop("GITHUB_TOKEN", None)
         tests = (
             test_id_forms,
+            test_bd_time_forms,
             test_setup_and_config_doctor,
             test_file_mode_untouched_by_beads_dir,
             test_new_status_and_numbering,
