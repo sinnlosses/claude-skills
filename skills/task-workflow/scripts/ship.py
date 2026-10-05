@@ -30,6 +30,7 @@ class ShipOutcome:
     conflict_files: tuple[str, ...] = field(default_factory=tuple)
     verify_command: str | None = None
     verify_tail: str = ""
+    verify_log: str = ""
     preship_ran: bool = False
 
 
@@ -76,6 +77,16 @@ def find_base_worktree(
     return next((w for w in worktrees if w.branch == base and w.path != own_path), None)
 
 
+def _run_logged(toplevel: str, command: str) -> tuple[int, str, str]:
+    """検証を打ち、stdout と stderr を出た順に1本のログへ書く。(終了コード, ログのパス, 末尾40行)。"""
+    log_path = ledger.ship_verify_log_path(toplevel)
+    with open(log_path, "w") as log:
+        rc = subprocess.run(["sh", "-c", command], cwd=toplevel, stdout=log, stderr=subprocess.STDOUT).returncode
+    with open(log_path, errors="replace") as log:
+        tail = "\n".join(log.read().splitlines()[-40:])
+    return rc, log_path, tail
+
+
 def _run(cwd: str, args: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
 
@@ -118,10 +129,9 @@ def attempt(
 
         owed_this_round = tries == 1 and verify_owed
         if (rebased_this_round or owed_this_round) and verify_command is not None:
-            vr = subprocess.run(["sh", "-c", verify_command], cwd=toplevel, capture_output=True, text=True)
+            vrc, vlog, tail = _run_logged(toplevel, verify_command)
             verify_state = "ran"
-            if vr.returncode != 0:
-                tail = "\n".join(((vr.stdout or "") + (vr.stderr or "")).splitlines()[-40:])
+            if vrc != 0:
                 return ShipOutcome(
                     kind="VERIFY_FAILED",
                     rebased=rebased_any,
@@ -129,12 +139,12 @@ def attempt(
                     tries=tries,
                     verify_command=verify_command,
                     verify_tail=tail,
+                    verify_log=vlog,
                 )
 
         if preship_command is not None:
-            pr = subprocess.run(["sh", "-c", preship_command], cwd=toplevel, capture_output=True, text=True)
-            if pr.returncode != 0:
-                tail = "\n".join(((pr.stdout or "") + (pr.stderr or "")).splitlines()[-40:])
+            prc, plog, tail = _run_logged(toplevel, preship_command)
+            if prc != 0:
                 return ShipOutcome(
                     kind="VERIFY_FAILED",
                     rebased=rebased_any,
@@ -142,6 +152,7 @@ def attempt(
                     tries=tries,
                     verify_command=preship_command,
                     verify_tail=tail,
+                    verify_log=plog,
                 )
 
         # 枝の名前ではなくコミットで送る（detached HEAD の `HEAD` は本体の側では本体自身を指す）。

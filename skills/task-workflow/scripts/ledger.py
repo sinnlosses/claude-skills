@@ -445,6 +445,7 @@ def clear_verify_owed(cwd: str | None = None) -> None:
 
 VERIFY_STAMP_FILE_NAME = "task-verify-stamp"
 VERIFY_LOG_FILE_NAME = "task-verify.log"
+SHIP_VERIFY_LOG_FILE_NAME = "task-ship-verify.log"
 PAUSE_STAMP_FILE_NAME = "task-pause-stamp"
 STEP_STAMP_FILE_NAME = "task-step-stamp"
 
@@ -485,6 +486,10 @@ def worktree_tree(toplevel: str) -> str:
 
 def verify_log_path(cwd: str | None = None) -> str:
     return os.path.join(git_dir(cwd), VERIFY_LOG_FILE_NAME)
+
+
+def ship_verify_log_path(cwd: str | None = None) -> str:
+    return os.path.join(git_dir(cwd), SHIP_VERIFY_LOG_FILE_NAME)
 
 
 def write_verify_stamp(key: ContentKey, cwd: str | None = None) -> None:
