@@ -625,9 +625,12 @@ Project・Status 欄・選択肢の ID は `bd kv` の `task-workflow.project` �
 - **写る欄**: 題 ↔ `title`、本文 ↔ `description`、label ↔ label（`difficulty:*`・`loopable:*`・`ship:*`・
   `cancelled` も）、開閉 ↔ `open`／`closed`、`status::in_progress`・`status::deferred` ↔ `in_progress`・
   `deferred`。`acceptance_criteria`・`notes`・comment（`## 結果`）は Beads だけに置き、GitHub には出さない
-- **錠の持ち主**: 取り込みは assignee を GitHub の担当者で上書きする（作業ツリーの名前は GitHub の
-  利用者でないので空になる）。`tw` は取り込みの前に `in_progress` の assignee を控え、空になったものを
-  `bd update --assignee` で戻す。**取り込みはすべてこの包みを通す**
+- **錠の持ち主**: 取り込みは assignee を GitHub の担当者で上書きし（作業ツリーの名前は GitHub の
+  利用者でないので空になる）、metadata を消し、label `status::in_progress` が GitHub に無ければ
+  `open` に戻す。`tw` は取り込みを actor `<作業ツリーの名前>:github-pull` で打ち、その更新の書く直前の版
+  （`bd history --events` の `old_value`。取り込みの最中に別の作業ツリーが着手しても、その着手が入る）
+  から、消えた着手（`in_progress` と assignee）と metadata の印（`task_*`）を `bd update` で戻す。
+  戻せなければ `TRACKER\tFAILED`。**取り込みはすべてこの包みを通す**
 - **タスクの操作**（`claim`・`release`・`edit`・`adopt`・`done`）: 触る課題だけを
   取り込み → 操作 → `bd github push <ID>` の順で打つ。`ship` は取り込まずに全件を送る。
   取り込みは前回の同期の時刻を進めるので、取り込みのあとの直し（assignee・label・付け替え）は
@@ -640,7 +643,7 @@ Project・Status 欄・選択肢の ID は `bd kv` の `task-workflow.project` �
 - **GitHub で閉じる**: 取り込むと Beads でも閉じ、依存が解ける。`ship:*` の無い課題が GitHub で
   閉じられたら見送りとして label `cancelled` を足し、`TRACKER\tCLOSED\tGH-<n>` の行を出す（着手中なら
   人に預ける）。GitHub で開き直したら `cancelled` と `ship:*` を外す
-- **`tw sync` の順**: 控える → 取り込む → 付け替える・assignee を戻す（直したものを送る）→
+- **`tw sync` の順**: 控える → 取り込む → 付け替える・着手の印を戻す（直したものを送る）→
   push（`bd github sync --push-only`）→ 登録で落ちた仮の ID を付け替える → Status 欄を書く
 
 **Jira の方式との違い**:

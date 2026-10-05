@@ -32,6 +32,7 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import layout
 import taskfile
@@ -63,6 +64,8 @@ PLAN_KEY = "task_plan"
 PLAN_BASE_KEY = "task_plan_base"
 # 登録時の計画を判定した、着手時の主ブランチの先端。
 PLAN_TIP_KEY = "task_plan_tip"
+# この運用が metadata に置く印（GitHub には載らないので、取り込みで消えたら戻す）。
+MARK_KEYS = (CLAIM_BRANCH_KEY, CLAIM_HEAD_KEY, PLAN_KEY, PLAN_BASE_KEY, PLAN_TIP_KEY)
 RESULT_HEADING = taskfile.RESULT_HEADING
 
 # 本文の節のうち、`description` 以外へ入るもの。
@@ -204,6 +207,36 @@ def history(toplevel: str, bd_id: str) -> list[dict]:
     data = run_json(toplevel, ["history", bd_id])
     snaps = [h.get("Issue") for h in data if isinstance(h, dict) and isinstance(h.get("Issue"), dict)]
     return list(reversed(snaps))
+
+
+def overwritten_by(toplevel: str, bd_id: str, actor: str, since: datetime) -> Issue | None:
+    """`actor` が `since` 以後（秒の単位）に書いた最後の更新の、書く直前の版。無ければ `None`。
+
+    `bd history` の版には metadata が載らないので、監査の出来事（`--events`。新しい順で、`old_value` に
+    書く前の課題が metadata ごと入る）から読む。出来事の種類は書いた中身で変わる（status も変えれば
+    `status_changed`）ので見ない。
+    """
+    data = run_json(toplevel, ["history", bd_id, "--events"])
+    for event in data if isinstance(data, list) else []:
+        if not isinstance(event, dict) or event.get("actor") != actor:
+            continue
+        at = _event_time(event.get("created_at"))
+        if at is None or at < since:
+            return None
+        try:
+            before = json.loads(str(event.get("old_value") or ""))
+        except ValueError:
+            return None
+        return _issue(before) if isinstance(before, dict) and "id" in before else None
+    return None
+
+
+def _event_time(value) -> datetime | None:
+    try:
+        at = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return at if at.tzinfo else at.replace(tzinfo=timezone.utc)
 
 
 def _issue(d: dict) -> Issue:

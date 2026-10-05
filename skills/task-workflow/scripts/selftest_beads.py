@@ -1131,14 +1131,26 @@ class FakeGitHub:
 
 def _fake_bin(tmp: str) -> str:
     """偽の `bd`（jira の sync だけ受けて `<FAKE_BD_LOG>.jira` の課題を作り、残りは本物へ）と、
-    偽の `gh`（呼ばれ方を記録し、`api` は偽の GitHub へ転送）。"""
+    偽の `gh`（呼ばれ方を記録し、`api` は偽の GitHub へ転送）。
+
+    偽の `bd` は、`<FAKE_BD_LOG>.before-pull`（`{"cwd", "argv"}` の JSON）があれば `github pull` の前に
+    1回だけそれを打ち、`<FAKE_BD_LOG>.fail-update` があるあいだは `update` を落とす。"""
     bin_dir = os.path.join(tmp, "bin")
     real_bd = shutil.which("bd") or "bd"
     write(os.path.join(bin_dir, "bd"), f"""#!{sys.executable}
-import os, subprocess, sys
+import json, os, subprocess, sys
 REAL = {real_bd!r}
 args = sys.argv[1:]
 core = [a for i, a in enumerate(args) if a != "--actor" and (i == 0 or args[i - 1] != "--actor")]
+before_pull = os.environ["FAKE_BD_LOG"] + ".before-pull"
+if core[:2] == ["github", "pull"] and os.path.exists(before_pull):
+    with open(before_pull) as f:
+        hook = json.load(f)
+    os.remove(before_pull)
+    subprocess.run(hook["argv"], cwd=hook["cwd"], capture_output=True)
+if core[:1] == ["update"] and os.path.exists(os.environ["FAKE_BD_LOG"] + ".fail-update"):
+    sys.stderr.write("fake bd: update を落とす\\n")
+    sys.exit(1)
 if core[:1] == ["jira"] and "sync" in core:
     with open(os.environ["FAKE_BD_LOG"], "a") as f:
         f.write(" ".join(core) + "\\n")
@@ -1387,6 +1399,80 @@ def test_tracker_github_bidirectional() -> None:
             del _local.env
 
 
+def test_tracker_github_keeps_claim_marks() -> None:
+    say("トラッカー github: 取り込みが着手中の課題を上書きしても、着手の印（assignee と metadata）を戻す")
+    fake = FakeGitHub()
+    with tempfile.TemporaryDirectory() as tmp:
+        _local.env = _with_fakes(tmp, fake)
+        try:
+            main_path, wt1 = _github_repo(tmp, beads.PREFIX_GITHUB)
+            num = lambda t: int(beads.to_bd_id(t).split("-")[1])  # noqa: E731
+
+            def state(task_id: str) -> tuple[str, str | None, dict]:
+                issue = beads.show(main_path, beads.to_bd_id(task_id))
+                raw = issue.raw.get("metadata") if issue is not None else None
+                return (issue.status if issue else "", issue.assignee if issue else None,
+                        raw if isinstance(raw, dict) else {})
+
+            a = new(main_path, "着手のあとに計画を書き直す", body=plan_body("shared.txt"))
+            b = new_unplanned(main_path, "作業のあとに計画を書く")
+            c = new(main_path, "取り込みの最中に着手する")
+            d = new(main_path, "印を戻せない")
+            write(os.path.join(main_path, "shared.txt"), "line1\nline2\n")
+            git(main_path, "commit", "-q", "-am", "主ブランチが進む")
+            for t in (a, b, d):
+                run_task(wt1, "claim", t)
+            r = run_task(wt1, "plan-check", a)
+            check("名指したファイルが変わっていれば着手で PLAN_STALE", r.stdout.strip() == f"PLAN_STALE\t{a}\tshared.txt",
+                  r.stdout + r.stderr)
+            claimed = state(a)
+
+            write(os.path.join(tmp, "bd.log.before-pull"),
+                  json.dumps({"cwd": wt1, "argv": [sys.executable, TASK_PY, "claim", c]}))
+            fake.edit(num(a))
+            fake.edit(num(b), labels=[l for l in fake.issues[num(b)]["labels"] if not l.startswith("status")])
+            fake.edit(num(c))
+            r = run_task(main_path, "sync")
+            marks = (beads.CLAIM_BRANCH_KEY, beads.CLAIM_HEAD_KEY, beads.PLAN_BASE_KEY, beads.PLAN_TIP_KEY)
+            check("取り込みが上書きしても assignee と metadata が戻る", r.returncode == 0
+                  and state(a)[:2] == ("in_progress", "wt1")
+                  and all(state(a)[2].get(k) == claimed[2].get(k) and claimed[2].get(k) for k in marks),
+                  r.stdout + r.stderr + repr(claimed) + repr(state(a)))
+            check("取り込みが status を open に戻しても着手を戻す", state(b)[:2] == ("in_progress", "wt1"),
+                  r.stdout + repr(state(b)))
+            check("取り込みの最中の着手も戻す", not os.path.exists(os.path.join(tmp, "bd.log.before-pull"))
+                  and state(c)[:2] == ("in_progress", "wt1") and bool(state(c)[2].get(beads.CLAIM_HEAD_KEY)),
+                  r.stdout + repr(state(c)))
+
+            r = run_task(wt1, "edit", a, "--section", "やること", "--body-file", "-",
+                         stdin="### 1. 直す\nx\n\n### 名指すファイル\n- `shared.txt`\n")
+            fake.edit(num(a))
+            run_task(main_path, "sync")
+            r2 = run_task(wt1, "plan-check", a)
+            check("PLAN_STALE で着手して作業の前に edit --section で書けば、取り込みのあとも PLAN_FIRST",
+                  r.returncode == 0 and r2.stdout.strip() == f"PLAN_FIRST\t{a}", r.stdout + r.stderr + r2.stdout)
+
+            write(os.path.join(wt1, "work.txt"), "作業\n")
+            r = run_task(wt1, "edit", b, "--section", "やること", "--after-work", "--body-file", "-",
+                         stdin="### 1. 書く\nx\n")
+            fake.edit(num(b))
+            run_task(main_path, "sync")
+            r2 = run_task(wt1, "plan-check", b)
+            check("作業のあとに書けば、取り込みのあとも PLAN_NOT_FIRST after-work", r.returncode == 0
+                  and r2.stdout.strip() == f"PLAN_NOT_FIRST\t{b}\tafter-work", r.stdout + r.stderr + r2.stdout)
+
+            write(os.path.join(tmp, "bd.log.fail-update"), "")
+            fake.edit(num(d))
+            r = run_task(main_path, "sync")
+            os.remove(os.path.join(tmp, "bd.log.fail-update"))
+            check("戻せなければ TRACKER FAILED（終了コード10）", r.returncode == 10
+                  and any(l.startswith("TRACKER\tFAILED\tgithub") and d in l for l in r.stdout.splitlines()),
+                  r.stdout + r.stderr)
+        finally:
+            fake.close()
+            del _local.env
+
+
 def test_tracker_jira() -> None:
     say("トラッカー jira（偽の bd jira sync。--pull だけ）")
     with tempfile.TemporaryDirectory() as tmp:
@@ -1568,6 +1654,7 @@ def main() -> None:
             test_triage_and_adopt,
             test_tracker_github_push_only,
             test_tracker_github_bidirectional,
+            test_tracker_github_keeps_claim_marks,
             test_tracker_jira,
             test_tracker_jira_rename,
             test_backup,

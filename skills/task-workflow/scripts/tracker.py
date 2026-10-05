@@ -49,6 +49,8 @@ PROJECT_KEY = "task-workflow.project"  # {"project": "<owner>/<番号>", "id", "
 ITEMS_KEY = "task-workflow.project-items"  # {Issue の URL: {"item": 項目 ID, "status": 最後に書いた名前}}
 SYNCED_KEY = "task-workflow.github-synced"  # {Issue 番号: その課題を最後に送った・取り込んだ時刻}
 SEEN_KEY = "task-workflow.github-seen"  # GitHub の一覧で見た最後の更新時刻
+# `bd github pull` の actor は `<作業ツリーの名前>` にこれを足したもの（取り込みが書いた更新を監査の出来事で見分ける）。
+PULL_ACTOR_SUFFIX = ":github-pull"
 
 # 取り込む範囲を、前回見た更新時刻よりこれだけさかのぼる（立てた直後の Issue は一覧にすぐ出ない）。
 SEEN_MARGIN = timedelta(hours=1)
@@ -208,12 +210,12 @@ class Session:
     # --- 取り込み ----------------------------------------------------------------
 
     def _pull(self, remote: dict[int, dict]) -> list[str]:
-        """番号を選んで取り込み、assignee を戻し、GitHub で閉じた・開き直した課題を片付ける。
+        """番号を選んで取り込み、着手の印を戻し、GitHub で閉じた・開き直した課題を片付ける。
 
         `bd github pull` は前回の同期より後に Beads で変えた課題を飛ばす（両側で変えたら Beads が勝つ）が、
         飛ばしたかを教えないので、課題ごとの同期の時刻より後に両側で更新されたものを `CONFLICT` にする。
         取り込みのあとは必ず送る（`bd` の前回の同期の時刻は取り込みでも進むので、送らずにもう一度
-        取り込むと GitHub の版が勝つ）。
+        取り込むと GitHub の版が勝つ）。着手の印を戻せなかった課題は、送り終えてから `_Failed` にする。
         """
         if not remote:
             return []
@@ -228,18 +230,24 @@ class Session:
                 and _after(remote[n].get("updated_at"), since + SYNC_SLACK)
             ):
                 lines.append(f"TRACKER\tCONFLICT\t{beads.to_task_id(local.bd_id)}")
-        self._bd_ok(["github", "pull", *(str(n) for n in sorted(remote))], "bd github pull")
+        pull_actor = f"{self._actor}{PULL_ACTOR_SUFFIX}"
+        pulled_at = _now()
+        self._bd_ok(["--actor", pull_actor, "github", "pull", *(str(n) for n in sorted(remote))], "bd github pull")
         new = _by_number(beads.list_issues(self.toplevel))
         fixed: list[str] = []
+        unrestored: list[str] = []
         for n in sorted(remote):
             issue, was = new.get(n), old.get(n)
             if issue is None:
                 continue
-            if was is not None and was.status == "in_progress" and was.assignee and issue.status == "in_progress" \
-                    and issue.assignee != was.assignee:
-                force = ["--force"] if issue.assignee else []  # GitHub の担当者で上書きされていたら戻す
-                beads.run_ok(self.toplevel, ["update", issue.bd_id, "--assignee", was.assignee, *force], self._actor)
-                fixed.append(issue.bd_id)
+            overwritten = beads.overwritten_by(self.toplevel, issue.bd_id, pull_actor, pulled_at)
+            restore = _claim_restore_args(overwritten, issue) if overwritten is not None else []
+            if restore:
+                r = beads.run(self.toplevel, ["update", issue.bd_id, *restore], self._actor)
+                if r.returncode == 0:
+                    fixed.append(issue.bd_id)
+                else:
+                    unrestored.append(f"{beads.to_task_id(issue.bd_id)}（{_tail(r)}）")
             was_closed = was is not None and was.status == "closed"
             if issue.status == "closed" and not was_closed and beads.ship_mark(issue) is None:
                 if beads.CANCELLED_LABEL not in issue.labels:
@@ -261,6 +269,9 @@ class Session:
         if fixed:
             self._bd_ok(["github", "push", *fixed], "bd github push")
         self._mark_synced([renamed.get(new[n].bd_id, new[n].bd_id) for n in remote if n in new])
+        if unrestored:
+            self._save()
+            raise _Failed("取り込みで消えた着手の印を戻せない: " + "、".join(unrestored))
         return lines + rename_lines
 
     def _rename(self, bd_ids: list[str]) -> tuple[dict[str, str], list[str]]:
@@ -609,6 +620,33 @@ def jira_rename(toplevel: str, bd_ids: list[str] | None = None) -> tuple[dict[st
 
 def _by_number(issues: list[beads.Issue]) -> dict[int, beads.Issue]:
     return {n: i for i in issues if (n := _ref_number(i.external_ref)) is not None}
+
+
+def _claim_restore_args(was: beads.Issue, issue: beads.Issue) -> list[str]:
+    """取り込みが `was` を `issue` へ上書きして消した着手の印（status・assignee と `beads.MARK_KEYS` の
+    metadata）を戻す `bd update` の引数。戻すものが無ければ空。
+
+    `was` は取り込みの前に読んだ一覧ではなく、取り込みが書く直前の版
+    （取り込みの最中に別の作業ツリーが着手すると、前に読んだ一覧にはその着手が無い）。
+    """
+    if issue.status == "closed":
+        return []
+    args: list[str] = []
+    if was.status == "in_progress" and was.assignee and issue.status in ("open", "in_progress") \
+            and (issue.status, issue.assignee) != ("in_progress", was.assignee):
+        args += ["--status", "in_progress", "--assignee", was.assignee]
+        if issue.assignee:
+            args.append("--force")
+    had, has = _marks(was), _marks(issue)
+    args += [x for k, v in had.items() if k not in has for x in ("--set-metadata", f"{k}={v}")]
+    return args
+
+
+def _marks(issue: beads.Issue) -> dict[str, str]:
+    metadata = issue.raw.get("metadata")
+    if not isinstance(metadata, dict):
+        return {}
+    return {k: str(metadata[k]) for k in beads.MARK_KEYS if metadata.get(k)}
 
 
 def _ref_number(external_ref: str | None) -> int | None:
