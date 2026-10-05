@@ -311,8 +311,10 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    | `REVIEW\topus`・`REVIEW\tcode\t<数>` | 下のレビュアーを起こす |
    | `SKIP\tdocs-only`・`NOTHING` | レビューせずに次へ |
 
-   レビュアーは Agent ツールで、`difficulty` と同じモデルの新しいサブエージェント（`subagent_type` は
-   手順5の共通の依頼文と同じ選び方）。渡すのは、作業ツリーのパス・差分を出すコマンド（`git diff HEAD` と、
+   レビュアーは Agent ツールで、`difficulty` と同じモデルの新しいサブエージェント（`subagent_type` は、
+   Agent ツールの説明に並ぶエージェント一覧に `reviewer`（読むだけの定義。claude-skills の
+   `agents/reviewer.md` を `install.sh` が `~/.claude/agents/` へ張ったもの。返却を拒む hook を持たない）が
+   あればそれ、無ければ手順5の共通の依頼文と同じ選び方）。渡すのは、作業ツリーのパス・差分を出すコマンド（`git diff HEAD` と、
    未追跡の新しいファイルを並べる `git ls-files --others --exclude-standard`）・`tw show T-xxx` の
    `## 完了条件` の本文・プロジェクトの規約のファイル（AGENTS.md・CLAUDE.md と、そこから引かれる
    コーディング規約）のパスだけ。委譲の依頼文・委譲先の報告や合図・`## やること`・`## 目的・背景` は渡さない。

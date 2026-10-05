@@ -7,7 +7,8 @@
 - 各 SKILL.md の frontmatter が読めて、`name` がディレクトリ名と一致すること
 - 各 `agents/*.md`（`install.sh` が `~/.claude/agents/` へ張るエージェント定義）の frontmatter が
   読めて、`name` がファイル名と一致し、`description` があること。`no-delegate` の frontmatter が
-  コミットを拒む hook（`tw commit-guard`）と返却を拒む hook（`tw handback-guard`）を持つこと
+  コミットを拒む hook（`tw commit-guard`）と返却を拒む hook（`tw handback-guard`）を持つこと。
+  `reviewer` が `Agent`・`Edit`・`Write`・`NotebookEdit` を持たず hooks も持たないこと
 - README の「由来」一覧が `skills/` と過不足なく一致すること（README が索引なので）
 - スキル同士の相互参照が実在するスキルを指していること
 - `docs/` に書くスキルが、索引 `docs/README.md` に1行足す指示を持っていること
@@ -38,6 +39,8 @@ NO_DELEGATE_HOOK_LINES = (
     "command: tw commit-guard 2>/dev/null || true",
     "command: tw handback-guard 2>/dev/null || true",
 )
+
+REVIEWER_DISALLOWED_TOOLS = ("Agent", "Edit", "Write", "NotebookEdit")
 
 problems: list[str] = []
 
@@ -113,6 +116,16 @@ def check_agent_frontmatter(names: list[str]) -> None:
         for hook_line in NO_DELEGATE_HOOK_LINES:
             if hook_line not in lines:
                 fail(f"agents/no-delegate.md: frontmatter に hook の行 {hook_line!r} が無い")
+    if "reviewer" in names:
+        text = read(os.path.join(AGENTS, "reviewer.md"))
+        head = text[: text.find("\n---\n", 3)]
+        fm = frontmatter(text) or {}
+        denied = {t.strip() for t in str(fm.get("disallowedTools", "")).split(",")}
+        for tool in REVIEWER_DISALLOWED_TOOLS:
+            if tool not in denied:
+                fail(f"agents/reviewer.md: disallowedTools に {tool} が無い")
+        if "hooks:" in head:
+            fail("agents/reviewer.md: frontmatter に hooks を持たせない")
 
 
 def check_readme_index(names: list[str]) -> None:
