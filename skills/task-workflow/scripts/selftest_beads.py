@@ -244,8 +244,12 @@ def test_new_status_and_numbering() -> None:
                      "--body-file", "-", stdin=BODY)
         check("空の ## やること は終了コード2", r.returncode == 2 and "--hold" in r.stderr, r.stdout + r.stderr)
         r = run_task(wt1, "new", "--summary", "x", "--difficulty", "haiku", "--loopable", "Y",
-                     "--body-file", "-", stdin=BODY.replace("## やること\n", "## やること\n1\n"))
+                     "--body-file", "-", stdin=BODY.replace("## やること\n", "## やること\n### 1. 書く\n"))
         check("名指すファイルの無い ## やること は終了コード2", r.returncode == 2, r.stdout + r.stderr)
+        r = run_task(wt1, "new", "--summary", "x", "--difficulty", "haiku", "--loopable", "Y",
+                     "--body-file", "-", stdin=PLANNED_BODY.replace("### 1. 書く", "### 2. 書く"))
+        check("段が `### 1.` から始まらない ## やること は終了コード2と理由", r.returncode == 2
+              and "### 1." in r.stderr, r.stdout + r.stderr)
         h_empty = new(wt1, "空の待ち", "--hold", body=BODY)
         check("--hold なら空の ## やること を受ける", h_empty.startswith("T-"), h_empty)
 
@@ -419,7 +423,7 @@ def test_handback_guard() -> None:
         check("着手の印が無い委譲は通す", handback_reason(tmp, wt1) is None)
         run_task(wt1, "claim", a)
         check("印があっても作業が無ければ通す", handback_reason(tmp, wt1) is None)
-        run_task(wt1, "edit", a, "--section", "やること", "--body-file", "-", stdin="1. 書く\n")
+        run_task(wt1, "edit", a, "--section", "やること", "--body-file", "-", stdin="### 1. 書く\n")
         check("計画だけの回は通す", handback_reason(tmp, wt1) is None)
         write(os.path.join(wt1, "work.txt"), "x\n")
         reason = handback_reason(tmp, wt1) or ""
@@ -441,7 +445,7 @@ def test_handback_guard() -> None:
 
 def test_plan_check() -> None:
     say("edit・plan-check: ## やること を作業より先に書いたかを知らせる")
-    planned = BODY.replace("## やること\n", "## やること\n1. 書く\n")
+    planned = BODY.replace("## やること\n", "## やること\n### 1. 書く\n")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp)
         a = new_unplanned(main_path, "先に書く")
@@ -512,7 +516,7 @@ def test_edit_frame_guard() -> None:
         issue = beads.show(main_path, beads.to_bd_id(a))
         check("--change-frame を付ければ書き込む", r.returncode == 0 and r.stdout.startswith(f"EDITED\t{a}")
               and issue is not None and "別のタスクの目的" in str(issue.raw.get("description")), r.stdout + r.stderr)
-        planned = other.replace("## やること\n", "## やること\n1. 書く\n")
+        planned = other.replace("## やること\n", "## やること\n### 1. 書く\n")
         r = run_task(main_path, "edit", a, "--body-file", "-", stdin=planned)
         check("## やること だけの書き換えは通る", r.returncode == 0 and r.stdout.startswith("EDITED\t"),
               r.stdout + r.stderr)
@@ -547,6 +551,9 @@ def test_edit_section() -> None:
         run_task(wt1, "claim", a)
         run_task(wt1, "claim", b)
         before = text(a)
+        r = run_task(wt1, "edit", a, "--section", "やること", "--body-file", "-", stdin="- x\n")
+        check("段の無い ## やること は終了コード2と理由で拒み、書き込まない", r.returncode == 2
+              and "### 1." in r.stderr and text(a) == before, r.stdout + r.stderr)
         r = run_task(wt1, "edit", a, "--section", "やること", "--body-file", "-", stdin="### 1. 書く\n\n- x\n")
         want = before.replace("## やること\n\n## 完了条件", "## やること\n\n### 1. 書く\n\n- x\n\n## 完了条件")
         check("節だけが置き換わり、ほかの節は1バイトも変わらない（文中の `## やること` は境目に数えない）",
@@ -570,11 +577,11 @@ def test_edit_section() -> None:
         check("--section だけで --body-file が無ければ拒む（終了コード2）", r.returncode == 2, r.stdout + r.stderr)
 
         write(os.path.join(wt1, "work.txt"), "x\n")
-        r = run_task(wt1, "edit", b, "--section", "やること", "--body-file", "-", stdin="- z\n")
+        r = run_task(wt1, "edit", b, "--section", "やること", "--body-file", "-", stdin="### 1. z\n")
         check("作業のあとの初回の記入は WORK_BEFORE_PLAN（終了コード4）で拒み、書き込まない", r.returncode == 4
-              and r.stdout.startswith(f"WORK_BEFORE_PLAN\t{b}\t") and "- z" not in text(b)
+              and r.stdout.startswith(f"WORK_BEFORE_PLAN\t{b}\t") and "### 1. z" not in text(b)
               and beads.PLAN_KEY not in metadata(b), r.stdout + r.stderr)
-        r = run_task(wt1, "edit", b, "--section", "やること", "--after-work", "--body-file", "-", stdin="- z\n")
+        r = run_task(wt1, "edit", b, "--section", "やること", "--after-work", "--body-file", "-", stdin="### 1. z\n")
         check("--after-work なら書き込み、metadata に after-work を残す", r.returncode == 0
               and r.stdout.splitlines()[:2] == [f"EDITED\t{b}", f"PLAN_AFTER_WORK\t{b}\t作業の後に書いた"]
               and metadata(b).get(beads.PLAN_KEY) == "after-work", r.stdout + r.stderr + str(metadata(b)))
@@ -650,7 +657,7 @@ def test_edit_deps() -> None:
 
 def test_plan_check_unrecorded() -> None:
     say("plan-check: edit が印を残さない書き方は PLAN_NOT_FIRST unrecorded")
-    planned = BODY.replace("## やること\n", "## やること\n1. 書く\n")
+    planned = BODY.replace("## やること\n", "## やること\n### 1. 書く\n")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp)
         d = new_unplanned(main_path, "claim の前に書く")
@@ -781,7 +788,7 @@ def test_verify_stamp() -> None:
 
 def test_verify_refuses_unplanned_work() -> None:
     say("verify: 着手中のタスクの ## やること が空のまま作業が始まっていたら検証を打たない")
-    planned = BODY.replace("## やること\n", "## やること\n1. 書く\n")
+    planned = BODY.replace("## やること\n", "## やること\n### 1. 書く\n")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp, verify="`echo verified`")
         a = new_unplanned(main_path, "関門")
@@ -818,11 +825,11 @@ def test_cycle_done_ship_and_dropped() -> None:
         r = run_task(wt1, "claim", a)
         check("既定の枝の設定なら feature/T-xxx を切る", r.stdout.strip().endswith(f"branch=feature/{a}"), r.stdout)
         shown = run_task(wt1, "show", a).stdout
-        body = shown.split("---\n", 2)[2].replace("## やること\n", "## やること\n\n1. 書く\n")
+        body = shown.split("---\n", 2)[2].replace("## やること\n", "## やること\n\n### 1. 書く\n")
         r = run_task(wt1, "edit", a, "--body-file", "-", stdin=body)
         check("edit が本文を受ける", r.returncode == 0 and r.stdout.startswith("EDITED"), r.stdout + r.stderr)
         issue = beads.show(main_path, beads.to_bd_id(a))
-        check("## やること は notes へ", issue is not None and issue.raw.get("notes") == "1. 書く", str(issue and issue.raw))
+        check("## やること は notes へ", issue is not None and issue.raw.get("notes") == "### 1. 書く", str(issue and issue.raw))
         shown = run_task(wt1, "show", a).stdout
         heads = [l for l in shown.split("\n") if l.startswith("## ")]
         check("show は枠の7節をこの順に出す", heads == list(taskfile.SECTION_HEADINGS), shown)
@@ -864,7 +871,7 @@ def test_cycle_done_ship_and_dropped() -> None:
         # retrospect の材料（Beads の comment と版）
         mat = subprocess.run([sys.executable, MATERIAL_PY, ".", a], cwd=main_path, capture_output=True, text=True, env=env())
         check("material.py は Beads の本文と版の差を出す", f"出典\tBeads {beads.to_bd_id(a)}" in mat.stdout
-              and "+1. 書く" in mat.stdout, mat.stdout + mat.stderr)
+              and "+### 1. 書く" in mat.stdout, mat.stdout + mat.stderr)
 
 
 def test_flow_records_and_metrics() -> None:
@@ -983,6 +990,10 @@ def test_triage_and_adopt() -> None:
         r = run_task(wt1, "adopt", raw, "--difficulty", "haiku", "--loopable", "N", "--body-file", "-", stdin=BODY)
         check("空の ## やること の adopt は終了コード2で、課題を変えない", r.returncode == 2
               and bd(main_path, "show", raw, "--json").stdout == before, r.stdout + r.stderr)
+        r = run_task(wt1, "adopt", raw, "--difficulty", "haiku", "--loopable", "N", "--body-file", "-",
+                     stdin=PLANNED_BODY.replace("### 1. 書く", "### 書く"))
+        check("段の無い ## やること の adopt は終了コード2と理由で、課題を変えない", r.returncode == 2
+              and "### 1." in r.stderr and bd(main_path, "show", raw, "--json").stdout == before, r.stdout + r.stderr)
         r = run_task(wt1, "adopt", raw, "--difficulty", "haiku", "--loopable", "N", "--body-file", "-", stdin=PLANNED_BODY)
         check("adopt が番号を振る", r.returncode == 0 and r.stdout.startswith(f"ADOPTED\t{raw}\tT-001"), r.stdout + r.stderr)
         adopted = beads.show(main_path, beads.to_bd_id("T-001"))

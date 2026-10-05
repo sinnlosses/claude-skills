@@ -843,7 +843,7 @@ def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
     body = task.body
     if args.body_file:
         body = _section_body(args, task.body, read_body(args.body_file))
-        error = taskfile.validate_body(body)
+        error = taskfile.validate_edited_body(task.body, body)
         if error is not None:
             print(f"usage: {error}", file=sys.stderr)
             raise SystemExit(2)
@@ -943,7 +943,7 @@ def cmd_plan_check(toplevel: str, task_id: str) -> None:
         raise SystemExit(3)
     plan_base = ledger.read_plan_base(root, task_id)
     stale = _registered_plan_changes(toplevel, plan_base, ledger.read_plan_tip(root, task_id), task.body)
-    _print_plan_check(task_id, taskfile.has_plan(task.body), ledger.read_plan_mark(root, task_id), plan_base, stale)
+    _print_plan_check(task_id, task.body, ledger.read_plan_mark(root, task_id), plan_base, stale)
 
 
 def _plan_state(toplevel: str, head: str | None, body_file: str, own_path: str | None) -> str:
@@ -976,9 +976,16 @@ def _porcelain_paths(out: str) -> list[str]:
 
 
 def _print_plan_check(
-    shown: str, has_plan: bool, mark: str | None, plan_base: str | None, stale: list[str] | None
+    shown: str, body: str, mark: str | None, plan_base: str | None, stale: list[str] | None
 ) -> None:
-    """`stale` は登録時の計画が名指すファイルのうち着手時までに変わったもの（`_registered_plan_changes`）。"""
+    """`stale` は登録時の計画が名指すファイルのうち着手時までに変わったもの（`_registered_plan_changes`）。
+
+    段（`taskfile.plan_steps`）の読めない計画は、印によらず書き直しの経路（`PLAN_NOT_FIRST`・`steps`）へ回す。
+    """
+    has_plan = taskfile.has_plan(body)
+    if has_plan and taskfile.plan_steps(body)[1] is not None:
+        print(f"PLAN_NOT_FIRST\t{shown}\tsteps")
+        return
     if has_plan and mark == PLAN_FIRST:
         print(f"PLAN_FIRST\t{shown}")
         return
@@ -1968,7 +1975,7 @@ def cmd_beads_edit(toplevel: str, args: argparse.Namespace) -> None:
             None,
         )
         body = _section_body(args, current, read_body(args.body_file))
-        error = taskfile.validate_body(body)
+        error = taskfile.validate_edited_body(current, body)
         if error is not None:
             print(f"usage: {error}", file=sys.stderr)
             raise SystemExit(2)
@@ -2040,12 +2047,10 @@ def cmd_beads_plan_check(toplevel: str, task_id: str) -> None:
         raise SystemExit(4)
     metadata = issue.raw.get("metadata")
     metadata = metadata if isinstance(metadata, dict) else {}
-    plan = str(issue.raw.get("notes") or "")
+    plan_body = f"{taskfile.PLAN_HEADING}\n{issue.raw.get('notes') or ''}\n"
     plan_base = metadata.get(beads.PLAN_BASE_KEY) or None
-    stale = _registered_plan_changes(
-        toplevel, plan_base, metadata.get(beads.PLAN_TIP_KEY) or None, f"{taskfile.PLAN_HEADING}\n{plan}\n"
-    )
-    _print_plan_check(shown, not taskfile.is_blank(plan), metadata.get(beads.PLAN_KEY) or None, plan_base, stale)
+    stale = _registered_plan_changes(toplevel, plan_base, metadata.get(beads.PLAN_TIP_KEY) or None, plan_body)
+    _print_plan_check(shown, plan_body, metadata.get(beads.PLAN_KEY) or None, plan_base, stale)
 
 
 def cmd_beads_adopt(toplevel: str, args: argparse.Namespace) -> None:

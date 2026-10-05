@@ -161,14 +161,50 @@ def read_task_file(path: str) -> tuple[Task | None, str | None]:
 
 
 def validate_new_body(body: str, hold: bool) -> str | None:
-    """`task new`・`task adopt` の本文検査。枠の検査に加え、`## やること` の中身と `### 名指すファイル` を
+    """`task new`・`task adopt` の本文検査。枠の検査に加え、`## やること` の中身・段・`### 名指すファイル` を
     求める（`### 作業先` があればその形も）。中身を空にできるのは `hold` のときだけ。問題が無ければ `None`。"""
     error = validate_body(body)
     if error is not None:
         return error
     if not has_plan(body):
         return None if hold else f"{PLAN_HEADING} に計画を書く（空にできるのは --hold だけ）"
-    return plan_files(body)[1] or plan_work_repo(body)[1]
+    return plan_steps(body)[1] or plan_files(body)[1] or plan_work_repo(body)[1]
+
+
+def validate_edited_body(old_body: str, new_body: str) -> str | None:
+    """`task edit` の本文検査。枠の検査に加え、`## やること` を変えて中身があるなら段の形を求める。"""
+    error = validate_body(new_body)
+    if error is not None or not has_plan(new_body) or not plan_changed(old_body, new_body):
+        return error
+    return plan_steps(new_body)[1]
+
+
+def plan_steps(body: str) -> tuple[tuple[str, ...], str | None]:
+    """`## やること` の段（`### n. 名前` の名前）を番号の順に。形が違えば `((), 理由)`。
+
+    段の番号は `### 1.` から1つずつ増え、段は1つ以上。`### 名指すファイル`・`### 作業先` は段に数えず、
+    ほかの `### ` 見出しは拒む。
+    """
+    lines = dict(_frame_sections(body)[1]).get(PLAN_HEADING, "").split("\n")
+    steps: list[str] = []
+    for line in lines:
+        if not line.startswith("### ") or line.rstrip() in (PLAN_FILES_HEADING, PLAN_WORK_REPO_HEADING):
+            continue
+        m = _PLAN_STEP_LINE.match(line.rstrip())
+        if m is None:
+            return (), (
+                f"{PLAN_HEADING} の `### ` 見出しは段（`### 1. 名前` から穴なく続く）・{PLAN_FILES_HEADING}・"
+                f"{PLAN_WORK_REPO_HEADING} だけ: {line.strip()}"
+            )
+        if int(m.group(1)) != len(steps) + 1:
+            return (), f"{PLAN_HEADING} の段の番号は `### 1.` から穴なく続ける（{len(steps) + 1} の位置に {m.group(1)} がある）"
+        steps.append(m.group(2))
+    if not steps:
+        return (), f"{PLAN_HEADING} に段（`### 1. 名前` から穴なく続く見出し）が1つも無い"
+    return tuple(steps), None
+
+
+_PLAN_STEP_LINE = re.compile(r"^### (\d+)\. (\S.*)$")
 
 
 def plan_work_repo(body: str) -> tuple[str | None, str | None]:

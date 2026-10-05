@@ -186,7 +186,7 @@ def test_taskfile_parse() -> None:
           taskfile.validate_new_body(BODY.replace("## 完了条件\nx\n", "## 完了条件\n"), hold=True) is not None)
     check("空の ## やること は拒む", taskfile.validate_new_body(BODY, hold=False) is not None)
     check("--hold なら空の ## やること を通す", taskfile.validate_new_body(BODY, hold=True) is None)
-    filled_plan = BODY.replace("## やること\n", "## やること\n1. 書く\n")
+    filled_plan = BODY.replace("## やること\n", "## やること\n### 1. 書く\n")
     check("名指すファイルの小見出しが無い計画は拒む（--hold でも）",
           taskfile.validate_new_body(filled_plan, hold=False) is not None
           and taskfile.validate_new_body(filled_plan, hold=True) is not None)
@@ -194,6 +194,22 @@ def test_taskfile_parse() -> None:
     named = BODY.replace("## やること\n", "## やること\n### 1. 書く\nx\n\n### 名指すファイル\n- `src/a.py`（直す）\n- `docs/`\n\n")
     check("名指すファイルつきの本文を通す（--hold でも）", taskfile.validate_new_body(named, hold=False) is None
           and taskfile.validate_new_body(named, hold=True) is None)
+    two_steps = named.replace("### 1. 書く\nx\n", "### 1. 書く\nx\n### 2. 試す\ny\n")
+    check("段を番号の順に読み、名指すファイル・作業先は段に数えない",
+          taskfile.plan_steps(two_steps) == (("書く", "試す"), None), repr(taskfile.plan_steps(two_steps)))
+    for label, bad in (
+        ("段が1つも無い", named.replace("### 1. 書く\n", "")),
+        ("`### 2.` から始まる", named.replace("### 1. 書く", "### 2. 書く")),
+        ("番号に穴がある", two_steps.replace("### 2. 試す", "### 3. 試す")),
+        ("番号の無い `### ` 見出しがある", named.replace("### 1. 書く", "### 書く")),
+    ):
+        check(f"{label} ## やること は登録の検査で拒む（--hold でも）",
+              taskfile.validate_new_body(bad, hold=False) is not None and taskfile.validate_new_body(bad, hold=True) is not None)
+    unnumbered = BODY.replace("## やること\n", "## やること\n1. 書く\n")
+    check("edit の検査は ## やること を変えたときだけ段を求める",
+          taskfile.validate_edited_body(BODY, unnumbered) is not None
+          and taskfile.validate_edited_body(BODY, filled_plan) is None
+          and taskfile.validate_edited_body(unnumbered, unnumbered.replace("## 注意\n", "## 注意\n- y\n")) is None)
     check("名指すファイルを読む（説明と次の行を除く）", taskfile.plan_files(named) == (("src/a.py", "docs/"), None),
           repr(taskfile.plan_files(named)))
     check("名指すファイルの形の違う行は拒む",
@@ -1004,7 +1020,7 @@ def test_handback_guard() -> None:
         check("着手の印が無い委譲は通す", run_handback_guard(tmp, wt1) is None)
         run_task(wt1, "claim", "T-100")
         check("印があっても作業が無ければ通す（前提が誤り・dropped）", run_handback_guard(tmp, wt1) is None)
-        r = run_task(wt1, "edit", "T-100", "--section", "やること", "--body-file", "-", stdin="1. 書く\n")
+        r = run_task(wt1, "edit", "T-100", "--section", "やること", "--body-file", "-", stdin="### 1. 書く\n")
         check("計画だけの回は通す（タスクのファイルの変更は作業に数えない）",
               r.returncode == 0 and run_handback_guard(tmp, wt1) is None, r.stdout + r.stderr)
 
@@ -1039,7 +1055,7 @@ def test_handback_guard() -> None:
         reason = _block_reason(run_handback_guard(tmp, wt2))
         check("claim のあとのコミットも作業に数え、計画も検証も無ければ両方の行を理由に書く",
               "PLAN_NOT_FIRST\tT-101\tmissing" in reason and "NOT_VERIFIED\tnone" in reason, reason)
-        r = run_task(wt2, "edit", "T-101", "--section", "やること", "--after-work", "--body-file", "-", stdin="1. 書く\n")
+        r = run_task(wt2, "edit", "T-101", "--section", "やること", "--after-work", "--body-file", "-", stdin="### 1. 書く\n")
         run_task(wt2, "verify")
         check("作業の後に書いた計画は検証が通っても block（PLAN_NOT_FIRST after-work）",
               "PLAN_NOT_FIRST\tT-101\tafter-work" in _block_reason(run_handback_guard(tmp, wt2)), r.stdout)
@@ -1057,7 +1073,7 @@ def test_handback_guard() -> None:
 
 def test_edit_and_plan_check() -> None:
     print("task.py edit・plan-check: ## やること を作業より先に書いたかを知らせる")
-    planned = BODY.replace("## やること\n", "## やること\n1. 書く\n")
+    planned = BODY.replace("## やること\n", "## やること\n### 1. 書く\n")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp)
         for tid in ("T-100", "T-101", "T-102", "T-103", "T-105"):
@@ -1109,10 +1125,14 @@ def test_edit_and_plan_check() -> None:
         run_task(wt1, "claim", "T-102")
         with open(task_file("T-102"), encoding="utf-8") as f:
             text = f.read()
-        write(task_file("T-102"), text.replace("## やること\n", "## やること\n1. 直に書く\n"))
+        write(task_file("T-102"), text.replace("## やること\n", "## やること\n### 1. 直に書く\n"))
         r = run_task(wt1, "plan-check", "T-102")
         check("edit を通さずに書くと PLAN_NOT_FIRST unrecorded", r.returncode == 0
               and r.stdout.strip() == "PLAN_NOT_FIRST\tT-102\tunrecorded", r.stdout + r.stderr)
+        write(task_file("T-102"), text.replace("## やること\n", "## やること\n1. 段の無い計画\n"))
+        r = run_task(wt1, "plan-check", "T-102")
+        check("段の読めない計画は PLAN_NOT_FIRST steps（書き直しの経路）", r.returncode == 0
+              and r.stdout.strip() == "PLAN_NOT_FIRST\tT-102\tsteps", r.stdout + r.stderr)
         reset("T-102")
 
         run_task(wt1, "claim", "T-105")
@@ -1175,6 +1195,10 @@ def test_edit_section() -> None:
         run_task(wt1, "claim", "T-110")
         run_task(wt1, "claim", "T-111")
         before = read("T-110")
+        for label, plan in (("段の無い", "- x\n"), ("`### 1.` から始まらない", "### 2. 書く\n")):
+            r = run_task(wt1, "edit", "T-110", "--section", "やること", "--body-file", "-", stdin=plan)
+            check(f"{label} ## やること は終了コード2と理由で拒み、書き込まない", r.returncode == 2
+                  and "### 1." in r.stderr and read("T-110") == before, r.stdout + r.stderr)
         r = run_task(wt1, "edit", "T-110", "--section", "やること", "--body-file", "-", stdin="### 1. 書く\n\n- x\n")
         after = read("T-110")
         want = before.replace("## やること\n\n## 完了条件", "## やること\n\n### 1. 書く\n\n- x\n\n## 完了条件")
@@ -1183,8 +1207,8 @@ def test_edit_section() -> None:
               r.stdout + r.stderr + after)
         r = run_task(wt1, "plan-check", "T-110")
         check("--section の記入も作業より先なら PLAN_FIRST", r.stdout.strip() == "PLAN_FIRST\tT-110", r.stdout + r.stderr)
-        r = run_task(wt1, "edit", "T-110", "--section", "## やること", "--body-file", "-", stdin="- y\n")
-        check("節名は `## ` 付きでも受け、2回目の書き直しもできる", r.returncode == 0 and "- y\n\n## 完了条件" in read("T-110"),
+        r = run_task(wt1, "edit", "T-110", "--section", "## やること", "--body-file", "-", stdin="### 1. y\n")
+        check("節名は `## ` 付きでも受け、2回目の書き直しもできる", r.returncode == 0 and "### 1. y\n\n## 完了条件" in read("T-110"),
               r.stdout + r.stderr)
         mid = read("T-110")
         for name in ("ほげ", "結果"):
@@ -1203,10 +1227,10 @@ def test_edit_section() -> None:
         check("--section だけで --body-file が無ければ拒む（終了コード2）", r.returncode == 2, r.stdout + r.stderr)
 
         write(os.path.join(wt1, "work.txt"), "x\n")
-        r = run_task(wt1, "edit", "T-111", "--section", "やること", "--body-file", "-", stdin="- z\n")
+        r = run_task(wt1, "edit", "T-111", "--section", "やること", "--body-file", "-", stdin="### 1. z\n")
         check("作業のあとの初回の記入は WORK_BEFORE_PLAN（終了コード4）で拒み、書き込まない", r.returncode == 4
-              and r.stdout.startswith("WORK_BEFORE_PLAN\tT-111\t") and "- z" not in read("T-111"), r.stdout + r.stderr)
-        r = run_task(wt1, "edit", "T-111", "--section", "やること", "--after-work", "--body-file", "-", stdin="- z\n")
+              and r.stdout.startswith("WORK_BEFORE_PLAN\tT-111\t") and "### 1. z" not in read("T-111"), r.stdout + r.stderr)
+        r = run_task(wt1, "edit", "T-111", "--section", "やること", "--after-work", "--body-file", "-", stdin="### 1. z\n")
         r2 = run_task(wt1, "plan-check", "T-111")
         check("--after-work なら書き込み、印は after-work", r.returncode == 0
               and r.stdout.splitlines()[:2] == ["EDITED\tT-111", "PLAN_AFTER_WORK\tT-111\t作業の後に書いた"]
@@ -1338,6 +1362,9 @@ def test_registered_plan() -> None:
         r = register("空の計画", BODY)
         check("空の ## やること は終了コード2で、ファイルを作らない", r.returncode == 2 and "--hold" in r.stderr
               and not os.path.isdir(os.path.join(main_path, "develop", "task")), r.stdout + r.stderr)
+        r = register("段に穴", plan_body("shared.txt").replace("### 1. 書く", "### 2. 書く"))
+        check("段が `### 1.` から穴なく続かない ## やること は終了コード2と理由で、ファイルを作らない", r.returncode == 2
+              and "### 1." in r.stderr and not os.path.isdir(os.path.join(main_path, "develop", "task")), r.stdout + r.stderr)
         r = register("名指すファイルが作業先に無い", plan_body("shared.txt", work_repo=work))
         check("作業先の木に無いパスを名指すと終了コード2", r.returncode == 2 and "shared.txt" in r.stderr
               and work in r.stderr, r.stdout + r.stderr)
@@ -1442,7 +1469,7 @@ def test_registered_plan() -> None:
 
 def test_verify_refuses_unplanned_work() -> None:
     print("task.py verify: 着手中のタスクの ## やること が空のまま作業が始まっていたら検証を打たない")
-    planned = BODY.replace("## やること\n", "## やること\n1. 書く\n")
+    planned = BODY.replace("## やること\n", "## やること\n### 1. 書く\n")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp, branch="切らない", verify="`echo verified`")
         for tid in ("T-110", "T-111"):
@@ -1602,7 +1629,7 @@ def _fold_repo(tmp: str, preship: str | None = None) -> tuple[str, str]:
     main_path, wt1, _wt2 = make_repo(tmp, branch="切らない", verify="`sh ../verify-count.sh`", preship=preship)
     write(os.path.join(tmp, "verify-count.sh"), COUNTING_VERIFY_SCRIPT)
     write(os.path.join(main_path, "notes.txt"), NOTES)
-    planned = BODY.replace("## やること\n", "## やること\n1. 書く\n")
+    planned = BODY.replace("## やること\n", "## やること\n### 1. 書く\n")
     commit_task(main_path, taskfile.Task("T-120", "取り込み", "todo", "sonnet", "Y", (), planned))
     r = run_task(wt1, "claim", "T-120")
     if not r.stdout.startswith("CLAIMED\t"):
