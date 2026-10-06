@@ -640,8 +640,11 @@ Project・Status 欄・選択肢の ID は `bd kv` の `task-workflow.project` �
   `open` に戻す。`tw` は取り込みを actor `<作業ツリーの名前>:github-pull` で打ち、その更新の書く直前の版
   （`bd history --events` の `old_value`。取り込みの最中に別の作業ツリーが着手しても、その着手が入る）
   から、消えた assignee と metadata の印（`task_*`）を `bd update` で戻す。`open` に戻った着手は、
-  着手の送りが GitHub に届く前の版で上書きされたとき（課題を最後に送った時刻が着手より前）だけ
-  `in_progress` に戻し、送ったあとで label が外れた・GitHub で担当者が付いたものは手放しとして戻さない。
+  着手の送りが GitHub に届く前の版で上書きされたときだけ `in_progress` に戻し、送ったあとで label が
+  外れた・GitHub で担当者が付いたものは手放しとして戻さない。届いたかは課題ごとの送りの印
+  （`bd kv` の `task-workflow.github-pushed.<番号>`。送りが届くたびに、送る直前に読んだ着手の時刻
+  `started_at` を書く。着手中でなければ空）で見て、印が今の着手の時刻と（秒で）違えば届いていない。
+  印の無い課題（印を書く前に送ったもの）だけは、`task-workflow.github-synced` の時刻が着手より前なら届いていないとする。
   戻せなければ `TRACKER\tFAILED` の行を足し、ほかの行（`CLOSED` など）と送りは続ける。
   **取り込みはすべてこの包みを通す**
 - **タスクの操作**（`claim`・`release`・`edit`・`adopt`・`done`）: 触る課題だけを
@@ -652,12 +655,15 @@ Project・Status 欄・選択肢の ID は `bd kv` の `task-workflow.project` �
   変えた課題を上書きしないので、**両側で変えたら Beads が勝ち**、GitHub の版は Issue の編集履歴に残る。
   `tw` はその課題を `TRACKER\tCONFLICT\tGH-<n>` の行で知らせる（人が履歴から拾い直す）。`bd` は飛ばしたことを
   教えないので、`tw` が課題ごとに最後に送った・取り込んだ時刻（`bd kv` の `task-workflow.github-synced`）を
-  控え、そのあとに Beads と GitHub の両方で更新された課題を衝突とする
+  控え、そのあとに Beads と GitHub の両方で更新された課題を衝突とする（書く直前に今の値を読み、触った番号だけを
+  書き換える）
 - **GitHub で閉じる**: 取り込むと Beads でも閉じ、依存が解ける。`ship:*` の無い課題が GitHub で
   閉じられたら見送りとして label `cancelled` を足し、`TRACKER\tCLOSED\tGH-<n>` の行を出す（着手中なら
   人に預ける）。GitHub で開き直したら `cancelled` と `ship:*` を外す
-- **`tw sync` の順**: 控える → 取り込む → 付け替える・着手の印を戻す（直したものを送る）→
-  push（`bd github sync --push-only`）→ 登録で落ちた仮の ID を付け替える → Status 欄を書く
+- **`tw sync` の順**: 控える → 取り込む → 送りの印を読んで着手の印を戻し、付け替える（直したものを送る）→
+  push（`bd github sync --push-only`）→ 登録で落ちた仮の ID を付け替える → 送りの印と違う着手中の課題を
+  1件ずつ送り直す（`--push-only` はどれを送ったかを教えない）→ Status 欄を書く。1件ずつの送りは、届くたびに
+  送りの印を書く
 
 **Jira の方式との違い**:
 
