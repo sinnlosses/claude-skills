@@ -1,9 +1,9 @@
-"""共有の `.git` の中に置く台帳（着手の印・採番の錠・最後の番号・登録時の計画の控え）。
+"""共有の `.git` の中に置く台帳（着手の印・採番の錠・最後の番号・登録時の計画の控え）と、
+作業ツリーの根の `.tw/` に置く作業ツリーごとの控え（検証・中断・段の鍵、着手の控え、ログ）。
 
 正典は `docs/task-workflow-redesign.md` の4.2〜4.3。台帳はクローンに1つ
-（`git rev-parse --path-format=absolute --git-common-dir` の下）で、コミットしないので
-主ブランチを動かさない。取り合いの判定は `mkdir` の成否だけで決める（不可分な操作なので、
-2プロセスが同時に呼んでも一方だけが成功する）。
+（`git rev-parse --path-format=absolute --git-common-dir` の下）で、どちらもコミットしないので主ブランチを動かさない。取り合いの判定は `mkdir` の成否だけで決める
+（不可分な操作なので、2プロセスが同時に呼んでも一方だけが成功する）。
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ def git_common_dir(cwd: str | None = None) -> str:
 
 def git_dir(cwd: str | None = None) -> str:
     """この作業ツリー**だけ**の git dir（共有の `git_common_dir` とは違う。連結した
-    作業ツリーでは `<共通の git dir>/worktrees/<名前>`）。`verify_owed` の置き場に使う。"""
+    作業ツリーでは `<共通の git dir>/worktrees/<名前>`）。`.tw/` が無い作業ツリーの控えの古い置き場。"""
     return _git(["rev-parse", "--path-format=absolute", "--git-dir"], cwd)
 
 
@@ -411,20 +411,79 @@ def write_last_id(root: str, number: int) -> None:
     os.replace(tmp, os.path.join(root, LAST_ID_FILE_NAME))
 
 
-# --- verify-owed（`VERIFY_FAILED` のあと打ち直すまでの検証の借り）----------
+# --- 作業ツリーごとの控えの置き場（作業ツリーの根の `.tw/`）----------------
 
+WORKTREE_STATE_DIR_NAME = ".tw"
 VERIFY_OWED_FILE_NAME = "task-ship-verify-owed"
+VERIFY_STAMP_FILE_NAME = "task-verify-stamp"
+VERIFY_LOG_FILE_NAME = "task-verify.log"
+SHIP_VERIFY_LOG_FILE_NAME = "task-ship-verify.log"
+PAUSE_STAMP_FILE_NAME = "task-pause-stamp"
+STEP_STAMP_FILE_NAME = "task-step-stamp"
+OPEN_CLAIMS_DIR_NAME = "task-open-claims"
+# `.tw/` を作るときに古い置き場（`git_dir`）から写すもの。
+_CARRIED_OVER = (
+    VERIFY_OWED_FILE_NAME,
+    VERIFY_STAMP_FILE_NAME,
+    PAUSE_STAMP_FILE_NAME,
+    STEP_STAMP_FILE_NAME,
+    OPEN_CLAIMS_DIR_NAME,
+)
 
 
-def _verify_owed_path(cwd: str | None = None) -> str:
-    """**作業ツリー固有**の git dir に置く（`claim`／`lock` の共有台帳とは別）。
-    検証を跨いだ枝を抱えているのはこの作業ツリーだけなので、共有すると
-    無関係な作業ツリーの `ship` まで検証を強制してしまう。"""
-    return os.path.join(git_dir(cwd), VERIFY_OWED_FILE_NAME)
+def worktree_state_dir(cwd: str | None = None) -> str:
+    """書く・消す側の置き場。`.tw/` が無ければ、中身が `*` の `.gitignore` と古い置き場の控えの写しを
+    一時ディレクトリに揃えてから `.tw` へ `rename` し、写した古い控えを消す（消せなければ残す）。"""
+    toplevel = git_toplevel(cwd)
+    target = os.path.join(toplevel, WORKTREE_STATE_DIR_NAME)
+    if os.path.isdir(target):
+        return target
+    old = git_dir(toplevel)
+    tmp = tempfile.mkdtemp(prefix=WORKTREE_STATE_DIR_NAME + "-", dir=toplevel)
+    with open(os.path.join(tmp, ".gitignore"), "w", encoding="utf-8") as f:
+        f.write("*\n")
+    carried: list[str] = []
+    for name in _CARRIED_OVER:
+        src = os.path.join(old, name)
+        if os.path.isdir(src):
+            shutil.copytree(src, os.path.join(tmp, name))
+        elif os.path.isfile(src):
+            shutil.copy2(src, os.path.join(tmp, name))
+        else:
+            continue
+        carried.append(src)
+    try:
+        os.rename(tmp, target)
+    except OSError:
+        shutil.rmtree(tmp, ignore_errors=True)
+        if not os.path.isdir(target):
+            raise
+        return target
+    for src in carried:
+        try:
+            if os.path.isdir(src):
+                shutil.rmtree(src)
+            else:
+                os.remove(src)
+        except OSError:
+            pass
+    return target
+
+
+def _worktree_state_read_dir(cwd: str | None = None) -> str:
+    """読む側の置き場。`.tw/` が無ければ古い置き場（`git_dir`）。"""
+    target = os.path.join(git_toplevel(cwd), WORKTREE_STATE_DIR_NAME)
+    return target if os.path.isdir(target) else git_dir(cwd)
+
+
+# --- verify-owed（`VERIFY_FAILED` のあと打ち直すまでの検証の借り）----------
 
 
 def mark_verify_owed(verify_command: str, cwd: str | None = None) -> None:
-    path = _verify_owed_path(cwd)
+    """**作業ツリーごと**に置く（`claim`／`lock` の共有台帳とは別）。
+    検証を跨いだ枝を抱えているのはこの作業ツリーだけなので、共有すると
+    無関係な作業ツリーの `ship` まで検証を強制してしまう。"""
+    path = os.path.join(worktree_state_dir(cwd), VERIFY_OWED_FILE_NAME)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(verify_command + "\n")
@@ -432,22 +491,16 @@ def mark_verify_owed(verify_command: str, cwd: str | None = None) -> None:
 
 
 def is_verify_owed(cwd: str | None = None) -> bool:
-    return os.path.exists(_verify_owed_path(cwd))
+    return os.path.exists(os.path.join(_worktree_state_read_dir(cwd), VERIFY_OWED_FILE_NAME))
 
 
 def clear_verify_owed(cwd: str | None = None) -> None:
-    path = _verify_owed_path(cwd)
+    path = os.path.join(worktree_state_dir(cwd), VERIFY_OWED_FILE_NAME)
     if os.path.exists(path):
         os.remove(path)
 
 
 # --- verify-stamp（検証コマンドが通った作業ツリーの中身の控え）------------
-
-VERIFY_STAMP_FILE_NAME = "task-verify-stamp"
-VERIFY_LOG_FILE_NAME = "task-verify.log"
-SHIP_VERIFY_LOG_FILE_NAME = "task-ship-verify.log"
-PAUSE_STAMP_FILE_NAME = "task-pause-stamp"
-STEP_STAMP_FILE_NAME = "task-step-stamp"
 
 
 @dataclass(frozen=True)
@@ -485,34 +538,34 @@ def worktree_tree(toplevel: str) -> str:
 
 
 def verify_log_path(cwd: str | None = None) -> str:
-    return os.path.join(git_dir(cwd), VERIFY_LOG_FILE_NAME)
+    return os.path.join(worktree_state_dir(cwd), VERIFY_LOG_FILE_NAME)
 
 
 def ship_verify_log_path(cwd: str | None = None) -> str:
-    return os.path.join(git_dir(cwd), SHIP_VERIFY_LOG_FILE_NAME)
+    return os.path.join(worktree_state_dir(cwd), SHIP_VERIFY_LOG_FILE_NAME)
 
 
 def write_verify_stamp(key: ContentKey, cwd: str | None = None) -> None:
-    _write_key(os.path.join(git_dir(cwd), VERIFY_STAMP_FILE_NAME), key)
+    _write_key(os.path.join(worktree_state_dir(cwd), VERIFY_STAMP_FILE_NAME), key)
 
 
 def read_verify_stamp(cwd: str | None = None) -> ContentKey | None:
-    return _read_key(os.path.join(git_dir(cwd), VERIFY_STAMP_FILE_NAME))
+    return _read_key(os.path.join(_worktree_state_read_dir(cwd), VERIFY_STAMP_FILE_NAME))
 
 
 def clear_verify_stamp(cwd: str | None = None) -> None:
-    path = os.path.join(git_dir(cwd), VERIFY_STAMP_FILE_NAME)
+    path = os.path.join(worktree_state_dir(cwd), VERIFY_STAMP_FILE_NAME)
     if os.path.exists(path):
         os.remove(path)
 
 
 def write_pause_stamp(key: ContentKey, cwd: str | None = None) -> None:
     """`tw pause` を打った時点の中身の鍵。"""
-    _write_key(os.path.join(git_dir(cwd), PAUSE_STAMP_FILE_NAME), key)
+    _write_key(os.path.join(worktree_state_dir(cwd), PAUSE_STAMP_FILE_NAME), key)
 
 
 def read_pause_stamp(cwd: str | None = None) -> ContentKey | None:
-    return _read_key(os.path.join(git_dir(cwd), PAUSE_STAMP_FILE_NAME))
+    return _read_key(os.path.join(_worktree_state_read_dir(cwd), PAUSE_STAMP_FILE_NAME))
 
 
 @dataclass(frozen=True)
@@ -524,11 +577,13 @@ class StepStamp:
 
 def write_step_stamp(stamp: StepStamp, cwd: str | None = None) -> None:
     """`tw step` を打った時点の中身の鍵と、済ませた段。"""
-    _write_key(os.path.join(git_dir(cwd), STEP_STAMP_FILE_NAME), stamp.key, (stamp.task_id, str(stamp.step)))
+    _write_key(
+        os.path.join(worktree_state_dir(cwd), STEP_STAMP_FILE_NAME), stamp.key, (stamp.task_id, str(stamp.step))
+    )
 
 
 def read_step_stamp(cwd: str | None = None) -> StepStamp | None:
-    path = os.path.join(git_dir(cwd), STEP_STAMP_FILE_NAME)
+    path = os.path.join(_worktree_state_read_dir(cwd), STEP_STAMP_FILE_NAME)
     key = _read_key(path)
     if key is None:
         return None
@@ -586,29 +641,23 @@ def record_event(
 
 # --- open-claim（`claim` から `done` までの作業ツリー固有の控え）------------
 
-OPEN_CLAIMS_DIR_NAME = "task-open-claims"
-
-
-def _open_claims_dir(cwd: str | None = None) -> str:
-    """**作業ツリー固有**の git dir に置く（共有の台帳に置くと、別の作業ツリーのコミットまで拒む）。"""
-    return os.path.join(git_dir(cwd), OPEN_CLAIMS_DIR_NAME)
-
 
 def mark_open_claim(task_id: str, cwd: str | None = None) -> None:
-    d = _open_claims_dir(cwd)
+    """**作業ツリーごと**に置く（共有の台帳に置くと、別の作業ツリーのコミットまで拒む）。"""
+    d = os.path.join(worktree_state_dir(cwd), OPEN_CLAIMS_DIR_NAME)
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, task_id), "w", encoding="utf-8"):
         pass
 
 
 def clear_open_claim(task_id: str, cwd: str | None = None) -> None:
-    path = os.path.join(_open_claims_dir(cwd), task_id)
+    path = os.path.join(worktree_state_dir(cwd), OPEN_CLAIMS_DIR_NAME, task_id)
     if os.path.exists(path):
         os.remove(path)
 
 
 def open_claims(cwd: str | None = None) -> list[str]:
-    d = _open_claims_dir(cwd)
+    d = os.path.join(_worktree_state_read_dir(cwd), OPEN_CLAIMS_DIR_NAME)
     if not os.path.isdir(d):
         return []
     return sorted(os.listdir(d))

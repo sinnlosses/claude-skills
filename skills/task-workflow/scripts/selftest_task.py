@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1156,6 +1157,55 @@ def test_handback_guard_step() -> None:
         r = run_task(wt2, "step", "T-101", "1")
         check("段の印があっても計画を作業の後に書いたなら block（PLAN_NOT_FIRST after-work）", r.returncode == 0
               and "PLAN_NOT_FIRST\tT-101\tafter-work" in _block_reason(run_handback_guard(tmp, wt2)), r.stdout + r.stderr)
+
+
+def test_worktree_state_dir() -> None:
+    print("ledger.py .tw/: 作業ツリーごとの控えとログを作業ツリーの根に置き、古い置き場の控えも読む")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp, verify="`true`")
+        commit_task(main_path, taskfile.Task("T-100", "新しい置き場", "todo", "sonnet", "Y", (), BODY))
+        commit_task(main_path, taskfile.Task("T-101", "古い置き場", "todo", "sonnet", "Y", (), BODY))
+
+        tw1 = os.path.join(wt1, ".tw")
+        run_task(wt1, "claim", "T-100")
+        with open(os.path.join(tw1, ".gitignore"), encoding="utf-8") as f:
+            ignore = f.read()
+        check("claim が .tw/task-open-claims/ に控えを置き、.tw/.gitignore は * の1行",
+              os.path.isfile(os.path.join(tw1, "task-open-claims", "T-100")) and ignore == "*\n"
+              and not os.path.exists(os.path.join(ledger.git_dir(wt1), "task-open-claims")), ignore)
+        run_task(wt1, "edit", "T-100", "--section", "やること", "--body-file", "-", stdin="### 1. 書く\n")
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        git(wt1, "add", "-A")
+        git(wt1, "commit", "-q", "-m", "作業")
+        r = run_task(wt1, "verify")
+        check("verify の控えとログが .tw/ にあり、git status に .tw/ が出ない",
+              r.returncode == 0 and os.path.isfile(os.path.join(tw1, "task-verify-stamp"))
+              and os.path.isfile(os.path.join(tw1, "task-verify.log"))
+              and git(wt1, "status", "--porcelain").stdout == "", r.stdout + git(wt1, "status", "--porcelain").stdout)
+
+        run_task(wt2, "claim", "T-101")
+        run_task(wt2, "edit", "T-101", "--section", "やること", "--body-file", "-", stdin="### 1. 書く\n")
+        write(os.path.join(wt2, "work.txt"), "x\n")
+        run_task(wt2, "verify")
+        tw2 = os.path.join(wt2, ".tw")
+        old = ledger.git_dir(wt2)
+        shutil.copy2(os.path.join(tw2, "task-verify-stamp"), os.path.join(old, "task-verify-stamp"))
+        shutil.copytree(os.path.join(tw2, "task-open-claims"), os.path.join(old, "task-open-claims"))
+        shutil.rmtree(tw2)
+        r = run_task(wt2, "verify-check")
+        check(".tw/ が無ければ古い置き場の控えを verify-check が読む", r.stdout.startswith("VERIFIED_SAME\t"), r.stdout)
+        check("古い置き場の控えのまま、検証した中身なら handback-guard は通す", run_handback_guard(tmp, wt2) is None)
+        write(os.path.join(wt2, "work.txt"), "y\n")
+        check("古い置き場の着手の控えを handback-guard が読み、検証と違う中身なら block",
+              "NOT_VERIFIED\tcontent" in _block_reason(run_handback_guard(tmp, wt2)))
+        write(os.path.join(wt2, "work.txt"), "x\n")
+        r = run_task(wt2, "pause")
+        check("初めて書くときに古い置き場の控えを .tw/ へ写して古いほうを消す",
+              r.returncode == 0 and os.path.isfile(os.path.join(tw2, "task-verify-stamp"))
+              and os.path.isfile(os.path.join(tw2, "task-open-claims", "T-101"))
+              and not os.path.exists(os.path.join(old, "task-verify-stamp"))
+              and not os.path.exists(os.path.join(old, "task-open-claims"))
+              and run_task(wt2, "verify-check").stdout.startswith("VERIFIED_SAME\t"), r.stdout + r.stderr)
 
 
 # --- task.py: edit・plan-check ----------------------------------------------
@@ -2723,6 +2773,7 @@ def main() -> None:
         test_agent_scoped_guard,
         test_handback_guard,
         test_handback_guard_step,
+        test_worktree_state_dir,
         test_edit_and_plan_check,
         test_edit_section,
         test_edit_deps,
