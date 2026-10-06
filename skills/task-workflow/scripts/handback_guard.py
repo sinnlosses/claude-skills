@@ -11,16 +11,20 @@ from __future__ import annotations
 import json
 from typing import IO, Callable
 
+import agent_scope
+
 HANDBACK_TOOL = "SubagentHandback"
 STOP_EVENTS = ("SubagentStop", "Stop")
 
 
-def run(stdin: IO[str], stdout: IO[str], refusal: Callable[[str], str | None]) -> None:
+def run(
+    stdin: IO[str], stdout: IO[str], refusal: Callable[[str], str | None], agent_scoped: bool = False
+) -> None:
     try:
         payload = json.loads(stdin.read())
     except ValueError:
         return
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or not agent_scope.applies(payload, agent_scoped):
         return
     out = decide(payload, refusal)
     if out is not None:

@@ -12,6 +12,7 @@ import os
 import shlex
 from typing import IO
 
+import agent_scope
 import ledger
 
 COMMIT_SUBCOMMANDS = ("commit", "merge", "pull", "cherry-pick", "revert", "am", "rebase")
@@ -20,12 +21,12 @@ _PUNCTUATION = ";&|()\n"
 _GIT_OPTIONS_WITH_VALUE = ("-c", "--git-dir", "--work-tree", "--namespace")
 
 
-def run(stdin: IO[str], stdout: IO[str]) -> None:
+def run(stdin: IO[str], stdout: IO[str], agent_scoped: bool = False) -> None:
     try:
         payload = json.loads(stdin.read())
     except ValueError:
         return
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or not agent_scope.applies(payload, agent_scoped):
         return
     reason = decide(payload)
     if reason is None:

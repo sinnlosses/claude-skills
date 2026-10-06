@@ -5,7 +5,8 @@
 
 正典は `docs/task-workflow-redesign.md`（5章が `task` コマンド、4章が状態と台帳、
 3章がタスクファイル、6章が送り出し、5.9・10章が `migrate`）。`install.sh` が PATH 上に張る
-`tw` から呼ぶ。スキル側の呼び方の正典は task-workflow の WORKFLOW.md「`tw` コマンドの参照」。
+`tw` と、plugin の `bin/tw` から呼ぶ。`commit-guard`・`handback-guard` の `--agent-scoped` は plugin の
+`hooks/hooks.json` が付け、`agent_type` の末尾が `no-delegate` のときだけ関門を掛ける。スキル側の呼び方の正典は task-workflow の WORKFLOW.md「`tw` コマンドの参照」。
 
 出力は常に stdout（先頭語で種類を判定する TSV）、stderr は使い方の誤りだけ、
 終了コードは5.2の表のとおり。データの不備で traceback を出さない
@@ -2248,12 +2249,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("verify-check")
     p_metrics = sub.add_parser("metrics")
     p_metrics.add_argument("--days", type=int, default=metrics.DAYS_DEFAULT)
-    sub.add_parser("commit-guard")
+    sub.add_parser("commit-guard").add_argument("--agent-scoped", dest="agent_scoped", action="store_true")
     sub.add_parser("pause")
     p_step = sub.add_parser("step")
     p_step.add_argument("task_id")
     p_step.add_argument("step")
-    sub.add_parser("handback-guard")
+    sub.add_parser("handback-guard").add_argument("--agent-scoped", dest="agent_scoped", action="store_true")
 
     # ファイル方式は --body-file だけ（ほかはタスクファイルを直に直す）。
     p_edit = sub.add_parser("edit")
@@ -2294,10 +2295,10 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
 
     if args.command == "commit-guard":
-        commit_guard.run(sys.stdin, sys.stdout)
+        commit_guard.run(sys.stdin, sys.stdout, args.agent_scoped)
         return
     if args.command == "handback-guard":
-        handback_guard.run(sys.stdin, sys.stdout, _handback_refusal)
+        handback_guard.run(sys.stdin, sys.stdout, _handback_refusal, args.agent_scoped)
         return
 
     try:

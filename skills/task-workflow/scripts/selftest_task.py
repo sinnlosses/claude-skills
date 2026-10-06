@@ -963,6 +963,54 @@ def test_commit_guard() -> None:
         check("release のあとは通る", run_guard(tmp, wt2, "git commit -m x") is None)
 
 
+HOOKS_JSON = os.path.join(HERE, "..", "..", "..", "hooks", "hooks.json")
+
+
+def _plugin_hook_commands() -> list[str]:
+    with open(HOOKS_JSON, encoding="utf-8") as f:
+        hooks = json.load(f)["hooks"]
+    return [h["command"] for groups in hooks.values() for group in groups for h in group["hooks"]]
+
+
+def test_agent_scoped_guard() -> None:
+    print("task.py commit-guard・handback-guard --agent-scoped: no-delegate のときだけ関門を掛ける")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp, verify="`true`")
+        commit_task(main_path, taskfile.Task("T-100", "拒む", "todo", "sonnet", "Y", (), BODY))
+        run_task(wt1, "claim", "T-100")
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        commit = {"tool_name": "Bash", "tool_input": {"command": "git commit -m x"}, "cwd": wt1}
+        stop = {"hook_event_name": "SubagentStop", "cwd": wt1}
+        for subcommand, fields in (("commit-guard", commit), ("handback-guard", stop)):
+            for flags, agent_type, refused in (
+                ((), None, True),
+                ((), "general-purpose", True),
+                (("--agent-scoped",), None, False),
+                (("--agent-scoped",), "general-purpose", False),
+                (("--agent-scoped",), "no-delegate", True),
+                (("--agent-scoped",), "sinnlos-skills:no-delegate", True),
+            ):
+                payload = {**fields, **({} if agent_type is None else {"agent_type": agent_type})}
+                r = run_task(tmp, subcommand, *flags, stdin=json.dumps(payload))
+                check(f"{subcommand} {' '.join(flags)} agent_type={agent_type} は{'拒む' if refused else '通す'}",
+                      r.returncode == 0 and (r.stdout != "") == refused, r.stdout + r.stderr)
+
+        hooks = _plugin_hook_commands()
+        check("hooks/hooks.json は --agent-scoped 付きの tw の hook を3つ持つ",
+              len(hooks) == 3 and all(" --agent-scoped " in h and h.startswith("tw ") for h in hooks), str(hooks))
+        bin_dir = tempfile.mkdtemp(dir=tmp)
+        write(os.path.join(bin_dir, "tw"), f'#!/bin/sh\nexec {sys.executable} {TASK_PY} "$@"\n')
+        os.chmod(os.path.join(bin_dir, "tw"), 0o755)
+        env = {"PATH": f"{bin_dir}:/usr/bin:/bin"}
+        for hook in hooks:
+            fields = commit if "commit-guard" in hook else stop
+            for agent_type, refused in (("sinnlos-skills:no-delegate", True), (None, False)):
+                payload = {**fields, **({} if agent_type is None else {"agent_type": agent_type})}
+                r = subprocess.run(["sh", "-c", hook], input=json.dumps(payload), capture_output=True, text=True, env=env)
+                check(f"hooks.json の {hook} は agent_type={agent_type} で{'拒む' if refused else '通す'}",
+                      r.returncode == 0 and (r.stdout != "") == refused, r.stdout + r.stderr)
+
+
 def _check_hook_line(
     tmp: str,
     claimed: str,
@@ -2670,6 +2718,7 @@ def main() -> None:
         test_body_frame_check,
         test_done_commits_since_claim,
         test_commit_guard,
+        test_agent_scoped_guard,
         test_handback_guard,
         test_handback_guard_step,
         test_edit_and_plan_check,
