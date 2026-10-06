@@ -58,7 +58,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    | --- | --- |
    | `CLAIMED` | 次へ（手順5の前に `tw plan-check T-xxx` を打つ）。`branch=` が作業する枝 |
    | `TAKEN`・`NOT_READY` | 先を越された・状態が変わった。手順1から別の1件を選び直す（3回続いたら止まる） |
-   | `DIRTY`・`UNSHIPPED`・`INVALID` | `${CLAUDE_SKILL_DIR}/start-stopped.md` の「手順4の表の残り」に従って終了する |
+   | `DIRTY`・`UNSHIPPED`・`INVALID`・`GIT_READ_ONLY`・`STATE_READ_ONLY` | `${CLAUDE_SKILL_DIR}/start-stopped.md` の「手順4の表の残り」に従って終了する |
 
 4a. **作業ツリーを確かめる**: 検証コマンドの実行に要るもの（依存のインストール済みバイナリなど）と、
    組み立て済みの成果物が揃っているかをメインが確かめる（何を見るかはプロジェクトの CLAUDE.md の
@@ -265,7 +265,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    | `tw verify-check` の出力 | すること |
    | --- | --- |
    | `VERIFIED_SAME\t<木の SHA>` | 検証コマンドを打たずに次へ（委譲先が `tw verify` で通した中身と、整形のあとの中身が同じ） |
-   | `NOT_VERIFIED\t<理由>` | `tw verify` を打つ（`none`＝委譲先が控えていない・最後の検証が落ちた／`base`＝委譲先が控えたあとに主ブランチが進んだ。`tw verify` が取り込んでから打つ／`content`＝整形や受け入れの直しで中身が変わった／`head`／`command`）。`VERIFIED`・`VERIFIED_UNSTAMPED` は通った（取り込んだときは先頭に `FOLDED` の行）。`CONFLICT` なら取り込みが衝突した（何も書き換えず、検証コマンドは打っていない）。手順8の `CONFLICT` と同じく、衝突したファイルを添えて人に預けて終了する。`VERIFY_NOT_PASSED` なら出力の末尾とログを読んで直し、打ち直す。`PLAN_MISSING`（`## やること` が空のまま作業がある。手順5bを通っていれば出ない）なら、差分から中身を書き起こして `tw edit T-xxx --after-work` で渡してから打ち直す |
+   | `NOT_VERIFIED\t<理由>` | `tw verify` を打つ（`none`＝委譲先が控えていない・最後の検証が落ちた／`base`＝委譲先が控えたあとに主ブランチが進んだ。`tw verify` が取り込んでから打つ／`content`＝整形や受け入れの直しで中身が変わった／`head`／`command`）。`VERIFIED`・`VERIFIED_UNSTAMPED` は通った（取り込んだときは先頭に `FOLDED` の行）。`CONFLICT` なら取り込みが衝突した（何も書き換えず、検証コマンドは打っていない）。手順8の `CONFLICT` と同じく、衝突したファイルを添えて人に預けて終了する。`VERIFY_NOT_PASSED` なら出力の末尾とログを読んで直し、打ち直す。`PLAN_MISSING`（`## やること` が空のまま作業がある。手順5bを通っていれば出ない）なら、差分から中身を書き起こして `tw edit T-xxx --after-work` で渡してから打ち直す。`GIT_READ_ONLY`（取り込みが要るのに `.git` に書けない。何も書き換えず、検証コマンドは打っていない）なら、sandbox の外で `tw verify` を打ち直す。打ち直せなければ、行を添えて行の3列目の次の一手を案内し、人に預けて終了する |
    | `NOTHING` | 検証コマンドが無い。完了条件を目視で確かめる |
 
    **作業先が別のリポジトリのとき**（タスクが直す対象が自分の作業ツリーの外のリポジトリ）:
@@ -295,6 +295,9 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 
    完了条件に目視があったときは `- 目視: <開いた画像のパス> を <完了条件の行> と見比べた` の1行を足す。
 
+   `GIT_READ_ONLY`（`.git` に書けない。タスクファイルは書いていない）が返ったら、sandbox の外で同じ `tw done` を
+   打ち直す。打ち直せなければ、行を添えて行の3列目の次の一手を案内し、人に預けて終了する。
+
    `dropped` にするときは `--dropped` を付け、理由を結果に書く。**Beads 方式では**、`DONE` は
    stage せず（`## 結果` は Beads の comment に入る）、コミットは作業のファイルと（積んだなら）
    ドラフトのファイルだけ。差分が無ければコミットせずに手順8へ進む（`tw ship` が `NOTHING` を
@@ -314,7 +317,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    | 出力 | すること |
    | --- | --- |
    | `NOTHING` | 消すものが無いか、まだ10件に届かない。次へ |
-   | `PRUNED`・`DIRTY`・`INVALID` | `${CLAUDE_SKILL_DIR}/ship-stopped.md` の「手順7aの表の残り」に従う |
+   | `PRUNED`・`DIRTY`・`INVALID`・`GIT_READ_ONLY` | `${CLAUDE_SKILL_DIR}/ship-stopped.md` の「手順7aの表の残り」に従う |
 
 8. **送る**: `tw ship`（手順7aのコミットも一緒に送る）。
 
