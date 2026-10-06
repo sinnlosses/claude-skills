@@ -53,7 +53,7 @@ PLANNED_BODY = BODY.replace("## やること\n", "## やること\n### 1. 書く
 
 failures: list[str] = []
 BASE_ENV = os.environ.copy()
-# テストは並行に走らせる（1件ごとに `bd init` が数秒かかる）。出力と環境変数はテストごとに持つ。
+# テストは CPU 数の半分まで並行に走らせる。出力と環境変数はテストごとに持つ。
 _local = threading.local()
 
 
@@ -1798,7 +1798,7 @@ def main() -> None:
             test_backup,
         )
         tests = tuple(t for t in tests if not only or t.__name__ in only)
-        with ThreadPoolExecutor(max_workers=len(tests)) as pool:
+        with ThreadPoolExecutor(max_workers=min(len(tests), max(1, (os.cpu_count() or 2) // 2))) as pool:
             outputs = list(pool.map(_run_one, tests))
     for lines in outputs:
         print("\n".join(lines))
