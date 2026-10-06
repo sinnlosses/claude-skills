@@ -135,8 +135,17 @@ frontmatter の `hooks` は無視されるので、`no-delegate` の hook（`tw 
 ## 検証
 
 ```sh
-./check.sh
+./check.sh          # 変えたファイルに当たる段だけ
+./check.sh --full   # 全段
+./check.sh --plan   # 段を流さず、流す段と飛ばす段だけを出す
 ```
+
+自己テストの段は、main との merge-base からの差分と未コミット・未追跡のファイルに当たるものだけを流す
+（下の1の構文と4の整合はいつも流す）。当たるパスは、2 が `install.sh`・`uninstall.sh`・`scripts/`・`agents/`・`bin/`・
+`skills/*/SKILL.md`・`skills/*/REQUIRES`、3 が `skills/task-workflow/`・`agents/`・`hooks/`・`bin/`・
+`skills/retrospect/scripts/`、retrospect が `skills/retrospect/`・`skills/task-workflow/scripts/`、
+comment-audit・next-task が自分のスキルの下。`check.sh` が変わったとき、`--full`、main の上、
+detached HEAD、差分が取れないときは全段を流す。
 
 1. `install.sh`・`uninstall.sh`・`scripts/links.sh` の構文、2. 一時ディレクトリを張る先にした
 `install.sh`・`uninstall.sh` の自己テスト（`scripts/selftest_links.sh`。全件で張って外すとこのリポジトリを
