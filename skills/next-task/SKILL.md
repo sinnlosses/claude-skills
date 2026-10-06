@@ -279,7 +279,8 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 6a. **振り返る**（`/loop` から回っているときも。委譲せずメインで行う）: `retrospect` スキルの
    `SKILL.md`（`${CLAUDE_SKILL_DIR}/../retrospect/SKILL.md`）の節「1件だけ振り返る」**だけ**を読んで
    従う。兆候か変更量の観点（コード・文書）に当たったときだけ `develop/draft/` にドラフトのファイルを足し、
-   どちらでも `## 結果` に入れる `- 振り返り:` の1行を決める。
+   どちらでも `## 結果` に入れる `- 振り返り:` の1行を決める。`/loop` から回っているときは、次の1件へ
+   持ち越すこと（受け入れで気づいたこと）を会話にだけ残さず、`## 結果` かドラフトに入れる。
 
 7. **完了にしてコミットする**: `## 結果`（正典「結果の書き方と知見の置き場」。3行程度、自分の
    コミットのハッシュは書かない）を標準入力で渡す:
@@ -341,7 +342,9 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    （`## 結果` に入れた `- 振り返り:` の行そのまま）を1行ずつ
 5. `/loop` で進められる行（取り直した `tw status` で `着手可否` が `READY` かつ `loopable` が `Y`）が
    無くなったときだけ1行: 未完了が残っていなければ「全タスク完了」、`HOLD`・`loopable: N` が
-   残っていれば、その ID を添えて「残りは人の判断待ち」
+   残っていれば、その ID を添えて「残りは人の判断待ち」。下の続行判断で `context_size.py` が `OVER` を
+   返したときも1行: トークン数としきい値を添えて、tsukumo の中なら「文脈を空にして続ける」、外なら
+   「`/clear` してから `/loop /next-task` で再開する」
 
 書かないもの: 結論と重なる「完了したタスク」の行、手順7aで消したタスクファイルの件数、
 `tw status` の件数、`develop/direction.md` の行数、`stale`・`legacy_progress` の行
@@ -351,3 +354,11 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 以外、または手順8より前で終了したなら続行しない。`SHIPPED` なら送ったあとに `tw status` を
 取り直し、`着手可否` が `READY` かつ `loopable` が `Y` の行があるか、`## ユーザーから` に中身があれば
 続行し、どちらも無ければ続行しない。
+
+続行するときは、先に `python3 ${CLAUDE_SKILL_DIR}/scripts/context_size.py ${CLAUDE_SESSION_ID}` を打つ
+（main の文脈の大きさをしきい値と比べる）。
+
+| 出力 | すること |
+| --- | --- |
+| `UNDER`・`UNKNOWN` | 続行する |
+| `OVER\t<トークン数>\t<しきい値>` | 次の1件に着手しない。tsukumo の MCP ツール（`mcp__tsukumo__` で始まる）に、文脈を空にして依頼を送り直すものがあれば、`/loop /next-task` を渡して呼び、`/loop` を止めてターンを終える（tsukumo が `/clear` してから送り直す）。無ければ tsukumo の外なので、`/loop` を止めて報告の5に1行を足す |
