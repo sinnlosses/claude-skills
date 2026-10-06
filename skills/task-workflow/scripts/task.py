@@ -614,6 +614,7 @@ def _claim_preflight(toplevel: str) -> tuple[str, str]:
     """`claim` の git の前提（`- ブランチ:` が読める・clean・未送りなし・主ブランチへ追い付く）。
 
     `(ブランチの設定の先頭語, 主ブランチ)` を返す。前提を欠けば出力して `SystemExit`。
+    追い付くか枝を切るのに `.git` へ書けなければ、印を立てる前に `ledger.GitReadOnly`。
     ファイル方式と Beads 方式の `claim` が同じものを通る。
     """
     branch_setting = read_branch_setting(toplevel)
@@ -632,10 +633,15 @@ def _claim_preflight(toplevel: str) -> tuple[str, str]:
         if ahead.returncode == 0 and ahead.stdout.strip() not in ("0", ""):
             print(f"UNSHIPPED\t{ahead.stdout.strip()}")
             raise SystemExit(4)
-        r = _run_git(toplevel, ["merge", "--ff-only", base])
-        if r.returncode != 0:
-            print(f"INVALID\t{base} へ追い付けない（{r.stderr.strip()}）")
-            raise SystemExit(3)
+        # 追い付き済みでも `merge` は ORIG_HEAD を書くので、要るときだけ打つ。
+        if _run_git(toplevel, ["merge-base", "--is-ancestor", base, "HEAD"]).returncode != 0:
+            ledger.require_git_writable(toplevel)
+            r = _run_git(toplevel, ["merge", "--ff-only", base])
+            if r.returncode != 0:
+                print(f"INVALID\t{base} へ追い付けない（{r.stderr.strip()}）")
+                raise SystemExit(3)
+    if branch_setting in ("既定", "作業ブランチを切る"):
+        ledger.require_git_writable(toplevel)
     return branch_setting, base
 
 
@@ -1043,7 +1049,11 @@ def cmd_verify(toplevel: str, unplanned_work: Callable[[], list[str]]) -> None:
                 f"先に ## やること を書いて tw edit {shown} --after-work --body-file - で渡し、打ち直す"
             )
         raise SystemExit(10)
-    folded = fold.fold_base(toplevel, ledger.base_branch(toplevel))
+    base = ledger.base_branch(toplevel)
+    if fold.can_fold(toplevel, base):
+        ledger.clear_verify_stamp(cwd=toplevel)
+        ledger.require_git_writable(toplevel)
+    folded = fold.fold_base(toplevel, base)
     if folded.kind == "CONFLICT":
         ledger.clear_verify_stamp(cwd=toplevel)
         print("CONFLICT\t" + (",".join(folded.conflict_files) or "?"))
@@ -2387,6 +2397,12 @@ def main(argv: list[str] | None = None) -> None:
             "（Codex は writable roots、Claude Code は sandbox.filesystem.allowWrite）"
         )
         raise SystemExit(12)
+    except ledger.GitReadOnly as e:
+        print(
+            f"GIT_READ_ONLY\t{e.path}\tsandbox の外で同じコマンドを打ち直す"
+            "（Claude Code は sandbox.excludedCommands に tw を足す）"
+        )
+        raise SystemExit(11)
 
 
 def _main_beads(toplevel: str, args: argparse.Namespace) -> None:

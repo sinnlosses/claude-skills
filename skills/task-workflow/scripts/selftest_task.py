@@ -10,9 +10,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -1218,6 +1220,95 @@ def test_worktree_state_dir() -> None:
               and not os.path.exists(os.path.join(old, "task-verify-stamp"))
               and not os.path.exists(os.path.join(old, "task-open-claims"))
               and run_task(wt2, "verify-check").stdout.startswith("VERIFIED_SAME\t"), r.stdout + r.stderr)
+
+
+@contextlib.contextmanager
+def readonly_git(main_path: str):
+    """本体の `.git` を丸ごと書けなくする（`chmod -R a-w` と同じ）。抜けるときに書けるよう戻す。"""
+    common = os.path.join(main_path, ".git")
+    _chmod_tree(common, writable=False)
+    try:
+        yield
+    finally:
+        _chmod_tree(common, writable=True)
+
+
+def _chmod_tree(top: str, writable: bool) -> None:
+    for d, _dirs, files in os.walk(top):
+        for p in [d, *(os.path.join(d, f) for f in files)]:
+            mode = os.lstat(p).st_mode
+            if not stat.S_ISLNK(mode):
+                os.chmod(p, mode | stat.S_IWUSR if writable else mode & ~0o222)
+
+
+def snapshot(*paths: str) -> dict[str, bytes]:
+    """`paths` の下のファイル（`.git` の中は除く）のパスと中身。打つ前後で何も変わらないことを見る。"""
+    out: dict[str, bytes] = {}
+    for top in paths:
+        for d, dirs, files in os.walk(top):
+            dirs[:] = [x for x in dirs if x != ".git"]
+            for f in files:
+                p = os.path.join(d, f)
+                if f != ".git":
+                    with open(p, "rb") as fh:
+                        out[p] = fh.read()
+    return out
+
+
+def test_readonly_git() -> None:
+    print("task.py: .git が読み取り専用でも claim・verify・verify-check・step が通り、git に書く claim・verify は GIT_READ_ONLY")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _ = make_repo(tmp, branch="切らない", verify="`true`")
+        commit_task(main_path, taskfile.Task("T-100", "読み取り専用", "todo", "sonnet", "Y", (), BODY))
+        git(wt1, "merge", "-q", "--ff-only", "main")
+        state = os.path.join(tmp, "state")
+        env = {ledger.STATE_DIR_ENV: state}
+        with readonly_git(main_path):
+            r = run_task(wt1, "claim", "T-100", env=env)
+            check("claim が CLAIMED", r.returncode == 0 and r.stdout.startswith("CLAIMED\tT-100\t"), r.stdout + r.stderr)
+            r = run_task(wt1, "edit", "T-100", "--section", "やること", "--body-file", "-",
+                         stdin="### 1. 書く\n\n### 2. 試す\n", env=env)
+            check("edit が EDITED", r.returncode == 0, r.stdout + r.stderr)
+            write(os.path.join(wt1, "work.txt"), "x\n")
+            r = run_task(wt1, "step", "T-100", "1", env=env)
+            check("step が STEPPED", r.returncode == 0 and r.stdout.startswith("STEPPED\tT-100\t1/2\t"),
+                  r.stdout + r.stderr)
+            r = run_task(wt1, "verify", env=env)
+            verified = r.stdout.splitlines()[0] if r.stdout else ""
+            check("verify が VERIFIED", r.returncode == 0 and verified.startswith("VERIFIED\t"), r.stdout + r.stderr)
+            r = run_task(wt1, "verify-check", env=env)
+            check("verify-check が VERIFIED_SAME", r.stdout.startswith("VERIFIED_SAME\t"), r.stdout + r.stderr)
+        tree = verified.split("\t")[1] if verified.count("\t") >= 1 else ""
+        check("読み取り専用で取った鍵の木の SHA が、書ける .git で取った木と同じ",
+              tree != "" and tree == ledger.worktree_tree(wt1), tree)
+
+        write(os.path.join(main_path, "shared.txt"), "line2\n")
+        git(main_path, "commit", "-q", "-am", "主ブランチを進める")
+        head = git(wt1, "rev-parse", "HEAD").stdout
+        before = snapshot(wt1, state)
+        with readonly_git(main_path):
+            r = run_task(wt1, "verify", env=env)
+            check("取り込みが要る verify は GIT_READ_ONLY（終了コード11）で、検証コマンドを打たない",
+                  r.returncode == 11 and r.stdout.startswith("GIT_READ_ONLY\t") and "sandbox" in r.stdout,
+                  r.stdout + r.stderr)
+            check("止まった verify は HEAD と作業ツリーを変えない",
+                  git(wt1, "rev-parse", "HEAD").stdout == head
+                  and {p: c for p, c in snapshot(wt1).items() if "/.tw/" not in p}
+                  == {p: c for p, c in before.items() if p.startswith(wt1 + os.sep) and "/.tw/" not in p})
+
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _ = make_repo(tmp, branch="既定", verify="`true`")
+        commit_task(main_path, taskfile.Task("T-100", "枝を切る", "todo", "sonnet", "Y", (), BODY))
+        state = os.path.join(tmp, "state")
+        branch = git(wt1, "rev-parse", "--abbrev-ref", "HEAD").stdout
+        with readonly_git(main_path):
+            r = run_task(wt1, "claim", "T-100", env={ledger.STATE_DIR_ENV: state})
+        roots = os.listdir(state) if os.path.isdir(state) else []
+        check("枝を切る claim は印を立てる前に GIT_READ_ONLY（終了コード11）で止まる",
+              r.returncode == 11 and r.stdout.startswith("GIT_READ_ONLY\t")
+              and not any(os.path.isdir(ledger.claim_dir(os.path.join(state, x), "T-100")) for x in roots)
+              and not os.path.exists(os.path.join(wt1, ".tw", "task-open-claims"))
+              and git(wt1, "rev-parse", "--abbrev-ref", "HEAD").stdout == branch, r.stdout + r.stderr)
 
 
 def test_state_dir() -> None:
@@ -2837,6 +2928,7 @@ def main() -> None:
         test_handback_guard_step,
         test_worktree_state_dir,
         test_state_dir,
+        test_readonly_git,
         test_edit_and_plan_check,
         test_edit_section,
         test_edit_deps,

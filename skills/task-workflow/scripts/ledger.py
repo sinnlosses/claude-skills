@@ -49,6 +49,14 @@ class StateReadOnly(RuntimeError):
         self.path = path
 
 
+class GitReadOnly(RuntimeError):
+    """`.git` に書けない（呼ぶ側が `GIT_READ_ONLY`・終了コード11 にする）。"""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(path)
+        self.path = path
+
+
 def _git(args: list[str], cwd: str | None = None) -> str:
     r = subprocess.run(
         ["git", *args],
@@ -69,6 +77,20 @@ def git_dir(cwd: str | None = None) -> str:
     """この作業ツリー**だけ**の git dir（共有の `git_common_dir` とは違う。連結した
     作業ツリーでは `<共通の git dir>/worktrees/<名前>`）。`.tw/` が無い作業ツリーの控えの古い置き場。"""
     return _git(["rev-parse", "--path-format=absolute", "--git-dir"], cwd)
+
+
+def require_git_writable(cwd: str | None = None) -> None:
+    """git に書く操作の前に、作業ツリー固有の git dir と共有の git dir に書いて消せるかを確かめる。
+    書けなければ `GitReadOnly`（打つ前に止めるので、作業ツリーも台帳も変わらない）。"""
+    for d in dict.fromkeys([git_dir(cwd), git_common_dir(cwd)]):
+        try:
+            fd, probe = tempfile.mkstemp(prefix=".tw-probe-", dir=d)
+            os.close(fd)
+            os.remove(probe)
+        except OSError as e:
+            if e.errno in READ_ONLY_ERRNOS:
+                raise GitReadOnly(d) from e
+            raise
 
 
 def git_toplevel(cwd: str | None = None) -> str:
@@ -624,14 +646,16 @@ def content_key(verify_command: str, cwd: str | None = None) -> ContentKey:
     """いまの作業ツリーの中身の鍵。"""
     toplevel = git_toplevel(cwd)
     head = head_sha_or_none(toplevel) or "-"
-    return ContentKey(head, worktree_tree(toplevel), verify_command)
+    return ContentKey(head, worktree_tree(toplevel, objects_in_repo=False), verify_command)
 
 
-def worktree_tree(toplevel: str) -> str:
+def worktree_tree(toplevel: str, objects_in_repo: bool = True) -> str:
     """いまの作業ツリーの中身の木の SHA。
 
     index を一時ファイルに写して `git add -A` → `git write-tree` するので、`.gitignore` の対象でない
-    未追跡のファイルまで入り、本物の index は変わらない。
+    未追跡のファイルまで入り、本物の index は変わらない。`objects_in_repo` が偽なら、新しい object は
+    一時ディレクトリに書き、元の object は `GIT_ALTERNATE_OBJECT_DIRECTORIES` で読むので、
+    `.git` に書かずに済む（木の SHA は同じ。その木は `.git` には残らない）。
     """
     real_index = _git(["rev-parse", "--path-format=absolute", "--git-path", "index"], toplevel)
     with tempfile.TemporaryDirectory() as tmp:
@@ -640,6 +664,13 @@ def worktree_tree(toplevel: str) -> str:
             # mtime を保たないと、同じ秒・同じ大きさの書き換えを git が無変更とみなす
             shutil.copy2(real_index, temp_index)
         env = {**os.environ, "GIT_INDEX_FILE": temp_index}
+        if not objects_in_repo:
+            real_objects = _git(["rev-parse", "--path-format=absolute", "--git-path", "objects"], toplevel)
+            temp_objects = os.path.join(tmp, "objects")
+            os.mkdir(temp_objects)
+            alternates = [real_objects, *filter(None, [os.environ.get("GIT_ALTERNATE_OBJECT_DIRECTORIES")])]
+            env["GIT_OBJECT_DIRECTORY"] = temp_objects
+            env["GIT_ALTERNATE_OBJECT_DIRECTORIES"] = os.pathsep.join(alternates)
         for args in (["add", "-A"], ["write-tree"]):
             r = subprocess.run(["git", *args], cwd=toplevel, env=env, capture_output=True, text=True)
             if r.returncode != 0:
