@@ -47,7 +47,10 @@ JIRA_REF = re.compile(rf"^(?:\S*/browse/)?({layout.JIRA_ID_FRAGMENT})$")
 # `bd kv` の控え。値はどれも JSON。
 PROJECT_KEY = "task-workflow.project"  # {"project": "<owner>/<番号>", "id", "field", "options": {名前: ID}}
 ITEMS_KEY = "task-workflow.project-items"  # {Issue の URL: {"item": 項目 ID, "status": 最後に書いた名前}}
-SYNCED_KEY = "task-workflow.github-synced"  # {Issue 番号: その課題を最後に送った・取り込んだ時刻}
+SYNCED_KEY = "task-workflow.github-synced"  # {Issue 番号: その課題を最後に送った・取り込んだ時刻}（CONFLICT の判定）
+# 課題ごとのキー `<これ><Issue 番号>`。値は最後に届いた送りの直前に読んだその課題の着手の時刻
+# （`started_at`。着手中でなければ空）。この値は JSON でない。
+PUSHED_KEY_PREFIX = "task-workflow.github-pushed."
 SEEN_KEY = "task-workflow.github-seen"  # GitHub の一覧で見た最後の更新時刻
 # `bd github pull` の actor は `<作業ツリーの名前>` にこれを足したもの（取り込みが書いた更新を監査の出来事で見分ける）。
 PULL_ACTOR_SUFFIX = ":github-pull"
@@ -111,7 +114,6 @@ class Session:
         self._items: dict | None = None
         self._items_dirty = False
         self._synced: dict | None = None
-        self._synced_dirty = False
 
     @property
     def bidirectional(self) -> bool:
@@ -145,7 +147,7 @@ class Session:
         ids = [i for i in bd_ids if not beads.is_provisional(i)]
         try:
             if ids:
-                self._bd_ok(["github", "push", *ids], "bd github push")
+                self._push(ids)
                 self._mark_synced(ids)
             changed = self._bridge([i for i in (beads.show(self.toplevel, x) for x in ids) if i is not None])
             self._save()
@@ -159,14 +161,14 @@ class Session:
         落ちたら仮の ID のまま返す（`task sync` が送り直して付け替える）。
         """
         try:
-            self._bd_ok(["github", "push", provisional], "bd github push")
+            self._push([provisional])
             renamed, lines = self._rename([provisional])
             final = renamed.get(provisional)
             if final is None:
                 return provisional, lines + [f"TRACKER\tFAILED\tgithub\t{provisional} に Issue の番号が付かなかった"]
             # 付け替えは Beads の更新なので、送り直して `bd` の前回の同期の時刻を進める（進めないと、次の
             # 取り込みがこの課題を「Beads で変えたもの」として飛ばし、GitHub での変更を送り返して消す）。
-            self._bd_ok(["github", "push", final], "bd github push")
+            self._push([final])
             self._mark_synced([final])
             issue = beads.show(self.toplevel, final)
             changed = self._bridge([issue] if issue else [])
@@ -197,8 +199,18 @@ class Session:
                 renamed, renamed_lines = self._rename([i.bd_id for i in before if beads.is_provisional(i.bd_id)])
                 lines += renamed_lines
                 if renamed:
-                    self._bd_ok(["github", "push", *renamed.values()], "bd github push")
+                    self._push(list(renamed.values()))
                     self._mark_synced(list(renamed.values()))
+                # `--push-only` がどの課題を送ったかは分からないので、送りの印と違う着手は1件ずつ送り直す。
+                pushed = self._load_pushed()
+                unsent = [
+                    i.bd_id for i in beads.list_issues(self.toplevel)
+                    if (n := _ref_number(i.external_ref)) is not None and _claim_started(i)
+                    and pushed.get(n) != _claim_started(i)
+                ]
+                if unsent:
+                    self._push(unsent)
+                    self._mark_synced(unsent)
             changed = self._bridge(beads.list_issues(self.toplevel))
             if pull and self.bidirectional:
                 beads.run_ok(self.toplevel, ["kv", "set", SEEN_KEY, _format_time(newest or started)])
@@ -236,8 +248,9 @@ class Session:
         self._bd_ok(["--actor", pull_actor, "github", "pull", *(str(n) for n in sorted(remote))], "bd github pull")
         new = _by_number(beads.list_issues(self.toplevel))
         # 別の作業ツリーの送りも見るので、この Session の控えではなく今の値を読む。
-        pushed = _loads(beads.run(self.toplevel, ["kv", "get", SYNCED_KEY]).stdout)
-        pushed = pushed if isinstance(pushed, dict) else {}
+        pushed = self._load_pushed()
+        legacy = _loads(beads.run(self.toplevel, ["kv", "get", SYNCED_KEY]).stdout)
+        legacy = legacy if isinstance(legacy, dict) else {}
         fixed: list[str] = []
         for n in sorted(remote):
             issue, was = new.get(n), old.get(n)
@@ -249,7 +262,7 @@ class Session:
                 lines.append(f"TRACKER\tFAILED\tgithub\t{beads.to_task_id(issue.bd_id)} の着手の印を戻せない: {e}")
                 overwritten = None
             restore = [] if overwritten is None else _claim_restore_args(
-                overwritten, issue, _parse_time(pushed.get(str(n)))
+                overwritten, issue, pushed.get(n), _parse_time(legacy.get(str(n)))
             )
             if restore:
                 r = beads.run(self.toplevel, ["update", issue.bd_id, *restore], self._actor)
@@ -276,7 +289,7 @@ class Session:
         # 同期の時刻を進める（進めないと、次の取り込みがこの課題を飛ばして GitHub での変更を送り返す）。
         fixed = list(dict.fromkeys([renamed.get(i, i) for i in fixed] + list(renamed.values())))
         if fixed:
-            self._bd_ok(["github", "push", *fixed], "bd github push")
+            self._push(fixed)
         self._mark_synced([renamed.get(new[n].bd_id, new[n].bd_id) for n in remote if n in new])
         return lines + rename_lines
 
@@ -450,28 +463,53 @@ class Session:
         return _parse_time(self._load_synced().get(str(n))) if n is not None else None
 
     def _mark_synced(self, bd_ids: list[str]) -> None:
-        """送った・取り込んだ時刻を控え、その場で `bd kv` へ書く（あとの Status 欄の書き込みが落ちても残す）。"""
+        """送った・取り込んだ時刻を控え、その場で `bd kv` へ書く（あとの Status 欄の書き込みが落ちても残す）。
+
+        書く直前に今の値を読み、触った番号だけを重ねる（別の作業ツリーが書いた時刻を古い値で戻さない）。
+        """
         if not self.bidirectional or not bd_ids:
             return
         wanted = set(bd_ids)
-        synced = self._load_synced()
         now = _format_time(_now())
+        numbers = [
+            str(n) for i in beads.list_issues(self.toplevel)
+            if i.bd_id in wanted and (n := _ref_number(i.external_ref)) is not None
+        ]
+        if not numbers:
+            return
+        current = _loads(beads.run(self.toplevel, ["kv", "get", SYNCED_KEY]).stdout)
+        synced = {**(current if isinstance(current, dict) else {}), **{n: now for n in numbers}}
+        beads.run_ok(self.toplevel, ["kv", "set", SYNCED_KEY, json.dumps(synced)])
+        self._synced = synced
+
+    # --- 課題ごとの送りの印（着手を戻すかの判定） ---------------------------------------
+
+    def _push(self, bd_ids: list[str]) -> None:
+        """`bd github push` で送り、届いたら課題ごとに送った着手の時刻を `bd kv` へ書く（変わったものだけ）。"""
+        sent = {i: _claim_started(beads.show(self.toplevel, i)) for i in bd_ids}
+        self._bd_ok(["github", "push", *bd_ids], "bd github push")
+        if not self.bidirectional:
+            return
+        pushed = self._load_pushed()
         for issue in beads.list_issues(self.toplevel):
             n = _ref_number(issue.external_ref)
-            if issue.bd_id in wanted and n is not None:
-                synced[str(n)] = now
-                self._synced_dirty = True
-        if self._synced_dirty:
-            beads.run_ok(self.toplevel, ["kv", "set", SYNCED_KEY, json.dumps(synced)])
-            self._synced_dirty = False
+            if issue.bd_id in sent and n is not None and pushed.get(n) != sent[issue.bd_id]:
+                beads.run_ok(self.toplevel, ["kv", "set", f"{PUSHED_KEY_PREFIX}{n}", sent[issue.bd_id]])
+
+    def _load_pushed(self) -> dict[int, str]:
+        """課題ごとの送りの印の今の値（`{Issue 番号: 送った着手の時刻}`。印の無い課題は入らない）。"""
+        listed = _loads(beads.run(self.toplevel, ["kv", "list", "--json"]).stdout)
+        if not isinstance(listed, dict):
+            return {}
+        return {
+            int(k[len(PUSHED_KEY_PREFIX):]): v for k, v in listed.items()
+            if k.startswith(PUSHED_KEY_PREFIX) and k[len(PUSHED_KEY_PREFIX):].isdigit() and isinstance(v, str)
+        }
 
     def _save(self) -> None:
         if self._items_dirty and self._items is not None:
             beads.run_ok(self.toplevel, ["kv", "set", ITEMS_KEY, json.dumps(self._items, ensure_ascii=False)])
             self._items_dirty = False
-        if self._synced_dirty and self._synced is not None:
-            beads.run_ok(self.toplevel, ["kv", "set", SYNCED_KEY, json.dumps(self._synced)])
-            self._synced_dirty = False
 
     # --- 呼び出し ------------------------------------------------------------------
 
@@ -632,9 +670,15 @@ def _by_number(issues: list[beads.Issue]) -> dict[int, beads.Issue]:
     return {n: i for i in issues if (n := _ref_number(i.external_ref)) is not None}
 
 
-def _claim_restore_args(was: beads.Issue, issue: beads.Issue, pushed_at: datetime | None) -> list[str]:
+def _claim_restore_args(
+    was: beads.Issue, issue: beads.Issue, pushed_claim: str | None, legacy_synced_at: datetime | None
+) -> list[str]:
     """取り込みが `was` を `issue` へ上書きして消した着手の印（status・assignee と `beads.MARK_KEYS` の
-    metadata）を戻す `bd update` の引数。戻すものが無ければ空。`pushed_at` はこの課題を最後に送った時刻。
+    metadata）を戻す `bd update` の引数。戻すものが無ければ空。
+
+    `pushed_claim` はこの課題の送りの印（最後に届いた送りが運んだ着手の時刻。空なら着手なし）。印の無い
+    課題（印を書く前に送ったもの）は、`legacy_synced_at`（最後に送った・取り込んだ時刻）が着手より前なら
+    送りが届いていないとみなす。
 
     `was` は取り込みの前に読んだ一覧ではなく、取り込みが書く直前の版
     （取り込みの最中に別の作業ツリーが着手すると、前に読んだ一覧にはその着手が無い）。
@@ -647,7 +691,15 @@ def _claim_restore_args(was: beads.Issue, issue: beads.Issue, pushed_at: datetim
     claimed = was.status == "in_progress" and bool(was.assignee)
     if claimed and not issue.assignee:
         started = beads.parse_time(was.started_at)
-        unsent = started is not None and (pushed_at is None or pushed_at < started.replace(microsecond=0))
+        if pushed_claim is not None:
+            sent = beads.parse_time(pushed_claim)
+            unsent = started is not None and (
+                sent is None or sent.replace(microsecond=0) != started.replace(microsecond=0)
+            )
+        else:
+            unsent = started is not None and (
+                legacy_synced_at is None or legacy_synced_at < started.replace(microsecond=0)
+            )
         if issue.status == "in_progress":
             args += ["--assignee", was.assignee]
         elif issue.status == "open" and unsent:
@@ -655,6 +707,13 @@ def _claim_restore_args(was: beads.Issue, issue: beads.Issue, pushed_at: datetim
     had, has = _marks(was), _marks(issue)
     args += [x for k, v in had.items() if k not in has for x in ("--set-metadata", f"{k}={v}")]
     return args
+
+
+def _claim_started(issue: beads.Issue | None) -> str:
+    """送りの印に書く値: 着手中（`in_progress` で担当者あり）ならその `started_at`、ほかは空。"""
+    if issue is None or issue.status != "in_progress" or not issue.assignee:
+        return ""
+    return issue.started_at or ""
 
 
 def _marks(issue: beads.Issue) -> dict[str, str]:

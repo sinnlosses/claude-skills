@@ -1166,7 +1166,8 @@ def _fake_bin(tmp: str) -> str:
     偽の `gh`（呼ばれ方を記録し、`api` は偽の GitHub へ転送）。
 
     偽の `bd` は、`<FAKE_BD_LOG>.before-pull`（`{"cwd", "argv"}` の JSON）があれば `github pull` の前に
-    1回だけそれを打ち、`<FAKE_BD_LOG>.fail-update` があるあいだは assignee か metadata を書く `update` を落とす。"""
+    1回だけそれを打ち、`<FAKE_BD_LOG>.fail-update` があるあいだは assignee か metadata を書く `update` を、
+    `<FAKE_BD_LOG>.fail-push` があるあいだは `github push` を落とす。"""
     bin_dir = os.path.join(tmp, "bin")
     real_bd = shutil.which("bd") or "bd"
     write(os.path.join(bin_dir, "bd"), f"""#!{sys.executable}
@@ -1183,6 +1184,9 @@ if core[:2] == ["github", "pull"] and os.path.exists(before_pull):
 if core[:1] == ["update"] and ("--assignee" in core or "--set-metadata" in core) \\
         and os.path.exists(os.environ["FAKE_BD_LOG"] + ".fail-update"):
     sys.stderr.write("fake bd: update を落とす\\n")
+    sys.exit(1)
+if core[:2] == ["github", "push"] and os.path.exists(os.environ["FAKE_BD_LOG"] + ".fail-push"):
+    sys.stderr.write("fake bd: github push を落とす\\n")
     sys.exit(1)
 if core[:1] == ["jira"] and "sync" in core:
     with open(os.environ["FAKE_BD_LOG"], "a") as f:
@@ -1529,6 +1533,63 @@ def test_tracker_github_keeps_claim_marks() -> None:
             del _local.env
 
 
+def test_tracker_github_push_mark() -> None:
+    say("トラッカー github: 送りの控えを取り込みの時刻と分け、別の作業ツリーの送りを書き戻さない")
+    fake = FakeGitHub()
+    with tempfile.TemporaryDirectory() as tmp:
+        _local.env = _with_fakes(tmp, fake)
+        try:
+            main_path, wt1 = _github_repo(tmp, beads.PREFIX_GITHUB)
+            num = lambda t: int(beads.to_bd_id(t).split("-")[1])  # noqa: E731
+
+            def state(task_id: str) -> tuple[str, str | None]:
+                issue = beads.show(main_path, beads.to_bd_id(task_id))
+                return (issue.status, issue.assignee) if issue else ("", None)
+
+            x = new(main_path, "取り込みと同じ秒の着手の送りが落ちる")
+            w = new(main_path, "ほかの課題を直して bd の前回の同期の時刻を進める")
+            write(os.path.join(tmp, "bd.log.fail-push"), "")
+            r = run_task(wt1, "claim", x)
+            os.remove(os.path.join(tmp, "bd.log.fail-push"))
+            check("取り込みは通り push だけが落ちた着手は TRACKER FAILED", r.stdout.startswith("CLAIMED")
+                  and "TRACKER\tFAILED" in r.stdout and "status::in_progress" not in fake.issues[num(x)]["labels"],
+                  r.stdout + r.stderr)
+            time.sleep(1.1)
+            shown = run_task(main_path, "show", w).stdout.split("---\n", 2)[2]
+            run_task(main_path, "edit", w, "--body-file", "-", stdin=shown.replace("## 注意\n\nz", "## 注意\n\nzz"))
+            # 取り込みの時刻が着手と同じ秒に収まった形を決め打ちで作る。
+            issue = beads.show(main_path, beads.to_bd_id(x))
+            started = beads.parse_time(issue.started_at) if issue is not None else None
+            synced = json.loads(bd(main_path, "kv", "get", "task-workflow.github-synced").stdout or "{}")
+            if started is not None:
+                synced[str(num(x))] = started.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            bd(main_path, "kv", "set", "task-workflow.github-synced", json.dumps(synced))
+            fake.edit(num(x))
+            r = run_task(main_path, "sync")
+            check("取り込みと着手が同じ秒で push だけが落ちた着手は、次の取り込みで戻るか TRACKER FAILED",
+                  started is not None and (state(x) == ("in_progress", "wt1") or any(
+                      l.startswith("TRACKER\tFAILED") and x in l for l in r.stdout.splitlines())),
+                  r.stdout + repr(state(x)))
+
+            y = new(main_path, "別の作業ツリーで着手して送る")
+            z = new(main_path, "本体で直す")
+            time.sleep(1.1)
+            write(os.path.join(tmp, "bd.log.before-pull"),
+                  json.dumps({"cwd": wt1, "argv": [sys.executable, TASK_PY, "claim", y]}))
+            shown = run_task(main_path, "show", z).stdout.split("---\n", 2)[2]
+            r = run_task(main_path, "edit", z, "--body-file", "-", stdin=shown.replace("## 注意\n\nz", "## 注意\n\nzz"))
+            check("本体の操作の取り込みの最中に別の作業ツリーが着手して送る", r.returncode == 0
+                  and not os.path.exists(os.path.join(tmp, "bd.log.before-pull"))
+                  and "status::in_progress" in fake.issues[num(y)]["labels"], r.stdout + r.stderr)
+            fake.edit(num(y), labels=[l for l in fake.issues[num(y)]["labels"] if not l.startswith("status")])
+            r = run_task(main_path, "sync")
+            check("別の作業ツリーの送りを古い控えで書き戻さず、そのあと GitHub で手放した課題は着手に戻さない",
+                  state(y) == ("open", None), r.stdout + repr(state(y)))
+        finally:
+            fake.close()
+            del _local.env
+
+
 def test_tracker_jira() -> None:
     say("トラッカー jira（偽の bd jira sync。--pull だけ）")
     with tempfile.TemporaryDirectory() as tmp:
@@ -1728,6 +1789,7 @@ def main() -> None:
             test_tracker_github_push_only,
             test_tracker_github_bidirectional,
             test_tracker_github_keeps_claim_marks,
+            test_tracker_github_push_mark,
             test_tracker_jira,
             test_tracker_jira_rename,
             test_backup,
