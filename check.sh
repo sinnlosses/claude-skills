@@ -41,6 +41,7 @@ python3 "$here/skills/comment-audit/scripts/selftest_diff_added_comment_lines.py
 echo
 echo "== next-task scripts の自己テスト =="
 python3 "$here/skills/next-task/scripts/selftest_review_needed.py"
+python3 "$here/skills/next-task/scripts/selftest_context_size.py"
 
 echo
 echo "== リポジトリの整合 =="
