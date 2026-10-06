@@ -45,6 +45,11 @@ def read_verify_command(toplevel: str) -> str | None:
     return _read_command_line(toplevel, "検証コマンド")
 
 
+def read_stamp_command(toplevel: str) -> str | None:
+    """`tw verify` が打ち、控えの鍵に入れるコマンド。送る前の検証コマンドがあればそれ、無ければ検証コマンド。"""
+    return read_preship_command(toplevel) or read_verify_command(toplevel)
+
+
 def read_format_command(toplevel: str) -> str | None:
     """`- 整形コマンド:` 行の最初の `` `…` ``。行が無い、または値が `なし` で始まるなら `None`。"""
     return _read_command_line(toplevel, "整形コマンド")
@@ -98,6 +103,7 @@ def attempt(
     base: str,
     verify_owed: bool = False,
     preship_command: str | None = None,
+    preship_stamped: bool = False,
 ) -> ShipOutcome:
     """最大 `MAX_TRIES` 回、rebase → 検証（付け替えた回だけ）→ 送る、を繰り返す（6.2手順5・6）。
 
@@ -109,10 +115,12 @@ def attempt(
     立っていれば、1回目の試行で付け替えが起きなくても検証を打つ——付け替え済みのまま次の
     `ship` を打つと、そのままでは検証を素通りして送ってしまうため（T-777）。
 
-    `preship_command` があれば、付け替えと上の検証のあと・送る直前に毎回打つ。付け替えの有無も
-    借りも見ない。落ちたら `VERIFY_FAILED`（`verify_command` はこのコマンド）。
+    `preship_command` があれば、上の検証の代わりにこれを送る直前に打つ（検証コマンドは打たない）。
+    打つのは付け替えた回・借りの1回目・`preship_stamped`（控えの木とコマンドが今の中身と同じ）が
+    偽のとき。落ちたら `VERIFY_FAILED`（`verify_command` はこのコマンド）。
     """
     rebased_any = False
+    preship_ran = False
     verify_state = "none" if verify_command is None else "skipped"
 
     for tries in range(1, MAX_TRIES + 1):
@@ -128,7 +136,7 @@ def attempt(
             rebased_any = True
 
         owed_this_round = tries == 1 and verify_owed
-        if (rebased_this_round or owed_this_round) and verify_command is not None:
+        if (rebased_this_round or owed_this_round) and verify_command is not None and preship_command is None:
             vrc, vlog, tail = _run_logged(toplevel, verify_command)
             verify_state = "ran"
             if vrc != 0:
@@ -142,7 +150,8 @@ def attempt(
                     verify_log=vlog,
                 )
 
-        if preship_command is not None:
+        if preship_command is not None and (rebased_this_round or owed_this_round or not preship_stamped):
+            preship_ran = True
             prc, plog, tail = _run_logged(toplevel, preship_command)
             if prc != 0:
                 return ShipOutcome(
@@ -171,7 +180,7 @@ def attempt(
                 rebased=rebased_any,
                 verify_state=verify_state,
                 tries=tries,
-                preship_ran=preship_command is not None,
+                preship_ran=preship_ran,
             )
 
     return ShipOutcome(kind="RACE", rebased=rebased_any, verify_state=verify_state, tries=MAX_TRIES)

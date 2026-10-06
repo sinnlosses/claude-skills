@@ -1037,7 +1037,7 @@ def _print_verify_end(folded_line: str, verdict: str, tail: str) -> None:
 
 
 def cmd_verify(toplevel: str, unplanned_work: Callable[[], list[str]]) -> None:
-    verify_command = ship.read_verify_command(toplevel)
+    verify_command = ship.read_stamp_command(toplevel)
     if verify_command is None:
         print("NOTHING\t(検証コマンドが無い)")
         return
@@ -1097,7 +1097,7 @@ def cmd_verify(toplevel: str, unplanned_work: Callable[[], list[str]]) -> None:
 
 
 def cmd_verify_check(toplevel: str) -> None:
-    verify_command = ship.read_verify_command(toplevel)
+    verify_command = ship.read_stamp_command(toplevel)
     if verify_command is None:
         print("NOTHING\t(検証コマンドが無い)")
         return
@@ -1126,7 +1126,7 @@ HANDBACK_VERIFY_OK = ("VERIFIED_SAME", "NOTHING")
 
 
 def cmd_pause(toplevel: str) -> None:
-    key = ledger.content_key(ship.read_verify_command(toplevel) or "", cwd=toplevel)
+    key = ledger.content_key(ship.read_stamp_command(toplevel) or "", cwd=toplevel)
     ledger.write_pause_stamp(key, cwd=toplevel)
     _record_claimed(toplevel, "pause")
     print(f"PAUSED\t{key.tree}")
@@ -1148,7 +1148,7 @@ def cmd_step(toplevel: str, task_id: str, step: str) -> None:
     if int(step) == len(steps):
         print(f"LAST_STEP\t{shown}\t{step}/{len(steps)}\t最後の段は tw verify を通してから返す")
         raise SystemExit(4)
-    key = ledger.content_key(ship.read_verify_command(toplevel) or "", cwd=toplevel)
+    key = ledger.content_key(ship.read_stamp_command(toplevel) or "", cwd=toplevel)
     ledger.write_step_stamp(ledger.StepStamp(key, shown, int(step)), cwd=toplevel)
     _record(toplevel, "step", shown, step=int(step), steps=len(steps))
     print(f"STEPPED\t{shown}\t{step}/{len(steps)}\t{key.tree}")
@@ -1219,14 +1219,14 @@ def _stepped_on_current_content(toplevel: str, task_id: str) -> bool:
     stamp = ledger.read_step_stamp(cwd=toplevel)
     if stamp is None or stamp.task_id != task_id:
         return False
-    if stamp.key != ledger.content_key(ship.read_verify_command(toplevel) or "", cwd=toplevel):
+    if stamp.key != ledger.content_key(ship.read_stamp_command(toplevel) or "", cwd=toplevel):
         return False
     return stamp.step < len(taskfile.plan_steps(_claimed_plan_body(toplevel, task_id))[0])
 
 
 def _paused_on_current_content(toplevel: str) -> bool:
     stamp = ledger.read_pause_stamp(cwd=toplevel)
-    return stamp is not None and stamp == ledger.content_key(ship.read_verify_command(toplevel) or "", cwd=toplevel)
+    return stamp is not None and stamp == ledger.content_key(ship.read_stamp_command(toplevel) or "", cwd=toplevel)
 
 
 def _first_output_line(command: Callable[[], None]) -> str:
@@ -1328,13 +1328,22 @@ def cmd_ship(toplevel: str, hooks: "ShipHooks | None" = None) -> None:
     old_base = _run_git(toplevel, ["rev-parse", base]).stdout.strip()
     verify_command = ship.read_verify_command(toplevel)
     verify_owed = ledger.is_verify_owed(cwd=toplevel)
+    preship_command = ship.read_preship_command(toplevel)
+    stamp = ledger.read_verify_stamp(cwd=toplevel)
+    preship_stamped = (
+        preship_command is not None
+        and stamp is not None
+        and stamp.verify_command == preship_command
+        and stamp.tree == ledger.worktree_tree(toplevel, objects_in_repo=False)
+    )
     outcome = ship.attempt(
         toplevel,
         base_worktree,
         verify_command,
         base,
         verify_owed=verify_owed,
-        preship_command=ship.read_preship_command(toplevel),
+        preship_command=preship_command,
+        preship_stamped=preship_stamped,
     )
 
     if outcome.kind in ("CONFLICT", "VERIFY_FAILED", "RACE"):
@@ -1365,7 +1374,9 @@ def cmd_ship(toplevel: str, hooks: "ShipHooks | None" = None) -> None:
     released = hooks.release_shipped()
     _record_shipped(toplevel, released)
     new_base = _run_git(toplevel, ["rev-parse", base]).stdout.strip()
-    preship_note = "\tpreship=ran" if outcome.preship_ran else ""
+    preship_note = ""
+    if preship_command is not None:
+        preship_note = "\tpreship=ran" if outcome.preship_ran else "\tpreship=skipped"
     print(
         f"SHIPPED\t{old_base}..{new_base}\trebased={'yes' if outcome.rebased else 'no'}"
         f"\tverify={outcome.verify_state}{preship_note}\ttries={outcome.tries}\treleased={','.join(released) or '-'}"

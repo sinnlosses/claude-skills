@@ -69,10 +69,11 @@
   走らせるコマンドが無ければ `なし` と書き、**行を消さない**（「検討して不要」と「未検討」を
   区別するため）。検証コマンドは最初の `` `…` `` を `sh -c` で打つ
 - `- 送る前の検証コマンド:` は**任意行**（無いのが既定。無くても `MISSING_LINE` にしない。書くなら
-  `- 検証コマンド:` の次に置く）。あれば `tw ship` が、付け替えと検証のあと・主ブランチへ入れる直前に、
-  最初の `` `…` `` を `sh -c` で**毎回**打つ。`tw verify` の控え（`VERIFIED_SAME`）や借りの有無では
-  省かず、落ちれば `VERIFY_FAILED`（終了コード8）で送らない。全件の E2E のように重い検証を、
-  送る直前の1回だけに回したいときに使う。`tw verify`・`tw verify-check` は読まない。`なし` なら行が無いのと同じ
+  `- 検証コマンド:` の次に置く）。あれば `tw verify` は検証コマンドの代わりにその最初の `` `…` `` を
+  `sh -c` で打ち、`tw verify-check`・`tw pause`・`tw step` の鍵もそのコマンドで取る。`tw ship` は主ブランチへ
+  入れる直前に同じコマンドを打つ。ただし控えの木とコマンドが今の中身と同じで、付け替えが無く、借りも
+  無いときは飛ばす。付け替えた回は検証コマンドを打たず、これだけを1回打つ。落ちれば `VERIFY_FAILED`
+  （終了コード8）で送らない。全件の E2E のように重い検証を、1件の中で1回に済ませたいときに使う。`なし` なら行が無いのと同じ
 - `- 規則の発火の集計:` も**任意行**。直近30日の hook ごとの拒否の回数を出すコマンドを最初の `` `…` `` に書く。
   読むのは `tw` ではなく横断の振り返り（`retrospect` の SKILL.md「週ごとに振り返る」）で、無ければその観点を飛ばす
 - `- ブランチ:` は**値の先頭語だけ**を `tw` が読む（後ろは人向けの説明で自由）:
@@ -334,11 +335,11 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 | --- | --- | --- |
 | 受け入れ（`tw done` の前） | スキル | 作業の合否そのもの。主ブランチを取り込んだあとの中身で打つ。整形コマンドもここ。委譲先が `tw verify` で控えた中身と同じなら省く（`tw verify-check`。控えは cwd の作業ツリーごとなので、別のリポジトリが作業先ならそのリポジトリの作業ツリーで打つ） |
 | `ship` の中で rebase が実際に付け替えたとき | `tw` | 両側の変更が初めて同じ木に乗る |
-| 主ブランチへ入れる直前（`- 送る前の検証コマンド:` の行があるときだけ） | `tw` | 控えや付け替えの有無に関わらず毎回。`SHIPPED` の行に `preship=ran` が付く |
+| 主ブランチへ入れる直前（`- 送る前の検証コマンド:` の行があるときだけ） | `tw` | 付け替えた回・借りがある回・控えの木とコマンドが今の中身と違う回に打ち、`SHIPPED` の行に `preship=ran` が付く。同じなら飛ばして `preship=skipped`。`tw done` がファイル方式のタスクファイルを書き換えると木が変わるので、その送りは打つ |
 | 主ブランチへ送ったあと | 打たない | fast-forward なので、主ブランチの木は直前に検証した木と同じ |
 
-`ship` は `tw verify` の控えを読まない（付け替えで中身が変わるので、付け替えた回は控えがあっても検証する）。
-送る前の検証コマンドの行があれば、これとは別に毎回打つ（落ちたときの借りの扱いも `VERIFY_FAILED` と同じ）。
+検証コマンドについて `ship` は `tw verify` の控えを読まない（付け替えで中身が変わるので、付け替えた回は控えがあっても検証する）。
+送る前の検証コマンドの行があれば、`ship` は控えの `tree` と `verify_command` だけを今の中身と照らし（`head` は比べない。コミットで変わる）、同じなら打たない。付け替えた回は検証コマンドの代わりにこれを打つ（落ちたときの借りの扱いも `VERIFY_FAILED` と同じ）。
 
 `VERIFY_FAILED` で終わったあとは、枝は付け替え済みのまま検証の借りが残る（作業ツリー固有の印。
 `git worktree` を消すと一緒に消える）。次に打った `ship` は、その回で付け替えが起きなくても
@@ -442,7 +443,7 @@ PATH に無ければ plugin を入れるか、`./install.sh` を打ち直す（`
 | `claim T-xxx` | clean・未送りなしを確かめ、主ブランチへ追い付き（主ブランチが `HEAD` の祖先なら `merge` を打たない）、印を立て（`.tw/task-open-claims/T-xxx` の控えも置く）、設定なら枝を切る。追い付くか枝を切るのに `.git` へ書けなければ、印を立てる前に `GIT_READ_ONLY` で止まる。台帳に書けなければ何もせずに `STATE_READ_ONLY`。ファイル方式で、渡したタスクが古い台帳にだけ印を持てば（`status` の `split_claims`）、印を立てずに `TAKEN\tT-xxx\t<古い印の作業ツリー>\t<経過>`。ほかのタスクにだけあれば `CLAIMED` の行のあとに `split_claims` の行を足す。登録時の計画の控えがあれば、名指したファイルが控えから主ブランチの先端までに変わったかを判定し、比べた先端を印に控え（台帳の印の `plan-tip`、metadata `task_plan_tip`）、変わっていなければ印に `registered` を残す（出力は変えない） | `CLAIMED`・`TAKEN`・`NOT_READY`・`DIRTY`・`UNSHIPPED`・`GIT_READ_ONLY`・`STATE_READ_ONLY` |
 | `release T-xxx [--force]` | 印と `task-open-claims/T-xxx` の控えを消すだけ（ファイルは戻さない）。`--force` は人が取り残しを片付けるときで、控えは印の持ち主の作業ツリーのものを消す（その作業ツリーが消えていれば何もしない） | `RELEASED`・`NOT_CLAIMED`・`NOT_OWNER`・`STATE_READ_ONLY`（ファイル方式） |
 | `done T-xxx [--dropped] --result-file <path\|->` | `status` と `## 結果` を書いて stage（コミットしない・印は残す）。`task-open-claims/T-xxx` の控えは消すので、このあとのコミットを `commit-guard` は拒まない。本文が枠（`## 結果` を除く7節）と違えば書かずに `INVALID`（終了コード3）。`claim` した時点の `HEAD` より後に、主ブランチに無いコミットがあれば `DONE` に続けて知らせる（`commit-guard` をすり抜けたコミットの事後の知らせ。控えの無い古い印では出さない）。ファイル方式では、`.git` に書けなければタスクファイルを書く前に `GIT_READ_ONLY` で止まる（Beads 方式の `done` は `.git` に書かない） | `DONE`（`COMMITS_SINCE_CLAIM` が続くことがある）・`NOT_OWNER`・`INVALID`・`GIT_READ_ONLY` |
-| `ship` | rebase → （付け替えたら）検証 → （送る前の検証コマンドの行があれば）それを毎回 → ff-only で送る → 印と `task-open-claims/T-xxx` の控えを消す → 作業ブランチから降りる。送るものがあって `.git` に書けなければ、rebase の前に `GIT_READ_ONLY` で止まる。台帳に書けなければ何もせずに `STATE_READ_ONLY`（ファイル方式） | `SHIPPED`・`NOTHING`・`MAIN_DIRTY`・`CONFLICT`・`VERIFY_FAILED`・`RACE`・`GIT_READ_ONLY`・`STATE_READ_ONLY` |
+| `ship` | rebase → （付け替えたら）検証 → （送る前の検証コマンドの行があれば）付け替えた・借りがある・控えが今の中身と違うときだけそれを（付け替えた回は検証の代わりに） → ff-only で送る → 印と `task-open-claims/T-xxx` の控えを消す → 作業ブランチから降りる。送るものがあって `.git` に書けなければ、rebase の前に `GIT_READ_ONLY` で止まる。台帳に書けなければ何もせずに `STATE_READ_ONLY`（ファイル方式） | `SHIPPED`・`NOTHING`・`MAIN_DIRTY`・`CONFLICT`・`VERIFY_FAILED`・`RACE`・`GIT_READ_ONLY`・`STATE_READ_ONLY` |
 | `prune [--dry-run] [--min N]` | `HEAD` で `done`・`dropped`・印なし、かつ振り返り済み（`## 結果` に `- 振り返り:` の行がある＝`reviewed`）のタスクファイルを `git rm` して stage（コミットしない）。対象が `--min`（既定10）件に届かなければ何もしない。`--dry-run` は一覧だけ（汚れていても打てる）。`--dry-run` でなく `.git` に書けなければ、`PRUNE` の行を出す前に `GIT_READ_ONLY` で止まる | 対象ごとに `PRUNE\tT-xxx\treviewed`、最後に `PRUNED\t<N>`／`PLAN\t<N>`（`--dry-run`）。対象が無いか `--min` 件に届かなければ `NOTHING`。`DIRTY`・`GIT_READ_ONLY` |
 | `migrate [--dry-run]` | 旧形式を変換する（下の「旧形式からの移行」）。`--dry-run` でなく `.git` に書けなければ、何も書かずに `GIT_READ_ONLY` で止まる | `WRITE`・`MOVE`・`LEFTOVER`・`REMOVE`・`PLAN`/`MIGRATED`・`GIT_READ_ONLY` |
 | `show T-xxx` | タスク1件をタスクファイルの形で出す（読むだけ。ファイル方式は作業ツリーの版、無ければ主ブランチの版） | 本文。無ければ `NOT_READY` |
