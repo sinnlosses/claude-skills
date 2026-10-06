@@ -55,6 +55,8 @@ failures: list[str] = []
 BASE_ENV = os.environ.copy()
 # テストは CPU 数の半分まで並行に走らせる。出力と環境変数はテストごとに持つ。
 _local = threading.local()
+# prefix ごとに `bd init --stealth` した `.beads` と、そのとき書かれた `.git/info/exclude`。`main()` が作る。
+_beads_templates: dict[str, tuple[str, str]] = {}
 
 
 def env() -> dict[str, str]:
@@ -123,8 +125,10 @@ def tail_line(out: str, key: str) -> str:
     return next((l for l in out.splitlines() if l.startswith(key + "\t")), "")
 
 
-def make_repo(tmp: str, branch: str = "切らない", extra: str = "", verify: str | None = None) -> tuple[str, str, str]:
-    """`(本体, 作業ツリー1, 作業ツリー2)`。`init.py` で `.beads` を用意する。"""
+def make_repo(tmp: str, branch: str = "切らない", extra: str = "", verify: str | None = None,
+              prefix: str | None = beads.PREFIX_LOCAL) -> tuple[str, str, str]:
+    """`(本体, 作業ツリー1, 作業ツリー2)`。`.beads` は `prefix` の作り置きを写してから `init.py` を打つ。
+    `prefix` が `None` なら `init.py` が `bd init` で作る。"""
     main_path = os.path.join(tmp, "base")
     os.makedirs(main_path)
     git(main_path, "init", "-q", "-b", "main")
@@ -136,6 +140,10 @@ def make_repo(tmp: str, branch: str = "切らない", extra: str = "", verify: s
     config += f"- 整形コマンド: なし\n- ブランチ: {branch}\n- タスクの置き場: beads\n{extra}"
     write(os.path.join(main_path, "CLAUDE.md"), config)
     write(os.path.join(main_path, "shared.txt"), "line1\n")
+    if prefix is not None:
+        template, exclude = _beads_templates[prefix]
+        shutil.copytree(template, os.path.join(main_path, ".beads"))
+        write(os.path.join(main_path, ".git", "info", "exclude"), exclude)
     r = subprocess.run([sys.executable, INIT_PY, "develop"], cwd=main_path, capture_output=True, text=True, env=env())
     if r.returncode != 0:
         raise RuntimeError(f"init.py 失敗: {r.stdout}{r.stderr}")
@@ -181,7 +189,7 @@ def work_and_done(wt: str, task_id: str, *, dropped: bool = False, name: str = "
 def test_setup_and_config_doctor() -> None:
     say("init.py・config-doctor・MISSING・設定の読み違い")
     with tempfile.TemporaryDirectory() as tmp:
-        main_path, wt1, _ = make_repo(tmp)
+        main_path, wt1, _ = make_repo(tmp, prefix=None)
         check("init.py が .beads を作る", os.path.isdir(os.path.join(main_path, ".beads")))
         check("stealth で .beads は git に見えない", git(main_path, "status", "--porcelain").stdout.strip() == "")
         r = run_task(wt1, "config-doctor")
@@ -1267,11 +1275,7 @@ def gh_calls() -> list[list[str]]:
 
 def _github_repo(tmp: str, prefix: str) -> tuple[str, str]:
     """トラッカーが github の `(本体, 作業ツリー1)`。`prefix` が `t` なら切り替え前（送るだけ）。"""
-    main_path, wt1, _ = make_repo(tmp, extra="- トラッカー: github\n- GitHub Project: `sinnlosses/1`\n")
-    if prefix != beads.PREFIX_GITHUB:
-        # `issue_prefix` は `bd config set` では変えられない（`bd` 1.3.0）ので作り直す。
-        shutil.rmtree(os.path.join(main_path, ".beads"))
-        bd(main_path, "init", "--stealth", "-p", prefix, "--non-interactive", "--skip-hooks", "--quiet")
+    main_path, wt1, _ = make_repo(tmp, extra="- トラッカー: github\n- GitHub Project: `sinnlosses/1`\n", prefix=prefix)
     bd(main_path, "config", "set", "github.repository", "o/r")
     return main_path, wt1
 
@@ -1696,6 +1700,18 @@ def test_backup() -> None:
         check("リポジトリの中へは取らない（終了コード10）", r.returncode == 10 and "BACKUP\tFAILED" in r.stdout, r.stdout)
 
 
+def _make_beads_template(home: str, prefix: str) -> None:
+    repo = os.path.join(home, f"beads-template-{prefix}")
+    os.makedirs(repo)
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "config", "beads.role", "maintainer")
+    r = bd(repo, "init", "--stealth", "-p", prefix, "--non-interactive", "--skip-hooks", "--quiet")
+    if r.returncode != 0:
+        raise RuntimeError(f"bd init -p {prefix} 失敗: {r.stdout}{r.stderr}")
+    with open(os.path.join(repo, ".git", "info", "exclude"), encoding="utf-8") as f:
+        _beads_templates[prefix] = (os.path.join(repo, ".beads"), f.read())
+
+
 def _stat(path: str) -> tuple[float, int] | None:
     try:
         st = os.stat(path)
@@ -1798,6 +1814,8 @@ def main() -> None:
             test_backup,
         )
         tests = tuple(t for t in tests if not only or t.__name__ in only)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(lambda prefix: _make_beads_template(home, prefix), (beads.PREFIX_LOCAL, beads.PREFIX_GITHUB)))
         with ThreadPoolExecutor(max_workers=min(len(tests), max(1, (os.cpu_count() or 2) // 2))) as pool:
             outputs = list(pool.map(_run_one, tests))
     for lines in outputs:
