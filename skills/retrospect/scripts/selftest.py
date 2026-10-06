@@ -20,6 +20,9 @@ sys.path.insert(0, HERE)
 
 import tally  # noqa: E402
 
+# 足場は共有の git dir の台帳に記録を置くので、利用者の値で置き場を移さない。
+os.environ.pop("TW_STATE_DIR", None)
+
 failures: list[str] = []
 
 

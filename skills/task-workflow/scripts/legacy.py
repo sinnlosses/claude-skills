@@ -325,7 +325,7 @@ def migrate(toplevel: str, dry_run: bool) -> MigrateResult:
 
     _run_git(toplevel, ["rm", "-q", "develop/tasks.json"])
 
-    root = ledger.ledger_root(cwd=toplevel)
+    root = ledger.ledger_root_for_write(cwd=toplevel)
     history_ids = taskfile.history_ids(os.path.join(toplevel, layout.HISTORY_TASKS_PATH))
     max_id = max(
         [0] + [taskfile.id_number(t.id) for t in converted] + [taskfile.id_number(h) for h in history_ids]

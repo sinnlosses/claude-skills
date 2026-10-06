@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import errno
+import hashlib
 import json
 import os
 import re
@@ -24,6 +26,11 @@ import layout
 CLAIM_DIR_NAME = "claim"
 LOCK_DIR_NAME = "lock"
 LAST_ID_FILE_NAME = "last-id"
+LEDGER_DIR_NAME = "task-workflow"
+STATE_DIR_ENV = "TW_STATE_DIR"
+# `TW_STATE_DIR` の台帳へ古い台帳を写したときの着手の印（`<タスクID>\t<claimed_at>` の行）。
+CARRIED_CLAIMS_FILE_NAME = "carried-claims"
+READ_ONLY_ERRNOS = (errno.EACCES, errno.EPERM, errno.EROFS)
 
 
 class GitCommandError(RuntimeError):
@@ -32,6 +39,14 @@ class GitCommandError(RuntimeError):
 
 class NoBaseBranch(RuntimeError):
     """主ブランチが決まらなかった。データの不備（呼ぶ側が `INVALID`・終了コード3 にする）。"""
+
+
+class StateReadOnly(RuntimeError):
+    """台帳の置き場に書けない（呼ぶ側が `STATE_READ_ONLY`・終了コード12 にする）。"""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(path)
+        self.path = path
 
 
 def _git(args: list[str], cwd: str | None = None) -> str:
@@ -210,7 +225,102 @@ def list_worktrees(cwd: str | None = None) -> list[Worktree]:
 
 
 def ledger_root(cwd: str | None = None) -> str:
-    return os.path.join(git_common_dir(cwd), "task-workflow")
+    """読む側の台帳の置き場。`TW_STATE_DIR` があれば
+    `$TW_STATE_DIR/<本体の作業ツリーの名前>-<共有の git dir の realpath の sha1 の先頭12桁>`
+    （環境変数は全リポジトリに掛かるのでクローンごとに分ける）、無ければ共有の git dir の `task-workflow/`。"""
+    common = git_common_dir(cwd)
+    state = os.environ.get(STATE_DIR_ENV)
+    if not state:
+        return os.path.join(common, LEDGER_DIR_NAME)
+    real = os.path.realpath(common)
+    digest = hashlib.sha1(real.encode("utf-8")).hexdigest()[:12]
+    name = os.path.basename(os.path.dirname(real))
+    return os.path.join(os.path.abspath(os.path.expanduser(state)), f"{name}-{digest}")
+
+
+def ledger_root_for_write(cwd: str | None = None) -> str:
+    """書く側の台帳の置き場。`TW_STATE_DIR` の台帳がまだ無く古い台帳があれば丸ごと写してから、
+    置き場を作って書けるかを確かめる。書けなければ `StateReadOnly`。"""
+    root = ledger_root(cwd)
+    old = _old_ledger_root(cwd)
+    try:
+        if old is not None and not os.path.isdir(root) and os.path.isdir(old):
+            _carry_over_ledger(old, root)
+        os.makedirs(root, exist_ok=True)
+        fd, probe = tempfile.mkstemp(prefix=".probe-", dir=root)
+        os.close(fd)
+        os.remove(probe)
+    except OSError as e:
+        if e.errno in READ_ONLY_ERRNOS:
+            raise StateReadOnly(root) from e
+        raise
+    return root
+
+
+@dataclass(frozen=True)
+class SplitClaim:
+    task_id: str
+    worktree: str
+    claimed_at: str
+
+
+def split_claims(cwd: str | None = None) -> list[SplitClaim]:
+    """`TW_STATE_DIR` を使っているとき、古い台帳にあって新しい台帳に無く、写したときにも無かった
+    着手の印。使っていなければ空。"""
+    old = _old_ledger_root(cwd)
+    if old is None:
+        return []
+    root = ledger_root(cwd)
+    current = set(list_claims(root))
+    carried = _read_carried_claims(root)
+    found: list[SplitClaim] = []
+    for task_id in list_claims(old):
+        owner = read_owner(claim_dir(old, task_id)) or {}
+        claimed_at = owner.get("claimed_at", "")
+        if task_id in current or (task_id, claimed_at) in carried:
+            continue
+        found.append(SplitClaim(task_id, owner.get("worktree", "?"), claimed_at))
+    return found
+
+
+def _old_ledger_root(cwd: str | None) -> str | None:
+    if not os.environ.get(STATE_DIR_ENV):
+        return None
+    return os.path.join(git_common_dir(cwd), LEDGER_DIR_NAME)
+
+
+def _carry_over_ledger(old: str, root: str) -> None:
+    """古い台帳を錠を除いて一時ディレクトリへ写し、写した印を控えてから `root` へ `rename` する
+    （先を越されたら一時ディレクトリを捨てる）。"""
+    parent = os.path.dirname(root)
+    os.makedirs(parent, exist_ok=True)
+    tmp = tempfile.mkdtemp(prefix=os.path.basename(root) + "-", dir=parent)
+    try:
+        shutil.copytree(old, tmp, dirs_exist_ok=True, ignore=shutil.ignore_patterns(LOCK_DIR_NAME))
+        lines = [
+            f"{task_id}\t{(read_owner(claim_dir(old, task_id)) or {}).get('claimed_at', '')}\n"
+            for task_id in list_claims(old)
+        ]
+        with open(os.path.join(tmp, CARRIED_CLAIMS_FILE_NAME), "w", encoding="utf-8") as f:
+            f.write("".join(lines))
+        os.rename(tmp, root)
+    except OSError:
+        shutil.rmtree(tmp, ignore_errors=True)
+        if not os.path.isdir(root):
+            raise
+
+
+def _read_carried_claims(root: str) -> set[tuple[str, str]]:
+    path = os.path.join(root, CARRIED_CLAIMS_FILE_NAME)
+    if not os.path.exists(path):
+        return set()
+    carried: set[tuple[str, str]] = set()
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            task_id, sep, claimed_at = line.rstrip("\n").partition("\t")
+            if sep:
+                carried.add((task_id, claimed_at))
+    return carried
 
 
 def _ensure_dirs(root: str) -> None:

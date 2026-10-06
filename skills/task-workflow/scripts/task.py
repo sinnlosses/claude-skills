@@ -273,6 +273,7 @@ def cmd_status(toplevel: str, show_all: bool, check: bool) -> None:
             stale_entries.append(f"{tid}:{label}({detail})" if detail else f"{tid}:{label}")
 
     _print_status_table(tasks, invalid, claims, show_all, marker_of, stale_entries)
+    _print_split_claims(ledger.split_claims(cwd=toplevel))
     _print_retrospect_due(toplevel)
     _print_legacy_progress(toplevel)
 
@@ -381,7 +382,7 @@ def cmd_new(toplevel: str, args: argparse.Namespace) -> None:
         raise SystemExit(2)
     plan_base = _registered_plan_base(toplevel, body) if taskfile.has_plan(body) else None
 
-    root = ledger.ledger_root(cwd=toplevel)
+    root = ledger.ledger_root_for_write(cwd=toplevel)
     if not ledger.acquire_lock(root):
         age = ledger.lock_owner_age_seconds(root)
         hint = f"\trmdir {shlex.quote(os.path.join(root, ledger.LOCK_DIR_NAME))}" if age and age > 60 else ""
@@ -553,6 +554,7 @@ def cmd_claim(toplevel: str, task_id: str) -> None:
         print(f"usage: {task_id!r} が T-999 の形式でない", file=sys.stderr)
         raise SystemExit(2)
 
+    root = ledger.ledger_root_for_write(cwd=toplevel)
     branch_setting, base = _claim_preflight(toplevel)
 
     tasks, invalid, _ = load_tasks(toplevel)
@@ -571,7 +573,12 @@ def cmd_claim(toplevel: str, task_id: str) -> None:
         print(f"NOT_READY\t{task_id}\tBLOCKED:{','.join(blocked)}")
         raise SystemExit(4)
 
-    root = ledger.ledger_root(cwd=toplevel)
+    split = ledger.split_claims(cwd=toplevel)
+    held = next((s for s in split if s.task_id == task_id), None)
+    if held is not None:
+        age = _age_seconds(held.claimed_at)
+        print(f"TAKEN\t{task_id}\t{held.worktree}\t{format_elapsed(age) if age is not None else '?'}")
+        raise SystemExit(4)
     branch_after_sync = ledger.current_branch(cwd=toplevel)
     head = ledger.head_sha_or_none(cwd=toplevel)
     if not ledger.try_claim(root, task_id, toplevel, branch_after_sync, head):
@@ -593,6 +600,14 @@ def cmd_claim(toplevel: str, task_id: str) -> None:
             ledger.write_plan_mark(root, task_id, PLAN_REGISTERED)
 
     _claim_branch_out(toplevel, task_id, branch_setting, base, branch_after_sync, f"{layout.TASK_DIR}/{task_id}.md")
+    _print_split_claims(split)
+
+
+def _print_split_claims(split: list[ledger.SplitClaim]) -> None:
+    """古い台帳にだけある着手の印（`TW_STATE_DIR` をそろえていないセッションの印）の1行。無ければ出さない。"""
+    if split:
+        entries = ",".join(f"{s.task_id}:{os.path.basename(s.worktree)}" for s in split)
+        print(f"split_claims\t{len(split)}\t{entries}")
 
 
 def _claim_preflight(toplevel: str) -> tuple[str, str]:
@@ -646,7 +661,7 @@ def cmd_release(toplevel: str, task_id: str, force: bool) -> None:
     if not taskfile.ID_PATTERN.match(task_id):
         print(f"usage: {task_id!r} が T-999 の形式でない", file=sys.stderr)
         raise SystemExit(2)
-    root = ledger.ledger_root(cwd=toplevel)
+    root = ledger.ledger_root_for_write(cwd=toplevel)
     owner = ledger.read_owner(ledger.claim_dir(root, task_id)) or {}
     result = ledger.release_claim(root, task_id, toplevel, force=force)
     if result == "RELEASED":
@@ -864,6 +879,7 @@ def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
         own = f"{layout.TASK_DIR}/{task_id}.md"
         state = _plan_state(toplevel, owner.get("head"), args.body_file, own)
         _refuse_plan_after_work(task_id, state, args.after_work)
+        root = ledger.ledger_root_for_write(cwd=toplevel)
 
     rendered = taskfile.render(
         taskfile.Task(task.id, task.summary, task.status, task.difficulty, task.loopable, dependencies, body)
@@ -1247,7 +1263,7 @@ class ShipHooks:
 
 
 def _file_ship_hooks(toplevel: str) -> ShipHooks:
-    root = ledger.ledger_root(cwd=toplevel)
+    root = ledger.ledger_root_for_write(cwd=toplevel)
     return ShipHooks(
         release_shipped=lambda: _release_own_claims_when_shipped(root, toplevel),
         claimed_branch=lambda tid: (ledger.read_owner(ledger.claim_dir(root, tid)) or {}).get("branch"),
@@ -2365,6 +2381,12 @@ def main(argv: list[str] | None = None) -> None:
     except (ledger.NoBaseBranch, layout.ConfigConflict, layout.StoreSettingError, tracker.TrackerSettingError) as e:
         print(f"INVALID\t{e}")
         raise SystemExit(3)
+    except ledger.StateReadOnly as e:
+        print(
+            f"STATE_READ_ONLY\t{e.path}\t{ledger.STATE_DIR_ENV} を書ける場所に向けるか、{e.path} を書ける場所に足す"
+            "（Codex は writable roots、Claude Code は sandbox.filesystem.allowWrite）"
+        )
+        raise SystemExit(12)
 
 
 def _main_beads(toplevel: str, args: argparse.Namespace) -> None:

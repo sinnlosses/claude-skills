@@ -40,6 +40,9 @@ import layout  # noqa: E402
 import ledger  # noqa: E402
 import taskfile  # noqa: E402
 
+# 利用者の値のままだと、一時リポジトリの台帳がその置き場に積もる。
+os.environ.pop(ledger.STATE_DIR_ENV, None)
+
 TASK_PY = os.path.join(HERE, "task.py")
 INIT_PY = os.path.join(HERE, "init.py")
 MATERIAL_PY = os.path.join(HERE, "..", "..", "retrospect", "scripts", "material.py")

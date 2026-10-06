@@ -26,6 +26,9 @@ import ledger  # noqa: E402
 import legacy  # noqa: E402
 import taskfile  # noqa: E402
 
+# 利用者の値のままだと、一時リポジトリの台帳がその置き場に積もる。
+os.environ.pop(ledger.STATE_DIR_ENV, None)
+
 TASK_PY = os.path.join(HERE, "task.py")
 BODY = "## 目的・背景\nx\n\n## 決まっていること（蒸し返さない）\n\n## 解くべき論点\nなし\n\n## やること\n\n## 完了条件\nx\n\n## 注意\n\n## 参考情報\n"
 # 登録の既定の本文。`make_repo` が主ブランチに置く `shared.txt` を名指す。
@@ -56,8 +59,17 @@ def git(cwd: str, *args: str) -> subprocess.CompletedProcess:
     return r
 
 
-def run_task(cwd: str, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, TASK_PY, *args], cwd=cwd, capture_output=True, text=True, input=stdin)
+def run_task(
+    cwd: str, *args: str, stdin: str | None = None, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, TASK_PY, *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        input=stdin,
+        env={**os.environ, **env} if env is not None else None,
+    )
 
 
 def start_task(cwd: str, *args: str) -> subprocess.Popen:
@@ -1206,6 +1218,56 @@ def test_worktree_state_dir() -> None:
               and not os.path.exists(os.path.join(old, "task-verify-stamp"))
               and not os.path.exists(os.path.join(old, "task-open-claims"))
               and run_task(wt2, "verify-check").stdout.startswith("VERIFIED_SAME\t"), r.stdout + r.stderr)
+
+
+def test_state_dir() -> None:
+    print("ledger.py TW_STATE_DIR: 台帳の置き場を変え、古い台帳を写し、分かれた印と書けない置き場を知らせる")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp, branch="切らない")
+        for tid in ("T-100", "T-101", "T-102"):
+            commit_task(main_path, taskfile.Task(tid, "置き場", "todo", "sonnet", "Y", (), BODY))
+        state = os.path.join(tmp, "state")
+        env = {ledger.STATE_DIR_ENV: state}
+        old_root = ledger.ledger_root(cwd=main_path)
+
+        run_task(wt2, "claim", "T-100")
+        r = run_task(wt1, "claim", "T-101", env=env)
+        roots = os.listdir(state) if os.path.isdir(state) else []
+        new_root = os.path.join(state, roots[0]) if len(roots) == 1 else ""
+        check("TW_STATE_DIR の下のクローンごとの置き場に印を立て、古い台帳には立てない",
+              r.returncode == 0 and roots[:1] != [] and roots[0].startswith("base-")
+              and os.path.isdir(ledger.claim_dir(new_root, "T-101"))
+              and not os.path.isdir(ledger.claim_dir(old_root, "T-101")), r.stdout + r.stderr + str(roots))
+        r = run_task(wt1, "claim", "T-100", env=env)
+        check("初めて書くときに古い台帳を写し、別の作業ツリーの印は TAKEN",
+              r.returncode == 4 and r.stdout.startswith(f"TAKEN\tT-100\t{os.path.realpath(wt2)}\t"), r.stdout + r.stderr)
+
+        run_task(wt2, "release", "T-100", env=env)
+        run_task(wt2, "claim", "T-102")
+        r = run_task(wt1, "status", env=env)
+        check("写したあとに古い台帳にだけ立った印を status が split_claims の行で知らせる（写した印は数えない）",
+              "split_claims\t1\tT-102:wt2" in r.stdout.splitlines(), r.stdout + r.stderr)
+        r = run_task(wt1, "claim", "T-102", env=env)
+        check("古い台帳にだけ印のあるタスクの claim は、印を立てずに TAKEN（終了コード4）",
+              r.returncode == 4 and r.stdout.startswith(f"TAKEN\tT-102\t{os.path.realpath(wt2)}\t")
+              and not os.path.isdir(ledger.claim_dir(new_root, "T-102")), r.stdout + r.stderr)
+        r = run_task(wt1, "status")
+        check("TW_STATE_DIR が無ければ split_claims の行を出さない", "split_claims" not in r.stdout, r.stdout)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _ = make_repo(tmp, branch="切らない")
+        commit_task(main_path, taskfile.Task("T-100", "書けない", "todo", "sonnet", "Y", (), BODY))
+        root = ledger.ledger_root(cwd=main_path)
+        os.makedirs(root, exist_ok=True)
+        os.chmod(root, 0o555)
+        try:
+            r = run_task(wt1, "claim", "T-100")
+        finally:
+            os.chmod(root, 0o755)
+        check("台帳に書けなければ STATE_READ_ONLY（終了コード12）で足す置き場と TW_STATE_DIR を言い、何も立てない",
+              r.returncode == 12 and r.stdout.startswith(f"STATE_READ_ONLY\t{root}\t") and "TW_STATE_DIR" in r.stdout
+              and not os.path.isdir(ledger.claim_dir(root, "T-100"))
+              and not os.path.exists(os.path.join(wt1, ".tw", "task-open-claims", "T-100")), r.stdout + r.stderr)
 
 
 # --- task.py: edit・plan-check ----------------------------------------------
@@ -2774,6 +2836,7 @@ def main() -> None:
         test_handback_guard,
         test_handback_guard_step,
         test_worktree_state_dir,
+        test_state_dir,
         test_edit_and_plan_check,
         test_edit_section,
         test_edit_deps,
