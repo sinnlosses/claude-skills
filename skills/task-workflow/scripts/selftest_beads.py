@@ -18,6 +18,7 @@ GitHub・Jira には繋がない。GitHub は、本物の `bd` の `bd github pu
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -27,6 +28,7 @@ import re
 import tempfile
 import threading
 import time
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -637,6 +639,10 @@ def test_edit_deps() -> None:
             issue = beads.show(main_path, beads.to_bd_id(task_id))
             return sorted(beads.to_task_id(x) for x in issue.dependencies) if issue is not None else []
 
+        def all_deps() -> dict[str, list[str]]:
+            return {beads.to_task_id(i.bd_id): sorted(beads.to_task_id(x) for x in i.dependencies)
+                    for i in beads.list_issues(main_path)}
+
         def ready(task_id: str) -> str:
             return rows(run_task(wt1, "status").stdout).get(task_id, [""] * 8)[5]
 
@@ -653,7 +659,9 @@ def test_edit_deps() -> None:
               r.stdout + r.stderr)
         run_task(wt1, "edit", d, "--add-deps", c)
 
-        snapshot = {t: deps(t) for t in (a, b, c, d)}
+        snapshot = all_deps()
+        check("一覧から読んだ依存は show と同じ", snapshot == {t: deps(t) for t in (a, b, c, d)}
+              and snapshot[d] == [c], repr(snapshot))
         for label, args in (
             ("自分自身", (a, "--add-deps", a)),
             ("Beads に無い ID", (a, "--add-deps", "T-999")),
@@ -666,7 +674,7 @@ def test_edit_deps() -> None:
         ):
             r = run_task(wt1, "edit", *args)
             check(f"{label}は終了コード2で拒み、何も書かない", r.returncode == 2 and "usage:" in r.stderr
-                  and {t: deps(t) for t in (a, b, c, d)} == snapshot, r.stdout + r.stderr)
+                  and all_deps() == snapshot, r.stdout + r.stderr)
         r = run_task(wt1, "edit", a, "--add-deps", d)
         check("循環の文言に道が出る", f"{a}→{d}→{c}→{a}" in r.stderr, r.stderr)
 
@@ -1280,321 +1288,347 @@ def _github_repo(tmp: str, prefix: str) -> tuple[str, str]:
     return main_path, wt1
 
 
-def test_tracker_github_push_only() -> None:
-    say("トラッカー github・issue_prefix t（切り替え前: 送るだけ・Status 欄の控え）")
+@contextlib.contextmanager
+def _github(prefix: str = beads.PREFIX_GITHUB) -> Iterator[tuple["FakeGitHub", str, str, str]]:
+    """偽の GitHub へ向けた `(偽の GitHub, 一時ディレクトリ, 本体, 作業ツリー1)`。"""
     fake = FakeGitHub()
     with tempfile.TemporaryDirectory() as tmp:
         _local.env = _with_fakes(tmp, fake)
         try:
-            main_path, wt1 = _github_repo(tmp, beads.PREFIX_LOCAL)
-            a = new(main_path, "GitHub へ")
-            h = new(main_path, "待ち", "--hold")
-            c = new(main_path, "見送る")
-            check("ID は t の採番のまま", a == "T-001", a)
-            check("new で Issue が立つ（1件ずつ送る。token は gh auth token から）", len(fake.issues) == 3
-                  and ["auth", "token"] in gh_calls(), repr(fake.issues))
-            num = lambda t: int(beads.to_bd_id(t).split("-")[1])  # noqa: E731
-            check("hold は deferred で書く", beads.show(main_path, beads.to_bd_id(h)).status == "deferred")
-            check("Status 欄: open → Todo、hold → Pending", fake.status_of(num(a)) == "Todo"
-                  and fake.status_of(num(h)) == "Pending", repr(fake.items))
-            check("取り込まない（GitHub の Issue を読みに行かない）",
-                  not any(c[:1] == ["api"] and c[1] != "graphql" for c in gh_calls()), repr(gh_calls()))
-            check("Project・Status 欄の ID は1回だけ引いて控える", fake.graphql.count("project") == 1, repr(fake.graphql))
-
-            before = len(gh_calls())
-            shown = run_task(wt1, "show", a).stdout.split("---\n", 2)[2]
-            r = run_task(wt1, "edit", a, "--body-file", "-", stdin=shown.replace("## 注意\n\nz", "## 注意\n\nzz"))
-            calls = gh_calls()[before:]
-            check("状態の変わらない edit は gh api・gh project を呼ばない", r.returncode == 0
-                  and "TRACKER\tOK\tgithub\tpushed=1\tstatus_changed=0" in r.stdout
-                  and not any(c[:1] in (["api"], ["project"]) for c in calls), r.stdout + repr(calls))
-            check("edit は触った1件だけを送る", "zz" in fake.issues[num(a)]["body"], repr(fake.issues[num(a)]))
-
-            before_calls, before_gql = len(gh_calls()), len(fake.graphql)
-            r = run_task(wt1, "claim", a)
-            calls = [c for c in gh_calls()[before_calls:] if c[:2] == ["api", "graphql"]]
-            check("claim で In progress", fake.status_of(num(a)) == "In progress", repr(fake.items))
-            check("claim の GraphQL は数回（持ち主の照会・field-list・item-list なし）", 1 <= len(calls) <= 3
-                  and "project" not in fake.graphql[before_gql:] and "items" not in fake.graphql[before_gql:]
-                  and not any(c[:1] == ["project"] for c in gh_calls()), repr(fake.graphql[before_gql:]))
-            work_and_done(wt1, a)
-            run_task(wt1, "ship")
-            run_task(wt1, "claim", c)
-            work_and_done(wt1, c, dropped=True, name="c.txt")
-            r = run_task(wt1, "ship")
-            check("閉じたら Done、見送りは Cancel", fake.status_of(num(a)) == "Done"
-                  and fake.status_of(num(c)) == "Cancel", repr(fake.items) + r.stdout)
-            check("ship の行に TRACKER OK", any(l.startswith("TRACKER\tOK\tgithub") for l in r.stdout.splitlines()), r.stdout)
-            check("GitHub で閉じる", fake.issues[num(a)]["state"] == "closed")
-
-            before_gql = len(fake.graphql)
-            r = run_task(main_path, "sync")
-            check("変わりの無い sync は GraphQL を呼ばない", r.returncode == 0 and fake.graphql[before_gql:] == [],
-                  r.stdout + repr(fake.graphql[before_gql:]))
-
-            fake.option_prefix = "O2-"  # 人が Status 欄の選択肢を作り直した
-            before_gql = len(fake.graphql)
-            r = run_task(main_path, "edit", h, "--status", "todo")
-            check("控えた選択肢が古ければ1回だけ読み直して書く", fake.status_of(num(h)) == "Todo"
-                  and fake.graphql[before_gql:].count("project") == 1 and "TRACKER\tOK" in r.stdout,
-                  r.stdout + repr(fake.graphql[before_gql:]))
-
-            fake.close()
-            r = run_task(main_path, "new", "--summary", "落ちても登録", "--difficulty", "haiku", "--loopable", "Y",
-                         "--body-file", "-", stdin=PLANNED_BODY)
-            check("トラッカーの失敗は new を止めない（TRACKER FAILED を足して終了コード0）", r.returncode == 0
-                  and r.stdout.startswith("CREATED") and "TRACKER\tFAILED\tgithub" in r.stdout, r.stdout)
-            r = run_task(main_path, "sync")
-            check("task sync の失敗は終了コード10", r.returncode == 10 and "TRACKER\tFAILED" in r.stdout, r.stdout)
+            main_path, wt1 = _github_repo(tmp, prefix)
+            yield fake, tmp, main_path, wt1
         finally:
             fake.close()
             del _local.env
+
+
+def _num(task_id: str) -> int:
+    return int(beads.to_bd_id(task_id).split("-")[1])
+
+
+def _claim_state(main_path: str, task_id: str) -> tuple[str, str | None, dict]:
+    """`(Beads の status, assignee, metadata)`。"""
+    issue = beads.show(main_path, beads.to_bd_id(task_id))
+    raw = issue.raw.get("metadata") if issue is not None else None
+    return (issue.status if issue else "", issue.assignee if issue else None, raw if isinstance(raw, dict) else {})
+
+
+def test_tracker_github_push_only() -> None:
+    say("トラッカー github・issue_prefix t（切り替え前: 送るだけ・Status 欄の控え）")
+    with _github(beads.PREFIX_LOCAL) as (fake, _tmp, main_path, wt1):
+        a = new(main_path, "GitHub へ")
+        h = new(main_path, "待ち", "--hold")
+        c = new(main_path, "見送る")
+        check("ID は t の採番のまま", a == "T-001", a)
+        check("new で Issue が立つ（1件ずつ送る。token は gh auth token から）", len(fake.issues) == 3
+              and ["auth", "token"] in gh_calls(), repr(fake.issues))
+        check("hold は deferred で書く", beads.show(main_path, beads.to_bd_id(h)).status == "deferred")
+        check("Status 欄: open → Todo、hold → Pending", fake.status_of(_num(a)) == "Todo"
+              and fake.status_of(_num(h)) == "Pending", repr(fake.items))
+        check("取り込まない（GitHub の Issue を読みに行かない）",
+              not any(c[:1] == ["api"] and c[1] != "graphql" for c in gh_calls()), repr(gh_calls()))
+        check("Project・Status 欄の ID は1回だけ引いて控える", fake.graphql.count("project") == 1, repr(fake.graphql))
+
+        before = len(gh_calls())
+        shown = run_task(wt1, "show", a).stdout.split("---\n", 2)[2]
+        r = run_task(wt1, "edit", a, "--body-file", "-", stdin=shown.replace("## 注意\n\nz", "## 注意\n\nzz"))
+        calls = gh_calls()[before:]
+        check("状態の変わらない edit は gh api・gh project を呼ばない", r.returncode == 0
+              and "TRACKER\tOK\tgithub\tpushed=1\tstatus_changed=0" in r.stdout
+              and not any(c[:1] in (["api"], ["project"]) for c in calls), r.stdout + repr(calls))
+        check("edit は触った1件だけを送る", "zz" in fake.issues[_num(a)]["body"], repr(fake.issues[_num(a)]))
+
+        before_calls, before_gql = len(gh_calls()), len(fake.graphql)
+        r = run_task(wt1, "claim", a)
+        calls = [c for c in gh_calls()[before_calls:] if c[:2] == ["api", "graphql"]]
+        check("claim で In progress", fake.status_of(_num(a)) == "In progress", repr(fake.items))
+        check("claim の GraphQL は数回（持ち主の照会・field-list・item-list なし）", 1 <= len(calls) <= 3
+              and "project" not in fake.graphql[before_gql:] and "items" not in fake.graphql[before_gql:]
+              and not any(c[:1] == ["project"] for c in gh_calls()), repr(fake.graphql[before_gql:]))
+        work_and_done(wt1, a)
+        run_task(wt1, "ship")
+        run_task(wt1, "claim", c)
+        work_and_done(wt1, c, dropped=True, name="c.txt")
+        r = run_task(wt1, "ship")
+        check("閉じたら Done、見送りは Cancel", fake.status_of(_num(a)) == "Done"
+              and fake.status_of(_num(c)) == "Cancel", repr(fake.items) + r.stdout)
+        check("ship の行に TRACKER OK", any(l.startswith("TRACKER\tOK\tgithub") for l in r.stdout.splitlines()), r.stdout)
+        check("GitHub で閉じる", fake.issues[_num(a)]["state"] == "closed")
+
+        before_gql = len(fake.graphql)
+        r = run_task(main_path, "sync")
+        check("変わりの無い sync は GraphQL を呼ばない", r.returncode == 0 and fake.graphql[before_gql:] == [],
+              r.stdout + repr(fake.graphql[before_gql:]))
+
+
+def test_tracker_github_push_only_recovery() -> None:
+    say("トラッカー github・issue_prefix t: 古い選択肢の読み直しと、GitHub に届かないとき")
+    with _github(beads.PREFIX_LOCAL) as (fake, _tmp, main_path, _wt1):
+        h = new(main_path, "待ち", "--hold")
+        fake.option_prefix = "O2-"  # 人が Status 欄の選択肢を作り直した
+        before_gql = len(fake.graphql)
+        r = run_task(main_path, "edit", h, "--status", "todo")
+        check("控えた選択肢が古ければ1回だけ読み直して書く", fake.status_of(_num(h)) == "Todo"
+              and fake.graphql[before_gql:].count("project") == 1 and "TRACKER\tOK" in r.stdout,
+              r.stdout + repr(fake.graphql[before_gql:]))
+
+        fake.close()
+        r = run_task(main_path, "new", "--summary", "落ちても登録", "--difficulty", "haiku", "--loopable", "Y",
+                     "--body-file", "-", stdin=PLANNED_BODY)
+        check("トラッカーの失敗は new を止めない（TRACKER FAILED を足して終了コード0）", r.returncode == 0
+              and r.stdout.startswith("CREATED") and "TRACKER\tFAILED\tgithub" in r.stdout, r.stdout)
+        r = run_task(main_path, "sync")
+        check("task sync の失敗は終了コード10", r.returncode == 10 and "TRACKER\tFAILED" in r.stdout, r.stdout)
 
 
 def test_tracker_github_bidirectional() -> None:
-    say("トラッカー github・issue_prefix gh（Issue 番号の ID・双方向）")
-    fake = FakeGitHub()
-    with tempfile.TemporaryDirectory() as tmp:
-        _local.env = _with_fakes(tmp, fake)
+    say("トラッカー github・issue_prefix gh（Issue 番号の ID・GitHub で立てた Issue の取り込みと adopt）")
+    with _github() as (fake, _tmp, main_path, wt1):
+        fake.open_issue("先にある PR 以外の Issue", [])
+        a = new(main_path, "Issue を先に立てる")
+        check("new は Issue を立てて GH-<番号> を返す", a == "GH-2" and beads.show(main_path, "gh-2") is not None, a)
+        check("仮の ID は残らない", not any(i.bd_id.startswith("gh-new-") for i in beads.list_issues(main_path)))
+        p = new(main_path, "登録時に計画を書く", body=plan_body("shared.txt"))
+        issue = beads.show(main_path, beads.to_bd_id(p))
+        raw = issue.raw if issue is not None else {}
+        meta = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        check("付け替えたあとも登録時の計画（notes）と控え（metadata）が残る", p.startswith("GH-")
+              and "### 名指すファイル" in str(raw.get("notes")) and bool(meta.get(beads.PLAN_BASE_KEY)), str(raw))
+        b = new(main_path, "後段", "--deps", a)
+        r = run_task(wt1, "status")
+        check("status は GH-<n> の行と依存", rows(r.stdout).get(b, [""] * 8)[5] == f"BLOCKED:{a}", r.stdout)
+        check("Status 欄も書く", fake.status_of(2) == "Todo", repr(fake.items))
+
+        r = run_task(main_path, "sync")
+        check("sync が GitHub で立てた Issue を取り込み、番号の ID へ付け替えて振り分け前にする", r.returncode == 0
+              and "triage\t1\tGH-1" in run_task(main_path, "status").stdout, r.stdout)
+        r = run_task(main_path, "adopt", "GH-1", "--difficulty", "haiku", "--loopable", "N", "--body-file", "-",
+                     stdin=PLANNED_BODY)
+        check("adopt は番号を変えない", r.stdout.startswith("ADOPTED\tGH-1\tGH-1"), r.stdout + r.stderr)
+
+
+def test_tracker_github_pull_round_trip() -> None:
+    say("トラッカー github: 着手中の課題へ GitHub での変更を取り込み、両側で変えたら Beads が勝つ")
+    with _github() as (fake, _tmp, main_path, wt1):
+        a = new(main_path, "着手してから GitHub で直される")
+        n, bd_id = _num(a), beads.to_bd_id(a)
+        r = run_task(wt1, "claim", a)
+        check("claim", r.returncode == 0 and r.stdout.startswith("CLAIMED"), r.stdout + r.stderr)
+        fake.edit(n, body="GitHub で直した本文")
+        r = run_task(main_path, "sync")
+        issue = beads.show(main_path, bd_id)
+        check("取り込みで GitHub の本文が入り、錠の持ち主（assignee）は戻る", issue is not None
+              and "GitHub で直した本文" in str(issue.raw.get("description"))
+              and issue.assignee == "wt1" and issue.status == "in_progress", r.stdout + str(issue and issue.raw))
+
+        fake.edit(n, body="GitHub で2回目に直した本文")
+        r = run_task(main_path, "sync")
+        issue = beads.show(main_path, bd_id)
+        check("assignee を戻したあとの GitHub での変更も次の取り込みで入る（送り返して消さない）", issue is not None
+              and "2回目" in str(issue.raw.get("description")) and "2回目" in fake.issues[n]["body"]
+              and "CONFLICT" not in r.stdout, r.stdout + str(issue and issue.raw.get("description")))
+
+        time.sleep(1.1)
+        bd(main_path, "update", bd_id, "--title", "Beads で直した題")
+        fake.clock_offset = 60
+        fake.edit(n, body="GitHub でも直した")
+        r = run_task(main_path, "sync")
+        check("両側で変えたら CONFLICT の行を出し、Beads が勝つ", f"TRACKER\tCONFLICT\t{a}" in r.stdout
+              and fake.issues[n]["title"] == "Beads で直した題", r.stdout + repr(fake.issues[n]))
+
+
+def test_tracker_github_closed_and_hold() -> None:
+    say("トラッカー github: GitHub で閉じた・開き直した課題と、hold の課題の取り込み")
+    with _github() as (fake, _tmp, main_path, _wt1):
+        c = new(main_path, "GitHub で閉じられる")
+        run_task(main_path, "sync")  # 最初の取り込みは開いた Issue しか見ない
+        fake.edit(_num(c), state="closed")
+        r = run_task(main_path, "sync")
+        t = rows(run_task(main_path, "status", "--all").stdout)
+        check("ship の印の無い課題が GitHub で閉じたら見送り（cancelled）と CLOSED の行", f"TRACKER\tCLOSED\t{c}" in r.stdout
+              and t.get(c, [""] * 8)[1] == "dropped", r.stdout)
+        fake.edit(_num(c), state="open")
+        run_task(main_path, "sync")
+        issue = beads.show(main_path, beads.to_bd_id(c))
+        check("開き直したら cancelled を外す", issue is not None and issue.status == "open"
+              and "cancelled" not in issue.labels, str(issue and issue.labels))
+
+        h = new(main_path, "待ち", "--hold")
+        fake.edit(_num(h), body="GitHub で本文だけ直す")
+        run_task(main_path, "sync")
+        check("hold（deferred）は GitHub での編集を往復しても hold のまま",
+              rows(run_task(main_path, "status").stdout).get(h, [""] * 8)[1] == "hold")
+
+
+def test_tracker_github_provisional_id() -> None:
+    say("トラッカー github: Issue を立てられなかった new は仮の ID のまま、sync が送り直して付け替える")
+    with _github() as (fake, _tmp, main_path, _wt1):
+        fake.close()
+        r = run_task(main_path, "new", "--summary", "落ちたら仮の ID", "--difficulty", "haiku", "--loopable", "Y",
+                     "--body-file", "-", stdin=PLANNED_BODY)
+        provisional = r.stdout.split("\t")[1] if r.stdout.startswith("CREATED") else ""
+        check("push で落ちたら仮の ID のまま CREATED と TRACKER FAILED", provisional.startswith("gh-new-")
+              and "TRACKER\tFAILED" in r.stdout, r.stdout)
+        fake2 = FakeGitHub()
+        fake2.issues, fake2.items = fake.issues, fake.items
+        env()["GITHUB_API_URL"] = fake2.url
         try:
-            main_path, wt1 = _github_repo(tmp, beads.PREFIX_GITHUB)
-            fake.open_issue("先にある PR 以外の Issue", [])
-            a = new(main_path, "Issue を先に立てる")
-            check("new は Issue を立てて GH-<番号> を返す", a == "GH-2" and beads.show(main_path, "gh-2") is not None, a)
-            check("仮の ID は残らない", not any(i.bd_id.startswith("gh-new-") for i in beads.list_issues(main_path)))
-            p = new(main_path, "登録時に計画を書く", body=plan_body("shared.txt"))
-            issue = beads.show(main_path, beads.to_bd_id(p))
-            raw = issue.raw if issue is not None else {}
-            meta = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
-            check("付け替えたあとも登録時の計画（notes）と控え（metadata）が残る", p.startswith("GH-")
-                  and "### 名指すファイル" in str(raw.get("notes")) and bool(meta.get(beads.PLAN_BASE_KEY)), str(raw))
-            b = new(main_path, "後段", "--deps", a)
-            r = run_task(wt1, "status")
-            check("status は GH-<n> の行と依存", rows(r.stdout).get(b, [""] * 8)[5] == f"BLOCKED:{a}", r.stdout)
-            check("Status 欄も書く", fake.status_of(2) == "Todo", repr(fake.items))
-
             r = run_task(main_path, "sync")
-            check("sync が GitHub で立てた Issue を取り込み、番号の ID へ付け替えて振り分け前にする", r.returncode == 0
-                  and "triage\t1\tGH-1" in run_task(main_path, "status").stdout, r.stdout)
-            r = run_task(main_path, "adopt", "GH-1", "--difficulty", "haiku", "--loopable", "N", "--body-file", "-",
-                         stdin=PLANNED_BODY)
-            check("adopt は番号を変えない", r.stdout.startswith("ADOPTED\tGH-1\tGH-1"), r.stdout + r.stderr)
-
-            r = run_task(wt1, "claim", a)
-            check("claim", r.returncode == 0 and r.stdout.startswith("CLAIMED"), r.stdout + r.stderr)
-            fake.edit(2, body="GitHub で直した本文")
-            r = run_task(main_path, "sync")
-            issue = beads.show(main_path, "gh-2")
-            check("取り込みで GitHub の本文が入り、錠の持ち主（assignee）は戻る", issue is not None
-                  and "GitHub で直した本文" in str(issue.raw.get("description"))
-                  and issue.assignee == "wt1" and issue.status == "in_progress", r.stdout + str(issue and issue.raw))
-
-            fake.edit(2, body="GitHub で2回目に直した本文")
-            r = run_task(main_path, "sync")
-            issue = beads.show(main_path, "gh-2")
-            check("assignee を戻したあとの GitHub での変更も次の取り込みで入る（送り返して消さない）", issue is not None
-                  and "2回目" in str(issue.raw.get("description")) and "2回目" in fake.issues[2]["body"]
-                  and "CONFLICT" not in r.stdout, r.stdout + str(issue and issue.raw.get("description")))
-
-            time.sleep(1.1)
-            bd(main_path, "update", "gh-2", "--title", "Beads で直した題")
-            fake.clock_offset = 60
-            fake.edit(2, body="GitHub でも直した")
-            r = run_task(main_path, "sync")
-            check("両側で変えたら CONFLICT の行を出し、Beads が勝つ", "TRACKER\tCONFLICT\tGH-2" in r.stdout
-                  and fake.issues[2]["title"] == "Beads で直した題", r.stdout + repr(fake.issues[2]))
-
-            c = new(main_path, "GitHub で閉じられる")
-            fake.edit(int(c.split("-")[1]), state="closed")
-            r = run_task(main_path, "sync")
-            t = rows(run_task(main_path, "status", "--all").stdout)
-            check("ship の印の無い課題が GitHub で閉じたら見送り（cancelled）と CLOSED の行", f"TRACKER\tCLOSED\t{c}" in r.stdout
-                  and t.get(c, [""] * 8)[1] == "dropped", r.stdout)
-            fake.edit(int(c.split("-")[1]), state="open")
-            run_task(main_path, "sync")
-            issue = beads.show(main_path, beads.to_bd_id(c))
-            check("開き直したら cancelled を外す", issue is not None and issue.status == "open"
-                  and "cancelled" not in issue.labels, str(issue and issue.labels))
-
-            h = new(main_path, "待ち", "--hold")
-            fake.edit(int(h.split("-")[1]), body="GitHub で本文だけ直す")
-            run_task(main_path, "sync")
-            check("hold（deferred）は GitHub での編集を往復しても hold のまま",
-                  rows(run_task(main_path, "status").stdout).get(h, [""] * 8)[1] == "hold")
-
-            fake.close()
-            r = run_task(main_path, "new", "--summary", "落ちたら仮の ID", "--difficulty", "haiku", "--loopable", "Y",
-                         "--body-file", "-", stdin=PLANNED_BODY)
-            provisional = r.stdout.split("\t")[1] if r.stdout.startswith("CREATED") else ""
-            check("push で落ちたら仮の ID のまま CREATED と TRACKER FAILED", provisional.startswith("gh-new-")
-                  and "TRACKER\tFAILED" in r.stdout, r.stdout)
-            fake2 = FakeGitHub()
-            fake2.issues, fake2.items = fake.issues, fake.items
-            env()["GITHUB_API_URL"] = fake2.url
-            try:
-                r = run_task(main_path, "sync")
-                ids = {i.bd_id for i in beads.list_issues(main_path)}
-                check("task sync が送り直して番号の ID へ付け替える", r.returncode == 0 and not any(
-                    i.startswith("gh-new-") for i in ids) and f"gh-{len(fake2.issues)}" in ids, r.stdout + repr(ids))
-            finally:
-                fake2.close()
+            ids = {i.bd_id for i in beads.list_issues(main_path)}
+            check("task sync が送り直して番号の ID へ付け替える", r.returncode == 0 and not any(
+                i.startswith("gh-new-") for i in ids) and f"gh-{len(fake2.issues)}" in ids, r.stdout + repr(ids))
         finally:
-            fake.close()
-            del _local.env
+            fake2.close()
 
 
 def test_tracker_github_keeps_claim_marks() -> None:
     say("トラッカー github: 取り込みが着手中の課題を上書きしても、着手の印（assignee と metadata）を戻す")
-    fake = FakeGitHub()
-    with tempfile.TemporaryDirectory() as tmp:
-        _local.env = _with_fakes(tmp, fake)
-        try:
-            main_path, wt1 = _github_repo(tmp, beads.PREFIX_GITHUB)
-            num = lambda t: int(beads.to_bd_id(t).split("-")[1])  # noqa: E731
+    with _github() as (fake, tmp, main_path, wt1):
+        a = new(main_path, "計画を登録して着手する", body=plan_body("shared.txt"))
+        b = new(main_path, "送りが届かないまま着手する")
+        c = new(main_path, "取り込みの最中に着手する")
+        e = new(main_path, "GitHub で手放す")
+        g = new(main_path, "Project の書き込みが落ちたあと GitHub で手放す")
+        write(os.path.join(main_path, "shared.txt"), "line1\nline2\n")
+        git(main_path, "commit", "-q", "-am", "主ブランチが進む")
+        for t in (a, e):
+            run_task(wt1, "claim", t)
+        check("着手の送りは GitHub に label status::in_progress を付ける",
+              "status::in_progress" in fake.issues[_num(e)]["labels"], repr(fake.issues[_num(e)]))
+        env()["GITHUB_API_URL"] = "http://127.0.0.1:9"
+        r = run_task(wt1, "claim", b)
+        env()["GITHUB_API_URL"] = fake.url
+        check("送りが届かない着手は GitHub に label が付かない", "TRACKER\tFAILED" in r.stdout
+              and "status::in_progress" not in fake.issues[_num(b)]["labels"], r.stdout + repr(fake.issues[_num(b)]))
+        fake.graphql_down = True
+        r = run_task(wt1, "claim", g)
+        fake.graphql_down = False
+        check("push が通って Project の書き込みだけ落ちた着手は GitHub に label が付く", "TRACKER\tFAILED" in r.stdout
+              and "status::in_progress" in fake.issues[_num(g)]["labels"], r.stdout + repr(fake.issues[_num(g)]))
+        claimed = _claim_state(main_path, a)
 
-            def state(task_id: str) -> tuple[str, str | None, dict]:
-                issue = beads.show(main_path, beads.to_bd_id(task_id))
-                raw = issue.raw.get("metadata") if issue is not None else None
-                return (issue.status if issue else "", issue.assignee if issue else None,
-                        raw if isinstance(raw, dict) else {})
+        write(os.path.join(tmp, "bd.log.before-pull"),
+              json.dumps({"cwd": wt1, "argv": [sys.executable, TASK_PY, "claim", c]}))
+        fake.edit(_num(a))
+        fake.edit(_num(c))
+        for t in (e, g):
+            fake.edit(_num(t), labels=[l for l in fake.issues[_num(t)]["labels"] if not l.startswith("status")])
+        r = run_task(main_path, "sync")
+        state = {t: _claim_state(main_path, t) for t in (a, b, c, e, g)}
+        marks = (beads.CLAIM_BRANCH_KEY, beads.CLAIM_HEAD_KEY, beads.PLAN_BASE_KEY, beads.PLAN_TIP_KEY)
+        check("取り込みが上書きしても assignee と metadata が戻る", r.returncode == 0
+              and state[a][:2] == ("in_progress", "wt1")
+              and all(state[a][2].get(k) == claimed[2].get(k) and claimed[2].get(k) for k in marks),
+              r.stdout + r.stderr + repr(claimed) + repr(state[a]))
+        check("着手の送りが届く前の GitHub の版で open に戻ったら着手を戻す", state[b][:2] == ("in_progress", "wt1"),
+              r.stdout + repr(state[b]))
+        check("取り込みの最中の着手も戻す", not os.path.exists(os.path.join(tmp, "bd.log.before-pull"))
+              and state[c][:2] == ("in_progress", "wt1") and bool(state[c][2].get(beads.CLAIM_HEAD_KEY)),
+              r.stdout + repr(state[c]))
+        check("着手を送ったあと GitHub で label が外れた（手放した）課題は着手に戻さず、metadata だけ戻す",
+              state[e][:2] == ("open", None) and bool(state[e][2].get(beads.CLAIM_HEAD_KEY)),
+              r.stdout + repr(state[e]))
+        check("push は通り Project の書き込みが落ちたあと GitHub で label を外した課題は着手に戻さない",
+              state[g][:2] == ("open", None), r.stdout + repr(state[g]))
 
-            a = new(main_path, "着手のあとに計画を書き直す", body=plan_body("shared.txt"))
-            b = new_unplanned(main_path, "作業のあとに計画を書く")
-            c = new(main_path, "取り込みの最中に着手する")
-            d = new(main_path, "印を戻せない")
-            e = new(main_path, "GitHub で手放す")
-            f = new(main_path, "GitHub で閉じる")
-            g = new(main_path, "Project の書き込みが落ちたあと GitHub で手放す")
-            write(os.path.join(main_path, "shared.txt"), "line1\nline2\n")
-            git(main_path, "commit", "-q", "-am", "主ブランチが進む")
-            for t in (a, d, e):
-                run_task(wt1, "claim", t)
-            r = run_task(wt1, "plan-check", a)
-            check("名指したファイルが変わっていれば着手で PLAN_STALE", r.stdout.strip() == f"PLAN_STALE\t{a}\tshared.txt",
-                  r.stdout + r.stderr)
-            check("着手の送りは GitHub に label status::in_progress を付ける",
-                  "status::in_progress" in fake.issues[num(e)]["labels"], repr(fake.issues[num(e)]))
-            env()["GITHUB_API_URL"] = "http://127.0.0.1:9"
-            r = run_task(wt1, "claim", b)
-            env()["GITHUB_API_URL"] = fake.url
-            check("送りが届かない着手は GitHub に label が付かない", "TRACKER\tFAILED" in r.stdout
-                  and "status::in_progress" not in fake.issues[num(b)]["labels"], r.stdout + repr(fake.issues[num(b)]))
-            fake.graphql_down = True
-            r = run_task(wt1, "claim", g)
-            fake.graphql_down = False
-            check("push が通って Project の書き込みだけ落ちた着手は GitHub に label が付く", "TRACKER\tFAILED" in r.stdout
-                  and "status::in_progress" in fake.issues[num(g)]["labels"], r.stdout + repr(fake.issues[num(g)]))
-            claimed = state(a)
 
-            write(os.path.join(tmp, "bd.log.before-pull"),
-                  json.dumps({"cwd": wt1, "argv": [sys.executable, TASK_PY, "claim", c]}))
-            fake.edit(num(a))
-            fake.edit(num(c))
-            for t in (e, g):
-                fake.edit(num(t), labels=[l for l in fake.issues[num(t)]["labels"] if not l.startswith("status")])
-            r = run_task(main_path, "sync")
-            marks = (beads.CLAIM_BRANCH_KEY, beads.CLAIM_HEAD_KEY, beads.PLAN_BASE_KEY, beads.PLAN_TIP_KEY)
-            check("取り込みが上書きしても assignee と metadata が戻る", r.returncode == 0
-                  and state(a)[:2] == ("in_progress", "wt1")
-                  and all(state(a)[2].get(k) == claimed[2].get(k) and claimed[2].get(k) for k in marks),
-                  r.stdout + r.stderr + repr(claimed) + repr(state(a)))
-            check("着手の送りが届く前の GitHub の版で open に戻ったら着手を戻す", state(b)[:2] == ("in_progress", "wt1"),
-                  r.stdout + repr(state(b)))
-            check("取り込みの最中の着手も戻す", not os.path.exists(os.path.join(tmp, "bd.log.before-pull"))
-                  and state(c)[:2] == ("in_progress", "wt1") and bool(state(c)[2].get(beads.CLAIM_HEAD_KEY)),
-                  r.stdout + repr(state(c)))
-            check("着手を送ったあと GitHub で label が外れた（手放した）課題は着手に戻さず、metadata だけ戻す",
-                  state(e)[:2] == ("open", None) and bool(state(e)[2].get(beads.CLAIM_HEAD_KEY)),
-                  r.stdout + repr(state(e)))
-            check("push は通り Project の書き込みが落ちたあと GitHub で label を外した課題は着手に戻さない",
-                  state(g)[:2] == ("open", None), r.stdout + repr(state(g)))
+def test_tracker_github_plan_marks_after_pull() -> None:
+    say("トラッカー github: 着手のあとに計画を書いた時点の判定は、取り込みのあとも残る")
+    with _github() as (fake, _tmp, main_path, wt1):
+        a = new(main_path, "着手のあとに計画を書き直す", body=plan_body("shared.txt"))
+        b = new_unplanned(main_path, "作業のあとに計画を書く")
+        write(os.path.join(main_path, "shared.txt"), "line1\nline2\n")
+        git(main_path, "commit", "-q", "-am", "主ブランチが進む")
+        for t in (a, b):
+            run_task(wt1, "claim", t)
+        r = run_task(wt1, "plan-check", a)
+        check("名指したファイルが変わっていれば着手で PLAN_STALE", r.stdout.strip() == f"PLAN_STALE\t{a}\tshared.txt",
+              r.stdout + r.stderr)
 
-            r = run_task(wt1, "edit", a, "--section", "やること", "--body-file", "-",
-                         stdin="### 1. 直す\nx\n\n### 名指すファイル\n- `shared.txt`\n")
-            fake.edit(num(a))
-            run_task(main_path, "sync")
-            r2 = run_task(wt1, "plan-check", a)
-            check("PLAN_STALE で着手して作業の前に edit --section で書けば、取り込みのあとも PLAN_FIRST",
-                  r.returncode == 0 and r2.stdout.strip() == f"PLAN_FIRST\t{a}", r.stdout + r.stderr + r2.stdout)
+        r = run_task(wt1, "edit", a, "--section", "やること", "--body-file", "-",
+                     stdin="### 1. 直す\nx\n\n### 名指すファイル\n- `shared.txt`\n")
+        fake.edit(_num(a))
+        run_task(main_path, "sync")
+        r2 = run_task(wt1, "plan-check", a)
+        check("PLAN_STALE で着手して作業の前に edit --section で書けば、取り込みのあとも PLAN_FIRST",
+              r.returncode == 0 and r2.stdout.strip() == f"PLAN_FIRST\t{a}", r.stdout + r.stderr + r2.stdout)
 
-            write(os.path.join(wt1, "work.txt"), "作業\n")
-            r = run_task(wt1, "edit", b, "--section", "やること", "--after-work", "--body-file", "-",
-                         stdin="### 1. 書く\nx\n")
-            fake.edit(num(b))
-            run_task(main_path, "sync")
-            r2 = run_task(wt1, "plan-check", b)
-            check("作業のあとに書けば、取り込みのあとも PLAN_NOT_FIRST after-work", r.returncode == 0
-                  and r2.stdout.strip() == f"PLAN_NOT_FIRST\t{b}\tafter-work", r.stdout + r.stderr + r2.stdout)
+        write(os.path.join(wt1, "work.txt"), "作業\n")
+        r = run_task(wt1, "edit", b, "--section", "やること", "--after-work", "--body-file", "-",
+                     stdin="### 1. 書く\nx\n")
+        fake.edit(_num(b))
+        run_task(main_path, "sync")
+        r2 = run_task(wt1, "plan-check", b)
+        check("作業のあとに書けば、取り込みのあとも PLAN_NOT_FIRST after-work", r.returncode == 0
+              and r2.stdout.strip() == f"PLAN_NOT_FIRST\t{b}\tafter-work", r.stdout + r.stderr + r2.stdout)
 
-            write(os.path.join(tmp, "bd.log.fail-update"), "")
-            fake.edit(num(d))
-            fake.edit(num(f), state="closed")
-            r = run_task(main_path, "sync")
-            os.remove(os.path.join(tmp, "bd.log.fail-update"))
-            check("戻せなければ TRACKER FAILED（終了コード10）", r.returncode == 10
-                  and any(l.startswith("TRACKER\tFAILED\tgithub") and d in l for l in r.stdout.splitlines()),
-                  r.stdout + r.stderr)
-            check("戻しが落ちても同じ取り込みの CLOSED の行は出る", f"TRACKER\tCLOSED\t{f}" in r.stdout, r.stdout)
-        finally:
-            fake.close()
-            del _local.env
+
+def test_tracker_github_restore_failure() -> None:
+    say("トラッカー github: 着手の印を戻せない取り込み")
+    with _github() as (fake, tmp, main_path, wt1):
+        d = new(main_path, "印を戻せない")
+        f = new(main_path, "GitHub で閉じる")
+        run_task(wt1, "claim", d)
+        run_task(main_path, "sync")  # 最初の取り込みは開いた Issue しか見ない
+        write(os.path.join(tmp, "bd.log.fail-update"), "")
+        fake.edit(_num(d))
+        fake.edit(_num(f), state="closed")
+        r = run_task(main_path, "sync")
+        os.remove(os.path.join(tmp, "bd.log.fail-update"))
+        check("戻せなければ TRACKER FAILED（終了コード10）", r.returncode == 10
+              and any(l.startswith("TRACKER\tFAILED\tgithub") and d in l for l in r.stdout.splitlines()),
+              r.stdout + r.stderr)
+        check("戻しが落ちても同じ取り込みの CLOSED の行は出る", f"TRACKER\tCLOSED\t{f}" in r.stdout, r.stdout)
 
 
 def test_tracker_github_push_mark() -> None:
-    say("トラッカー github: 送りの控えを取り込みの時刻と分け、別の作業ツリーの送りを書き戻さない")
-    fake = FakeGitHub()
-    with tempfile.TemporaryDirectory() as tmp:
-        _local.env = _with_fakes(tmp, fake)
-        try:
-            main_path, wt1 = _github_repo(tmp, beads.PREFIX_GITHUB)
-            num = lambda t: int(beads.to_bd_id(t).split("-")[1])  # noqa: E731
+    say("トラッカー github: 送りの控えを取り込みの時刻と分ける")
+    with _github() as (fake, tmp, main_path, wt1):
+        x = new(main_path, "取り込みと同じ秒の着手の送りが落ちる")
+        w = new(main_path, "ほかの課題を直して bd の前回の同期の時刻を進める")
+        write(os.path.join(tmp, "bd.log.fail-push"), "")
+        r = run_task(wt1, "claim", x)
+        os.remove(os.path.join(tmp, "bd.log.fail-push"))
+        check("取り込みは通り push だけが落ちた着手は TRACKER FAILED", r.stdout.startswith("CLAIMED")
+              and "TRACKER\tFAILED" in r.stdout and "status::in_progress" not in fake.issues[_num(x)]["labels"],
+              r.stdout + r.stderr)
+        time.sleep(1.1)
+        shown = run_task(main_path, "show", w).stdout.split("---\n", 2)[2]
+        run_task(main_path, "edit", w, "--body-file", "-", stdin=shown.replace("## 注意\n\nz", "## 注意\n\nzz"))
+        # 取り込みの時刻が着手と同じ秒に収まった形を決め打ちで作る。
+        issue = beads.show(main_path, beads.to_bd_id(x))
+        started = beads.parse_time(issue.started_at) if issue is not None else None
+        synced = json.loads(bd(main_path, "kv", "get", "task-workflow.github-synced").stdout or "{}")
+        if started is not None:
+            synced[str(_num(x))] = started.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        bd(main_path, "kv", "set", "task-workflow.github-synced", json.dumps(synced))
+        fake.edit(_num(x))
+        r = run_task(main_path, "sync")
+        state = _claim_state(main_path, x)[:2]
+        check("取り込みと着手が同じ秒で push だけが落ちた着手は、次の取り込みで戻るか TRACKER FAILED",
+              started is not None and (state == ("in_progress", "wt1") or any(
+                  l.startswith("TRACKER\tFAILED") and x in l for l in r.stdout.splitlines())),
+              r.stdout + repr(state))
 
-            def state(task_id: str) -> tuple[str, str | None]:
-                issue = beads.show(main_path, beads.to_bd_id(task_id))
-                return (issue.status, issue.assignee) if issue else ("", None)
 
-            x = new(main_path, "取り込みと同じ秒の着手の送りが落ちる")
-            w = new(main_path, "ほかの課題を直して bd の前回の同期の時刻を進める")
-            write(os.path.join(tmp, "bd.log.fail-push"), "")
-            r = run_task(wt1, "claim", x)
-            os.remove(os.path.join(tmp, "bd.log.fail-push"))
-            check("取り込みは通り push だけが落ちた着手は TRACKER FAILED", r.stdout.startswith("CLAIMED")
-                  and "TRACKER\tFAILED" in r.stdout and "status::in_progress" not in fake.issues[num(x)]["labels"],
-                  r.stdout + r.stderr)
-            time.sleep(1.1)
-            shown = run_task(main_path, "show", w).stdout.split("---\n", 2)[2]
-            run_task(main_path, "edit", w, "--body-file", "-", stdin=shown.replace("## 注意\n\nz", "## 注意\n\nzz"))
-            # 取り込みの時刻が着手と同じ秒に収まった形を決め打ちで作る。
-            issue = beads.show(main_path, beads.to_bd_id(x))
-            started = beads.parse_time(issue.started_at) if issue is not None else None
-            synced = json.loads(bd(main_path, "kv", "get", "task-workflow.github-synced").stdout or "{}")
-            if started is not None:
-                synced[str(num(x))] = started.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            bd(main_path, "kv", "set", "task-workflow.github-synced", json.dumps(synced))
-            fake.edit(num(x))
-            r = run_task(main_path, "sync")
-            check("取り込みと着手が同じ秒で push だけが落ちた着手は、次の取り込みで戻るか TRACKER FAILED",
-                  started is not None and (state(x) == ("in_progress", "wt1") or any(
-                      l.startswith("TRACKER\tFAILED") and x in l for l in r.stdout.splitlines())),
-                  r.stdout + repr(state(x)))
-
-            y = new(main_path, "別の作業ツリーで着手して送る")
-            z = new(main_path, "本体で直す")
-            time.sleep(1.1)
-            write(os.path.join(tmp, "bd.log.before-pull"),
-                  json.dumps({"cwd": wt1, "argv": [sys.executable, TASK_PY, "claim", y]}))
-            shown = run_task(main_path, "show", z).stdout.split("---\n", 2)[2]
-            r = run_task(main_path, "edit", z, "--body-file", "-", stdin=shown.replace("## 注意\n\nz", "## 注意\n\nzz"))
-            check("本体の操作の取り込みの最中に別の作業ツリーが着手して送る", r.returncode == 0
-                  and not os.path.exists(os.path.join(tmp, "bd.log.before-pull"))
-                  and "status::in_progress" in fake.issues[num(y)]["labels"], r.stdout + r.stderr)
-            fake.edit(num(y), labels=[l for l in fake.issues[num(y)]["labels"] if not l.startswith("status")])
-            r = run_task(main_path, "sync")
-            check("別の作業ツリーの送りを古い控えで書き戻さず、そのあと GitHub で手放した課題は着手に戻さない",
-                  state(y) == ("open", None), r.stdout + repr(state(y)))
-        finally:
-            fake.close()
-            del _local.env
+def test_tracker_github_push_from_other_worktree() -> None:
+    say("トラッカー github: 取り込みの最中に別の作業ツリーが送った着手を書き戻さない")
+    with _github() as (fake, tmp, main_path, wt1):
+        y = new(main_path, "別の作業ツリーで着手して送る")
+        z = new(main_path, "本体で直す")
+        time.sleep(1.1)
+        write(os.path.join(tmp, "bd.log.before-pull"),
+              json.dumps({"cwd": wt1, "argv": [sys.executable, TASK_PY, "claim", y]}))
+        shown = run_task(main_path, "show", z).stdout.split("---\n", 2)[2]
+        r = run_task(main_path, "edit", z, "--body-file", "-", stdin=shown.replace("## 注意\n\nz", "## 注意\n\nzz"))
+        check("本体の操作の取り込みの最中に別の作業ツリーが着手して送る", r.returncode == 0
+              and not os.path.exists(os.path.join(tmp, "bd.log.before-pull"))
+              and "status::in_progress" in fake.issues[_num(y)]["labels"], r.stdout + r.stderr)
+        fake.edit(_num(y), labels=[l for l in fake.issues[_num(y)]["labels"] if not l.startswith("status")])
+        r = run_task(main_path, "sync")
+        state = _claim_state(main_path, y)[:2]
+        check("別の作業ツリーの送りを古い控えで書き戻さず、そのあと GitHub で手放した課題は着手に戻さない",
+              state == ("open", None), r.stdout + repr(state))
 
 
 def test_tracker_jira() -> None:
@@ -1805,10 +1839,17 @@ def main() -> None:
             test_stale_markers,
             test_retrospect_due,
             test_triage_and_adopt,
-            test_tracker_github_push_only,
-            test_tracker_github_bidirectional,
             test_tracker_github_keeps_claim_marks,
+            test_tracker_github_plan_marks_after_pull,
+            test_tracker_github_restore_failure,
+            test_tracker_github_bidirectional,
+            test_tracker_github_pull_round_trip,
+            test_tracker_github_closed_and_hold,
+            test_tracker_github_provisional_id,
             test_tracker_github_push_mark,
+            test_tracker_github_push_from_other_worktree,
+            test_tracker_github_push_only,
+            test_tracker_github_push_only_recovery,
             test_tracker_jira,
             test_tracker_jira_rename,
             test_backup,
