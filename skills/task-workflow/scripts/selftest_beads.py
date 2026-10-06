@@ -1281,15 +1281,16 @@ def gh_calls() -> list[list[str]]:
         return [json.loads(l) for l in f if l.strip()]
 
 
-def _github_repo(tmp: str, prefix: str) -> tuple[str, str]:
-    """トラッカーが github の `(本体, 作業ツリー1)`。`prefix` が `t` なら切り替え前（送るだけ）。"""
+def _github_repo(tmp: str, prefix: str | None) -> tuple[str, str]:
+    """トラッカーが github の `(本体, 作業ツリー1)`。`prefix` が `t` なら切り替え前（送るだけ）。
+    `None` なら `init.py` がトラッカーの行から prefix を選んで `.beads` を作る。"""
     main_path, wt1, _ = make_repo(tmp, extra="- トラッカー: github\n- GitHub Project: `sinnlosses/1`\n", prefix=prefix)
     bd(main_path, "config", "set", "github.repository", "o/r")
     return main_path, wt1
 
 
 @contextlib.contextmanager
-def _github(prefix: str = beads.PREFIX_GITHUB) -> Iterator[tuple["FakeGitHub", str, str, str]]:
+def _github(prefix: str | None = beads.PREFIX_GITHUB) -> Iterator[tuple["FakeGitHub", str, str, str]]:
     """偽の GitHub へ向けた `(偽の GitHub, 一時ディレクトリ, 本体, 作業ツリー1)`。"""
     fake = FakeGitHub()
     with tempfile.TemporaryDirectory() as tmp:
@@ -1383,7 +1384,9 @@ def test_tracker_github_push_only_recovery() -> None:
 
 def test_tracker_github_bidirectional() -> None:
     say("トラッカー github・issue_prefix gh（Issue 番号の ID・GitHub で立てた Issue の取り込みと adopt）")
-    with _github() as (fake, _tmp, main_path, wt1):
+    with _github(prefix=None) as (fake, _tmp, main_path, wt1):
+        check("トラッカーが github なら init.py は issue_prefix gh で .beads を作る",
+              beads.read_prefix(main_path) == beads.PREFIX_GITHUB)
         fake.open_issue("先にある PR 以外の Issue", [])
         a = new(main_path, "Issue を先に立てる")
         check("new は Issue を立てて GH-<番号> を返す", a == "GH-2" and beads.show(main_path, "gh-2") is not None, a)
