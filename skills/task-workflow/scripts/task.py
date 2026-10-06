@@ -1105,7 +1105,10 @@ def cmd_verify_check(toplevel: str) -> None:
     if stamp is None:
         print("NOT_VERIFIED\tnone")
         return
-    if fold.can_fold(toplevel, ledger.base_branch(toplevel)):
+    base = ledger.base_branch(toplevel)
+    if fold.can_fold(toplevel, base) and not (
+        ship.read_preship_command(toplevel) is not None and fold.folds_cleanly(toplevel, base)
+    ):
         print("NOT_VERIFIED\tbase")
         return
     now = ledger.content_key(verify_command, cwd=toplevel)

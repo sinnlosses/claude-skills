@@ -265,7 +265,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    | `tw verify-check` の出力 | すること |
    | --- | --- |
    | `VERIFIED_SAME\t<木の SHA>` | 検証コマンドを打たずに次へ（委譲先が `tw verify` で通した中身と、整形のあとの中身が同じ） |
-   | `NOT_VERIFIED\t<理由>` | `tw verify` を打つ（`none`＝委譲先が控えていない・最後の検証が落ちた／`base`＝委譲先が控えたあとに主ブランチが進んだ。`tw verify` が取り込んでから打つ／`content`＝整形や受け入れの直しで中身が変わった／`head`／`command`）。`VERIFIED`・`VERIFIED_UNSTAMPED` は通った（取り込んだときは先頭に `FOLDED` の行）。`CONFLICT` なら取り込みが衝突した（何も書き換えず、検証コマンドは打っていない）。手順8の `CONFLICT` と同じく、衝突したファイルを添えて人に預けて終了する。`VERIFY_NOT_PASSED` なら出力の末尾とログを読んで直し、打ち直す。`PLAN_MISSING`（`## やること` が空のまま作業がある。手順5bを通っていれば出ない）なら、差分から中身を書き起こして `tw edit T-xxx --after-work` で渡してから打ち直す。`GIT_READ_ONLY`（取り込みが要るのに `.git` に書けない。何も書き換えず、検証コマンドは打っていない）なら、sandbox の外で `tw verify` を打ち直す。打ち直せなければ、行を添えて行の3列目の次の一手を案内し、人に預けて終了する |
+   | `NOT_VERIFIED\t<理由>` | `tw verify` を打つ（`none`＝委譲先が控えていない・最後の検証が落ちた／`base`＝委譲先が控えたあとに主ブランチが進んだ。`tw verify` が取り込んでから打つ。送る前の検証コマンドの行があり取り込みが衝突しないときは `base` にならず、鍵が同じなら `VERIFIED_SAME`／`content`＝整形や受け入れの直しで中身が変わった／`head`／`command`）。`VERIFIED`・`VERIFIED_UNSTAMPED` は通った（取り込んだときは先頭に `FOLDED` の行）。`CONFLICT` なら取り込みが衝突した（何も書き換えず、検証コマンドは打っていない）。手順8の `CONFLICT` と同じく、衝突したファイルを添えて人に預けて終了する。`VERIFY_NOT_PASSED` なら出力の末尾とログを読んで直し、打ち直す。`PLAN_MISSING`（`## やること` が空のまま作業がある。手順5bを通っていれば出ない）なら、差分から中身を書き起こして `tw edit T-xxx --after-work` で渡してから打ち直す。`GIT_READ_ONLY`（取り込みが要るのに `.git` に書けない。何も書き換えず、検証コマンドは打っていない）なら、sandbox の外で `tw verify` を打ち直す。打ち直せなければ、行を添えて行の3列目の次の一手を案内し、人に預けて終了する |
    | `NOTHING` | 検証コマンドが無い。完了条件を目視で確かめる |
 
    **作業先が別のリポジトリのとき**（タスクが直す対象が自分の作業ツリーの外のリポジトリ）:
