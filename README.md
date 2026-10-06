@@ -16,7 +16,8 @@ Claude Code のスキル・エージェント定義・タスク運用のコマ�
 スキルは `sinnlos-skills:<name>`、エージェント定義は `sinnlos-skills:no-delegate`・`sinnlos-skills:reviewer`
 の名前で入る。`bin/tw` は plugin が有効なあいだ Bash の PATH に入る。plugin に入れたエージェント定義の
 frontmatter の `hooks` は無視されるので、`no-delegate` の hook（`tw commit-guard`・`tw handback-guard`）は
-`hooks/hooks.json` が `--agent-scoped` 付きで呼び、`agent_type` の末尾が `no-delegate` のときだけ掛かる。
+`hooks/hooks.json` が `"${CLAUDE_PLUGIN_ROOT}/bin/tw"` を `--agent-scoped` 付きで呼び（hook のシェルの PATH に
+`bin/` が入る保証が無いため絶対パスで呼ぶ）、`agent_type` の末尾が `no-delegate` のときだけ掛かる。
 
 開発中は `claude --plugin-dir .`（このリポジトリの根）で読ませ、`claude plugin validate .` で検査する。
 リンクで入れていた環境を plugin に切り替えるときは、先に `./uninstall.sh` でリンクを外す。

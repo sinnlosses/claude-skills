@@ -15,7 +15,7 @@
 - スクリプトのパスが `${CLAUDE_SKILL_DIR}` 形で書かれ、実在するファイルを指していること
 - 同梱スクリプトが構文として読めること
 - `.claude-plugin/plugin.json` の `name` が `sinnlos-skills` であること、`bin/tw` が実行でき `task.py` を
-  呼ぶこと、`hooks/hooks.json` が `--agent-scoped` 付きの `tw` の hook 3つを持つこと
+  呼ぶこと、`hooks/hooks.json` が `--agent-scoped` 付きで `${CLAUDE_PLUGIN_ROOT}/bin/tw` を呼ぶ hook 3つを持つこと
 - `tw` の指す `task.py` が実行でき、スキルの Markdown が `task.py` を `python3` で呼ぶ形や `` `task …` `` の略記で書いていないこと
 - 兄弟スキルの `scripts/` を `sys.path` に足して `import` しているなら、`REQUIRES` にその
   兄弟スキル名があること
@@ -231,7 +231,7 @@ def check_plugin() -> None:
         fail("hooks/hooks.json を読めない（hooks.<イベント>[].hooks[].command の形）")
         return
     for subcommand in ("commit-guard", "handback-guard"):
-        want = f"tw {subcommand} --agent-scoped 2>/dev/null || true"
+        want = f'"${{CLAUDE_PLUGIN_ROOT}}/bin/tw" {subcommand} --agent-scoped 2>/dev/null || true'
         if want not in commands:
             fail(f"hooks/hooks.json に hook {want!r} が無い")
 

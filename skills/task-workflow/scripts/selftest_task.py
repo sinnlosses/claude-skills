@@ -996,12 +996,14 @@ def test_agent_scoped_guard() -> None:
                       r.returncode == 0 and (r.stdout != "") == refused, r.stdout + r.stderr)
 
         hooks = _plugin_hook_commands()
-        check("hooks/hooks.json は --agent-scoped 付きの tw の hook を3つ持つ",
-              len(hooks) == 3 and all(" --agent-scoped " in h and h.startswith("tw ") for h in hooks), str(hooks))
-        bin_dir = tempfile.mkdtemp(dir=tmp)
-        write(os.path.join(bin_dir, "tw"), f'#!/bin/sh\nexec {sys.executable} {TASK_PY} "$@"\n')
-        os.chmod(os.path.join(bin_dir, "tw"), 0o755)
-        env = {"PATH": f"{bin_dir}:/usr/bin:/bin"}
+        check("hooks/hooks.json は --agent-scoped 付きで ${CLAUDE_PLUGIN_ROOT}/bin/tw を呼ぶ hook を3つ持つ",
+              len(hooks) == 3 and all(
+                  h.startswith('"${CLAUDE_PLUGIN_ROOT}/bin/tw" ') and " --agent-scoped " in h for h in hooks),
+              str(hooks))
+        env = {
+            "PATH": f"{os.path.dirname(sys.executable)}:/usr/bin:/bin",
+            "CLAUDE_PLUGIN_ROOT": os.path.abspath(os.path.join(HERE, "..", "..", "..")),
+        }
         for hook in hooks:
             fields = commit if "commit-guard" in hook else stop
             for agent_type, refused in (("sinnlos-skills:no-delegate", True), (None, False)):
