@@ -658,13 +658,23 @@ def content_key(verify_command: str, cwd: str | None = None) -> ContentKey:
     return ContentKey(head, worktree_tree(toplevel, objects_in_repo=False), verify_command)
 
 
-def worktree_tree(toplevel: str, objects_in_repo: bool = True) -> str:
+def scratch_object_env(toplevel: str, scratch_dir: str) -> dict[str, str]:
+    """新しい object を `scratch_dir` に書き、元の object は読むだけにする git の環境変数。`.git` には何も書かない。"""
+    real_objects = _git(["rev-parse", "--path-format=absolute", "--git-path", "objects"], toplevel)
+    temp_objects = os.path.join(scratch_dir, "objects")
+    os.mkdir(temp_objects)
+    alternates = [real_objects, *filter(None, [os.environ.get("GIT_ALTERNATE_OBJECT_DIRECTORIES")])]
+    return {"GIT_OBJECT_DIRECTORY": temp_objects, "GIT_ALTERNATE_OBJECT_DIRECTORIES": os.pathsep.join(alternates)}
+
+
+def worktree_tree(toplevel: str, objects_in_repo: bool = True, object_env: dict[str, str] | None = None) -> str:
     """いまの作業ツリーの中身の木の SHA。
 
     index を一時ファイルに写して `git add -A` → `git write-tree` するので、`.gitignore` の対象でない
     未追跡のファイルまで入り、本物の index は変わらない。`objects_in_repo` が偽なら、新しい object は
     一時ディレクトリに書き、元の object は `GIT_ALTERNATE_OBJECT_DIRECTORIES` で読むので、
-    `.git` に書かずに済む（木の SHA は同じ。その木は `.git` には残らない）。
+    `.git` に書かずに済む（木の SHA は同じ。その木は `.git` には残らない）。`object_env` があれば
+    その環境変数で書き、呼ぶ側が書いた木をそのあとも読める。
     """
     real_index = _git(["rev-parse", "--path-format=absolute", "--git-path", "index"], toplevel)
     with tempfile.TemporaryDirectory() as tmp:
@@ -673,13 +683,10 @@ def worktree_tree(toplevel: str, objects_in_repo: bool = True) -> str:
             # mtime を保たないと、同じ秒・同じ大きさの書き換えを git が無変更とみなす
             shutil.copy2(real_index, temp_index)
         env = {**os.environ, "GIT_INDEX_FILE": temp_index}
-        if not objects_in_repo:
-            real_objects = _git(["rev-parse", "--path-format=absolute", "--git-path", "objects"], toplevel)
-            temp_objects = os.path.join(tmp, "objects")
-            os.mkdir(temp_objects)
-            alternates = [real_objects, *filter(None, [os.environ.get("GIT_ALTERNATE_OBJECT_DIRECTORIES")])]
-            env["GIT_OBJECT_DIRECTORY"] = temp_objects
-            env["GIT_ALTERNATE_OBJECT_DIRECTORIES"] = os.pathsep.join(alternates)
+        if object_env is not None:
+            env.update(object_env)
+        elif not objects_in_repo:
+            env.update(scratch_object_env(toplevel, tmp))
         for args in (["add", "-A"], ["write-tree"]):
             r = subprocess.run(["git", *args], cwd=toplevel, env=env, capture_output=True, text=True)
             if r.returncode != 0:
