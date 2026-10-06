@@ -347,8 +347,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 5. `/loop` で進められる行（取り直した `tw status` で `着手可否` が `READY` かつ `loopable` が `Y`）が
    無くなったときだけ1行: 未完了が残っていなければ「全タスク完了」、`HOLD`・`loopable: N` が
    残っていれば、その ID を添えて「残りは人の判断待ち」。下の続行判断で `context_size.py` が `OVER` を
-   返したときも1行: トークン数としきい値を添えて、tsukumo の中なら「文脈を空にして続ける」、外なら
-   「`/clear` してから `/loop /next-task` で再開する」
+   返したときも1行: トークン数としきい値を添えて、tsukumo の中なら「文脈を空にして続ける」
 
 書かないもの: 結論と重なる「完了したタスク」の行、手順7aで消したタスクファイルの件数、
 `tw status` の件数、`develop/direction.md` の行数、`stale`・`legacy_progress` の行
@@ -365,4 +364,4 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 | 出力 | すること |
 | --- | --- |
 | `UNDER`・`UNKNOWN` | 続行する |
-| `OVER\t<トークン数>\t<しきい値>` | 次の1件に着手しない。tsukumo の MCP ツール（`mcp__tsukumo__` で始まる）に、文脈を空にして依頼を送り直すものがあれば、`/loop /next-task` を渡して呼び、`/loop` を止めてターンを終える（tsukumo が `/clear` してから送り直す）。無ければ tsukumo の外なので、`/loop` を止めて報告の5に1行を足す |
+| `OVER\t<トークン数>\t<しきい値>` | 次の1件に着手しない。tsukumo の MCP ツール（`mcp__tsukumo__` で始まる）に、文脈を空にして依頼を送り直すものがあれば、`/loop /next-task` を渡して呼び、`/loop` を止めてターンを終える（tsukumo が `/clear` してから送り直す）。無ければ tsukumo の外なので、`/loop` を止めずに次の1件へ進む（文脈は Claude Code の自動の要約に任せる） |
