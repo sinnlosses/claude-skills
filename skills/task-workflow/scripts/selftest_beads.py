@@ -1815,7 +1815,19 @@ def main() -> None:
         BASE_ENV["XDG_DATA_HOME"] = os.path.join(home, ".local", "share")
         BASE_ENV.pop("BEADS_ACTOR", None)
         BASE_ENV.pop("GITHUB_TOKEN", None)
+        # 長いものから並列に乗せる（後ろに残ると全体がその分延びる）。
         tests = (
+            test_tracker_github_keeps_claim_marks,
+            test_tracker_github_plan_marks_after_pull,
+            test_tracker_github_bidirectional,
+            test_tracker_github_pull_round_trip,
+            test_tracker_github_push_mark,
+            test_tracker_github_push_from_other_worktree,
+            test_tracker_github_push_only,
+            test_tracker_github_closed_and_hold,
+            test_tracker_github_restore_failure,
+            test_tracker_github_provisional_id,
+            test_tracker_github_push_only_recovery,
             test_id_forms,
             test_bd_time_forms,
             test_setup_and_config_doctor,
@@ -1839,17 +1851,6 @@ def main() -> None:
             test_stale_markers,
             test_retrospect_due,
             test_triage_and_adopt,
-            test_tracker_github_keeps_claim_marks,
-            test_tracker_github_plan_marks_after_pull,
-            test_tracker_github_restore_failure,
-            test_tracker_github_bidirectional,
-            test_tracker_github_pull_round_trip,
-            test_tracker_github_closed_and_hold,
-            test_tracker_github_provisional_id,
-            test_tracker_github_push_mark,
-            test_tracker_github_push_from_other_worktree,
-            test_tracker_github_push_only,
-            test_tracker_github_push_only_recovery,
             test_tracker_jira,
             test_tracker_jira_rename,
             test_backup,
