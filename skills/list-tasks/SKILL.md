@@ -19,7 +19,8 @@ Beads 方式でトラッカーが `github` なら Issue 番号の `GH-<n>` も�
 ## 表示のしかた
 
 0. **依存を確かめる**: `command -v tw` が何も返さなければ、`tw` が PATH に張られていないとして
-   `MISSING` を報告して終了する（`task-workflow` を含めて `./install.sh` を打ち直すよう案内する）。
+   `MISSING` を報告して終了する（plugin で入れるなら `/plugin install sinnlos-skills@sinnlos-skills`、
+   リンクで入れるなら `task-workflow` を含めて `./install.sh` を打ち直すよう案内する）。
 
 1. 終了コードが0でなければ表を出さずに終わる: 5（`LEGACY`）は「旧形式（`develop/tasks.json`）。
    正典「旧形式からの移行」の手順で `tw migrate --dry-run` から移す」、6（`MISSING`）は「タスク運用を

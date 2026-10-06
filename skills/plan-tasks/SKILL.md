@@ -23,7 +23,8 @@ description: "develop/direction.md に書かれたユーザーからの指示（
 ## 手順
 
 0. **依存を確かめる**: `command -v tw` が何も返さなければ、`tw` が PATH に張られていないとして
-   `MISSING` を報告して終了する（`task-workflow` を含めて `./install.sh` を打ち直すよう案内する）。
+   `MISSING` を報告して終了する（plugin で入れるなら `/plugin install sinnlos-skills@sinnlos-skills`、
+   リンクで入れるなら `task-workflow` を含めて `./install.sh` を打ち直すよう案内する）。
 
 1. **読む**: `tw status` で既存の一覧を見る（本文は読まない。重なりそうな1件があるときだけ
    `develop/task/T-xxx.md` を開く。Beads 方式では `tw show T-xxx`）。終了コード5（`LEGACY`）なら「旧形式。正典「旧形式からの移行」の

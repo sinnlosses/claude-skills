@@ -198,7 +198,7 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
   で閉じる
 - **依存の解決**: `done`・`dropped` と、タスクファイルに無い ID（`tw prune` で消したもの・旧アーカイブ由来）は解決済み。
   `todo`・`hold` は未解決。後から変えるのは `tw edit T-xxx --add-deps T-yyy` と `--remove-deps`（本文の `## 注意` に書くだけでは台帳に入らず、BLOCKED に出ない）
-- **委譲先のコミットを拒む**: 印を立ててから `done` を打つまで、その作業ツリーで `no-delegate` の委譲先が
+- **委譲先のコミットを拒む**: 印を立ててから `done` を打つまで、その作業ツリーで `no-delegate`（plugin で入れたときは `sinnlos-skills:no-delegate`）の委譲先が
   `git commit` などコミットを作る git のサブコマンドを打つと、hook（`tw commit-guard`）が拒む。
   メインのセッションと、別の作業ツリー・別のリポジトリへのコミットには掛からない。`general-purpose` への
   委譲と、Bash のコマンド文字列に `git` が出ないコミット（`sh -c`・スクリプト越し）には効かず、
@@ -430,9 +430,9 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 
 ## `tw` コマンドの参照
 
-`tw <サブコマンド>` で打つ。`tw` は `install.sh` が PATH 上（既定は `~/.local/bin`）に張る
-`scripts/task.py` へのシンボリックリンクで、ロジックを持たない。PATH に無ければ `./install.sh` を
-打ち直す（`task-workflow` を対象に含める）。どのディレクトリから打ってもリポジトリの根で動く。
+`tw <サブコマンド>` で打つ。`tw` は plugin の `bin/tw`（plugin が有効なあいだ Bash の PATH に入る）か、`install.sh` が PATH 上
+（既定は `~/.local/bin`）に張る `scripts/task.py` へのシンボリックリンクで、どちらもロジックを持たない。
+PATH に無ければ plugin を入れるか、`./install.sh` を打ち直す（`task-workflow` を対象に含める）。どのディレクトリから打ってもリポジトリの根で動く。
 出力は常に stdout の TSV で、1行目の先頭語が種類。
 
 | サブコマンド | すること | 主な出力 |

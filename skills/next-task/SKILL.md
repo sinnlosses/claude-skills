@@ -23,7 +23,8 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 ## 手順
 
 0. **依存を確かめる**: `command -v tw` が何も返さなければ、`tw` が PATH に張られていないとして
-   `MISSING` を報告して終了する（`task-workflow` を含めて `./install.sh` を打ち直すよう案内する）。
+   `MISSING` を報告して終了する（plugin で入れるなら `/plugin install sinnlos-skills@sinnlos-skills`、
+   リンクで入れるなら `task-workflow` を含めて `./install.sh` を打ち直すよう案内する）。
 
 1. **見渡す**: `tw status`（Beads 方式でトラッカーが `jira`・`github` なら、先に `tw sync` で取り込む。
    `TRACKER\tFAILED` は報告に添えて先へ進む）。終了コードが 5 `LEGACY`・6 `MISSING`・1・3 なら、
@@ -95,10 +96,10 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 
    **共通の依頼文**: Agent ツールで `difficulty` と同じモデルのサブエージェントへ（メインのモデルは
    判断材料にしない。一致していても委譲する。正典「difficulty とモデルの切り替え」）。
-   `subagent_type` は、Agent ツールの説明に並ぶエージェント一覧に `no-delegate`（`tools` から
-   `Agent` を外したエージェント定義。claude-skills の `agents/no-delegate.md` を `install.sh` が
-   `~/.claude/agents/` へ張ったもの）があればそれを使う。一覧に無ければ、`install.sh` を打つ前
-   （人がやること）とみなして、これまでどおり `general-purpose` を使う。`no-delegate` は、着手の印が
+   `subagent_type` は、Agent ツールの説明に並ぶエージェント末尾が `no-delegate` の行
+   （`no-delegate`（リンクで入れたとき）か `sinnlos-skills:no-delegate`（plugin で入れたとき）。`Agent` を
+   外したエージェント定義で、claude-skills の `agents/no-delegate.md`）があれば、一覧に出ている名前のまま使う。
+   一覧に無ければ、まだ入れていない（人がやること）とみなして、これまでどおり `general-purpose` を使う。`no-delegate` は、着手の印が
    立った作業ツリーでのコミットを hook（`tw commit-guard`）で拒み、作業があるのに計画か検証が欠けた
    返却を hook（`tw handback-guard`）で拒む定義でもある。`general-purpose` に
    落ちたときは拒む仕組みが無く、手順6の `COMMITS_SINCE_CLAIM` と手順5bの `plan-check`・手順6の
@@ -231,9 +232,9 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    | `SKIP\tdocs-only`・`NOTHING` | レビューせずに次へ |
 
    レビュアーは Agent ツールで、`difficulty` と同じモデルの新しいサブエージェント（`subagent_type` は、
-   Agent ツールの説明に並ぶエージェント一覧に `reviewer`（読むだけの定義。claude-skills の
-   `agents/reviewer.md` を `install.sh` が `~/.claude/agents/` へ張ったもの。返却を拒む hook を持たない）が
-   あればそれ、無ければ手順5の共通の依頼文と同じ選び方）。渡すのは、作業ツリーのパス・差分を出すコマンド（`git diff HEAD` と、
+   Agent ツールの説明に並ぶエージェント末尾が `reviewer` の行（`reviewer` か
+   `sinnlos-skills:reviewer`。読むだけの定義で claude-skills の `agents/reviewer.md`。返却を拒む hook を持たない）が
+   あれば、一覧に出ている名前のままそれ、無ければ手順5の共通の依頼文と同じ選び方）。渡すのは、作業ツリーのパス・差分を出すコマンド（`git diff HEAD` と、
    未追跡の新しいファイルを並べる `git ls-files --others --exclude-standard`）・`tw show T-xxx` の
    `## 完了条件` の本文・プロジェクトの規約のファイル（AGENTS.md・CLAUDE.md と、そこから引かれる
    コーディング規約）のパスだけ。委譲の依頼文・委譲先の報告・`## やること`・`## 目的・背景` は渡さない。
