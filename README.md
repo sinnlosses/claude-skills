@@ -141,7 +141,7 @@ frontmatter の `hooks` は無視されるので、`no-delegate` の hook（`tw 
 ```
 
 自己テストの段は、main との merge-base からの差分と未コミット・未追跡のファイルに当たるものだけを流す
-（下の1の構文と4の整合はいつも流す）。当たるパスは、2 が `install.sh`・`uninstall.sh`・`scripts/`・`agents/`・`bin/`・
+（下の1の構文と4の整合はいつも流す）。当たるパスは、2 が `install.sh`・`uninstall.sh`・`scripts/links.sh`・`scripts/selftest_links.sh`・`agents/`・`bin/`・
 `skills/*/SKILL.md`・`skills/*/REQUIRES`、3 が `skills/task-workflow/`・`agents/`・`hooks/`・`bin/`・
 `skills/retrospect/scripts/`、retrospect が `skills/retrospect/`・`skills/task-workflow/scripts/`、
 comment-audit・next-task が自分のスキルの下。`check.sh` が変わったとき、`--full`、main の上、
