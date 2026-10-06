@@ -14,6 +14,8 @@
 - `docs/` に書くスキルが、索引 `docs/README.md` に1行足す指示を持っていること
 - スクリプトのパスが `${CLAUDE_SKILL_DIR}` 形で書かれ、実在するファイルを指していること
 - 同梱スクリプトが構文として読めること
+- `.claude-plugin/plugin.json` の `name` が `sinnlos-skills` であること、`bin/tw` が実行でき `task.py` を
+  呼ぶこと、`hooks/hooks.json` が `--agent-scoped` 付きの `tw` の hook 3つを持つこと
 - `tw` の指す `task.py` が実行でき、スキルの Markdown が `task.py` を `python3` で呼ぶ形や `` `task …` `` の略記で書いていないこと
 - 兄弟スキルの `scripts/` を `sys.path` に足して `import` しているなら、`REQUIRES` にその
   兄弟スキル名があること
@@ -22,11 +24,14 @@
 from __future__ import annotations
 
 import ast
+import json
 import os
 import re
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PLUGIN_NAME = "sinnlos-skills"
 SKILLS = os.path.join(ROOT, "skills")
 AGENTS = os.path.join(ROOT, "agents")
 
@@ -199,6 +204,36 @@ def check_tw_entry(names: list[str]) -> None:
                     fail(f"{rel}:{i}: task.py を python3 で呼んでいる（tw で書く）")
                 if old_abbrev.search(line):
                     fail(f"{rel}:{i}: `task …` の略記が残っている（tw で書く）")
+
+
+def check_plugin() -> None:
+    manifest = os.path.join(ROOT, ".claude-plugin", "plugin.json")
+    try:
+        name = json.loads(read(manifest)).get("name")
+    except (OSError, ValueError):
+        fail(".claude-plugin/plugin.json を JSON として読めない")
+    else:
+        if name != PLUGIN_NAME:
+            fail(f".claude-plugin/plugin.json の name が {name!r} で {PLUGIN_NAME!r} でない")
+
+    tw = os.path.join(ROOT, "bin", "tw")
+    if not os.access(tw, os.X_OK):
+        fail("bin/tw が無いか実行ビットが無い")
+    else:
+        done = subprocess.run([tw, "--help"], capture_output=True, text=True, cwd=ROOT)
+        if done.returncode != 0 or "commit-guard" not in done.stdout:
+            fail(f"bin/tw --help が task.py に届かない（終了コード {done.returncode}）")
+
+    try:
+        hooks = json.loads(read(os.path.join(ROOT, "hooks", "hooks.json")))["hooks"]
+        commands = [h["command"] for groups in hooks.values() for g in groups for h in g["hooks"]]
+    except (OSError, ValueError, KeyError, TypeError):
+        fail("hooks/hooks.json を読めない（hooks.<イベント>[].hooks[].command の形）")
+        return
+    for subcommand in ("commit-guard", "handback-guard"):
+        want = f"tw {subcommand} --agent-scoped 2>/dev/null || true"
+        if want not in commands:
+            fail(f"hooks/hooks.json に hook {want!r} が無い")
 
 
 def check_cross_references(names: list[str]) -> None:
@@ -477,6 +512,7 @@ def main() -> None:
     check_readme_index(names)
     check_script_paths(names)
     check_tw_entry(names)
+    check_plugin()
     check_cross_references(names)
     check_requires(names)
     check_sibling_imports(names)

@@ -1,7 +1,29 @@
 # claude-skills
 
-Claude Code のユーザー単位スキル（`~/.claude/skills/`）のソース。各スキルは `skills/<name>/` に
-置き、`./install.sh` で `<張る先>/<name>` へシンボリックリンクを張る
+Claude Code のスキル・エージェント定義・タスク運用のコマンド `tw` のソース。各スキルは
+`skills/<name>/` に置く。入れ方は2通りあり、**どちらか一方だけ**にする（両方で入れると同じスキルが
+二重に見える）。
+
+## plugin で入れる（主な入れ方）
+
+このリポジトリは plugin `sinnlos-skills` で、同じリポジトリが marketplace でもある。
+
+```
+/plugin marketplace add sinnlosses/claude-skills
+/plugin install sinnlos-skills@sinnlos-skills
+```
+
+スキルは `sinnlos-skills:<name>`、エージェント定義は `sinnlos-skills:no-delegate`・`sinnlos-skills:reviewer`
+の名前で入る。`bin/tw` は plugin が有効なあいだ Bash の PATH に入る。plugin に入れたエージェント定義の
+frontmatter の `hooks` は無視されるので、`no-delegate` の hook（`tw commit-guard`・`tw handback-guard`）は
+`hooks/hooks.json` が `--agent-scoped` 付きで呼び、`agent_type` の末尾が `no-delegate` のときだけ掛かる。
+
+開発中は `claude --plugin-dir .`（このリポジトリの根）で読ませ、`claude plugin validate .` で検査する。
+リンクで入れていた環境を plugin に切り替えるときは、先に `./uninstall.sh` でリンクを外す。
+
+## リンクで入れる（`install.sh`）
+
+ユーザー単位スキル（`~/.claude/skills/`）へ、`./install.sh` で `<張る先>/<name>` へシンボリックリンクを張る
 （実ディレクトリや他所を指すリンクがあれば触らず警告し、消したスキルの残骸は掃除する）。
 張る先は `--dest DIR` → `CLAUDE_CONFIG_DIR`（設定されていればその下の `skills/`）→
 `$HOME/.claude/skills` の順で決まる。引数にスキル名を渡すと対象を絞れる（絞ったときは
