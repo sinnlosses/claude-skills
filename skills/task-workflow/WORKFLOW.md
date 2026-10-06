@@ -662,8 +662,8 @@ Project・Status 欄・選択肢の ID は `bd kv` の `task-workflow.project` �
   人に預ける）。GitHub で開き直したら `cancelled` と `ship:*` を外す
 - **`tw sync` の順**: 控える → 取り込む → 送りの印を読んで着手の印を戻し、付け替える（直したものを送る）→
   push（`bd github sync --push-only`）→ 登録で落ちた仮の ID を付け替える → 送りの印と違う着手中の課題を
-  1件ずつ送り直す（`--push-only` はどれを送ったかを教えない）→ Status 欄を書く。1件ずつの送りは、届くたびに
-  送りの印を書く
+  まとめて送り直し（1回の `bd github push <ID>…`。`--push-only` はどれを送ったかを教えない）、届いたら
+  その課題の送りの印を書く → Status 欄を書く
 
 **Jira の方式との違い**:
 

@@ -201,7 +201,7 @@ class Session:
                 if renamed:
                     self._push(list(renamed.values()))
                     self._mark_synced(list(renamed.values()))
-                # `--push-only` がどの課題を送ったかは分からないので、送りの印と違う着手は1件ずつ送り直す。
+                # `--push-only` がどの課題を送ったかは分からないので、送りの印と違う着手はまとめて送り直す。
                 pushed = self._load_pushed()
                 unsent = [
                     i.bd_id for i in beads.list_issues(self.toplevel)
