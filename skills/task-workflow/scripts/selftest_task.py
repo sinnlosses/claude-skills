@@ -1344,6 +1344,11 @@ def test_readonly_git_stops_writers() -> None:
         check("ship は GIT_READ_ONLY（終了コード11）で、主ブランチ・HEAD・作業ツリー・台帳を変えない",
               r.returncode == 11 and r.stdout.startswith("GIT_READ_ONLY\t") and unchanged() == before,
               r.stdout + r.stderr)
+        fresh = os.path.join(tmp, "fresh-state")
+        with readonly_git(main_path):
+            r = run_task(wt1, "ship", env={ledger.STATE_DIR_ENV: fresh})
+        check("TW_STATE_DIR の台帳がまだ無い ship は GIT_READ_ONLY で止まり、新しい台帳を作らない",
+              r.returncode == 11 and not os.path.exists(fresh), r.stdout + r.stderr)
 
     with tempfile.TemporaryDirectory() as tmp:
         repo = _make_legacy_repo(tmp)
@@ -1403,6 +1408,35 @@ def test_state_dir() -> None:
               r.returncode == 12 and r.stdout.startswith(f"STATE_READ_ONLY\t{root}\t") and "TW_STATE_DIR" in r.stdout
               and not os.path.isdir(ledger.claim_dir(root, "T-100"))
               and not os.path.exists(os.path.join(wt1, ".tw", "task-open-claims", "T-100")), r.stdout + r.stderr)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp, branch="切らない", verify="`true`")
+        for tid in ("T-100", "T-101"):
+            commit_task(main_path, taskfile.Task(tid, "途中から", "todo", "sonnet", "Y", (), BODY))
+        run_task(wt1, "claim", "T-100")
+        run_task(wt1, "edit", "T-100", "--section", "やること", "--body-file", "-", stdin="### 1. 書く\n\n### 2. 試す\n")
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        run_task(wt2, "claim", "T-101")
+        write(os.path.join(wt2, "work.txt"), "x\n")
+        state = os.path.join(tmp, "state")
+        env = {ledger.STATE_DIR_ENV: state}
+
+        r = run_task(wt1, "status", env=env)
+        check("TW_STATE_DIR を途中から付けても、初めて書くまでは status が古い台帳の印を数える",
+              any(line.startswith("counts\t") and "claimed=2" in line for line in r.stdout.splitlines()), r.stdout)
+        r = run_task(wt1, "plan-check", "T-100", env=env)
+        check("書く前の plan-check が古い台帳の印と計画の記録を読む", r.stdout.startswith("PLAN_FIRST\tT-100"), r.stdout)
+        r = run_task(wt1, "step", "T-100", "1", env=env)
+        check("書く前の step が古い台帳の印を持ち主と見る", r.stdout.startswith("STEPPED\tT-100\t1/2\t"),
+              r.stdout + r.stderr)
+        r = run_task(wt2, "verify", env=env)
+        check("書く前の verify が古い台帳の印で計画の欠けを見る（PLAN_MISSING）",
+              r.returncode == 10 and r.stdout.startswith("PLAN_MISSING\tT-101\t"), r.stdout + r.stderr)
+        result_path = write(os.path.join(tmp, "result.md"), "- 検証コマンド: 1 pass\n")
+        r = run_task(wt1, "done", "T-100", "--result-file", result_path, env=env)
+        check("書く前の done が古い台帳の印を持ち主と見て DONE、読むだけでは新しい台帳を作らない",
+              r.returncode == 0 and r.stdout.startswith("DONE\tT-100\t") and not os.path.exists(state),
+              r.stdout + r.stderr)
 
 
 # --- task.py: edit・plan-check ----------------------------------------------

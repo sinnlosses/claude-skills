@@ -247,27 +247,24 @@ def list_worktrees(cwd: str | None = None) -> list[Worktree]:
 
 
 def ledger_root(cwd: str | None = None) -> str:
-    """読む側の台帳の置き場。`TW_STATE_DIR` があれば
-    `$TW_STATE_DIR/<本体の作業ツリーの名前>-<共有の git dir の realpath の sha1 の先頭12桁>`
-    （環境変数は全リポジトリに掛かるのでクローンごとに分ける）、無ければ共有の git dir の `task-workflow/`。"""
-    common = git_common_dir(cwd)
-    state = os.environ.get(STATE_DIR_ENV)
-    if not state:
-        return os.path.join(common, LEDGER_DIR_NAME)
-    real = os.path.realpath(common)
-    digest = hashlib.sha1(real.encode("utf-8")).hexdigest()[:12]
-    name = os.path.basename(os.path.dirname(real))
-    return os.path.join(os.path.abspath(os.path.expanduser(state)), f"{name}-{digest}")
+    """読む側の台帳の置き場。`TW_STATE_DIR` の台帳（`_state_ledger_root`）があればそこ。
+    無ければ共有の git dir の `task-workflow/`（`TW_STATE_DIR` があっても、初めて書くまでは古い台帳を読む）。"""
+    new = _state_ledger_root(cwd)
+    if new is not None and os.path.isdir(new):
+        return new
+    old = os.path.join(git_common_dir(cwd), LEDGER_DIR_NAME)
+    return new if new is not None and not os.path.isdir(old) else old
 
 
 def ledger_root_for_write(cwd: str | None = None) -> str:
     """書く側の台帳の置き場。`TW_STATE_DIR` の台帳がまだ無く古い台帳があれば丸ごと写してから、
     置き場を作って書けるかを確かめる。書けなければ `StateReadOnly`。"""
-    root = ledger_root(cwd)
-    old = _old_ledger_root(cwd)
+    new = _state_ledger_root(cwd)
+    old = os.path.join(git_common_dir(cwd), LEDGER_DIR_NAME)
+    root = new if new is not None else old
     try:
-        if old is not None and not os.path.isdir(root) and os.path.isdir(old):
-            _carry_over_ledger(old, root)
+        if new is not None and not os.path.isdir(new) and os.path.isdir(old):
+            _carry_over_ledger(old, new)
         os.makedirs(root, exist_ok=True)
         fd, probe = tempfile.mkstemp(prefix=".probe-", dir=root)
         os.close(fd)
@@ -303,6 +300,18 @@ def split_claims(cwd: str | None = None) -> list[SplitClaim]:
             continue
         found.append(SplitClaim(task_id, owner.get("worktree", "?"), claimed_at))
     return found
+
+
+def _state_ledger_root(cwd: str | None) -> str | None:
+    """`$TW_STATE_DIR/<本体の作業ツリーの名前>-<共有の git dir の realpath の sha1 の先頭12桁>`
+    （環境変数は全リポジトリに掛かるのでクローンごとに分ける）。`TW_STATE_DIR` が無ければ `None`。"""
+    state = os.environ.get(STATE_DIR_ENV)
+    if not state:
+        return None
+    real = os.path.realpath(git_common_dir(cwd))
+    digest = hashlib.sha1(real.encode("utf-8")).hexdigest()[:12]
+    name = os.path.basename(os.path.dirname(real))
+    return os.path.join(os.path.abspath(os.path.expanduser(state)), f"{name}-{digest}")
 
 
 def _old_ledger_root(cwd: str | None) -> str | None:

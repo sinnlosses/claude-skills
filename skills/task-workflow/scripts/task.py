@@ -1287,27 +1287,31 @@ def cmd_ship(toplevel: str, hooks: "ShipHooks | None" = None) -> None:
         print("DIRTY")
         raise SystemExit(4)
 
-    if hooks is None:
-        hooks = _file_ship_hooks(toplevel)
+    def resolved_hooks() -> ShipHooks:
+        """ファイル方式の hooks は台帳の置き場を作るので、送る道では `require_git_writable` のあとに作る。"""
+        return hooks if hooks is not None else _file_ship_hooks(toplevel)
+
     base = ledger.base_branch(toplevel)
     branch = ledger.current_branch(cwd=toplevel)
 
     if branch == base:
         # 4.4: 主ブランチを出している作業ツリーで起こしたときは送る段が無い。
+        local_hooks = resolved_hooks()
         ledger.clear_verify_owed(cwd=toplevel)
-        released = hooks.release_shipped()
+        released = local_hooks.release_shipped()
         _record_shipped(toplevel, released)
         print(f"SHIPPED\t{base}\t(送る段なし)\treleased={','.join(released) or '-'}")
-        _print_lines(hooks.after_send())
+        _print_lines(local_hooks.after_send())
         return
 
     ahead = _run_git(toplevel, ["rev-list", "--count", f"{base}..HEAD"])
     ahead_count = int(ahead.stdout.strip()) if ahead.returncode == 0 and ahead.stdout.strip().isdigit() else 0
     if ahead_count == 0:
+        local_hooks = resolved_hooks()
         ledger.clear_verify_owed(cwd=toplevel)
-        hooks.release_shipped()
+        local_hooks.release_shipped()
         print(f"NOTHING\t({base} に無いコミットが無い)")
-        _print_lines(hooks.after_send())
+        _print_lines(local_hooks.after_send())
         return
 
     worktrees = ledger.list_worktrees(cwd=toplevel)
@@ -1316,8 +1320,9 @@ def cmd_ship(toplevel: str, hooks: "ShipHooks | None" = None) -> None:
         print(f"MAIN_DIRTY\t{base_worktree.path}")
         raise SystemExit(4)
     ledger.require_git_writable(toplevel)
+    hooks = resolved_hooks()
 
-    old_base =_run_git(toplevel, ["rev-parse", base]).stdout.strip()
+    old_base = _run_git(toplevel, ["rev-parse", base]).stdout.strip()
     verify_command = ship.read_verify_command(toplevel)
     verify_owed = ledger.is_verify_owed(cwd=toplevel)
     outcome = ship.attempt(
