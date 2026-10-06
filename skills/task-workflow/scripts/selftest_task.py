@@ -1311,6 +1311,50 @@ def test_readonly_git() -> None:
               and git(wt1, "rev-parse", "--abbrev-ref", "HEAD").stdout == branch, r.stdout + r.stderr)
 
 
+def test_readonly_git_stops_writers() -> None:
+    print("task.py: .git が読み取り専用なら done・ship・migrate は GIT_READ_ONLY で止まり、何も変えない")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _ = make_repo(tmp, branch="切らない", verify="`true`")
+        commit_task(main_path, taskfile.Task("T-100", "書けない", "todo", "sonnet", "Y", (), BODY))
+        git(wt1, "merge", "-q", "--ff-only", "main")
+        state = os.path.join(tmp, "state")
+        env = {ledger.STATE_DIR_ENV: state}
+        run_task(wt1, "claim", "T-100", env=env)
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        git(wt1, "add", "work.txt")
+        git(wt1, "commit", "-q", "-m", "作業")
+        result_path = write(os.path.join(tmp, "result.md"), "- 検証コマンド: 1 pass\n")
+
+        def unchanged() -> tuple[str, str, dict[str, bytes]]:
+            refs = git(wt1, "rev-parse", "HEAD", "main").stdout
+            return refs, git(wt1, "status", "--porcelain").stdout, snapshot(wt1, state)
+
+        before = unchanged()
+        with readonly_git(main_path):
+            r = run_task(wt1, "done", "T-100", "--result-file", result_path, env=env)
+        check("done は GIT_READ_ONLY（終了コード11）で、タスクファイル・index・台帳・.tw/ を変えない",
+              r.returncode == 11 and r.stdout.startswith("GIT_READ_ONLY\t") and unchanged() == before,
+              r.stdout + r.stderr)
+
+        r = run_task(wt1, "done", "T-100", "--result-file", result_path, env=env)
+        git(wt1, "commit", "-q", "-m", "T-100: 完了")
+        before = unchanged()
+        with readonly_git(main_path):
+            r = run_task(wt1, "ship", env=env)
+        check("ship は GIT_READ_ONLY（終了コード11）で、主ブランチ・HEAD・作業ツリー・台帳を変えない",
+              r.returncode == 11 and r.stdout.startswith("GIT_READ_ONLY\t") and unchanged() == before,
+              r.stdout + r.stderr)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = _make_legacy_repo(tmp)
+        before = snapshot(repo)
+        with readonly_git(repo):
+            r = run_task(repo, "migrate")
+        check("migrate は GIT_READ_ONLY（終了コード11）で何も書かない",
+              r.returncode == 11 and r.stdout.startswith("GIT_READ_ONLY\t") and snapshot(repo) == before,
+              r.stdout + r.stderr)
+
+
 def test_state_dir() -> None:
     print("ledger.py TW_STATE_DIR: 台帳の置き場を変え、古い台帳を写し、分かれた印と書けない置き場を知らせる")
     with tempfile.TemporaryDirectory() as tmp:
@@ -2929,6 +2973,7 @@ def main() -> None:
         test_worktree_state_dir,
         test_state_dir,
         test_readonly_git,
+        test_readonly_git_stops_writers,
         test_edit_and_plan_check,
         test_edit_section,
         test_edit_deps,

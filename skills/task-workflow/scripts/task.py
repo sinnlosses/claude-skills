@@ -703,6 +703,7 @@ def cmd_done(toplevel: str, task_id: str, dropped: bool, result_path: str) -> No
     if owner is None or owner.get("worktree") != toplevel:
         print(f"NOT_OWNER\t{task_id}")
         raise SystemExit(4)
+    ledger.require_git_writable(toplevel)
 
     task_dir = os.path.join(toplevel, layout.TASK_DIR)
     path = taskfile.task_path(task_dir, task_id)
@@ -1314,8 +1315,9 @@ def cmd_ship(toplevel: str, hooks: "ShipHooks | None" = None) -> None:
     if base_worktree is not None and not ledger.is_clean(cwd=base_worktree.path):
         print(f"MAIN_DIRTY\t{base_worktree.path}")
         raise SystemExit(4)
+    ledger.require_git_writable(toplevel)
 
-    old_base = _run_git(toplevel, ["rev-parse", base]).stdout.strip()
+    old_base =_run_git(toplevel, ["rev-parse", base]).stdout.strip()
     verify_command = ship.read_verify_command(toplevel)
     verify_owed = ledger.is_verify_owed(cwd=toplevel)
     outcome = ship.attempt(
@@ -1442,6 +1444,8 @@ def cmd_prune(toplevel: str, dry_run: bool, minimum: int) -> None:
     if len(targets) < minimum:
         print(f"NOTHING\t(消せるのは{len(targets)}件で、{minimum}件に届くまで溜める)")
         return
+    if not dry_run:
+        ledger.require_git_writable(toplevel)
     for tid, reason in targets:
         print(f"PRUNE\t{tid}\t{reason}")
     if dry_run:
@@ -1482,6 +1486,8 @@ def _has_review_line(body: str) -> bool:
 
 
 def cmd_migrate(toplevel: str, dry_run: bool) -> None:
+    if not dry_run:
+        ledger.require_git_writable(toplevel)
     result = legacy.migrate(toplevel, dry_run)
     if result.kind == "DIRTY":
         print("DIRTY")
