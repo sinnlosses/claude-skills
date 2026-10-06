@@ -364,4 +364,4 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 | 出力 | すること |
 | --- | --- |
 | `UNDER`・`UNKNOWN` | 続行する |
-| `OVER\t<トークン数>\t<しきい値>` | 次の1件に着手しない。tsukumo の MCP ツール（`mcp__tsukumo__` で始まる）に、文脈を空にして依頼を送り直すものがあれば、`/loop /next-task` を渡して呼び、`/loop` を止めてターンを終える（tsukumo が `/clear` してから送り直す）。無ければ tsukumo の外なので、`/loop` を止めずに次の1件へ進む（文脈は Claude Code の自動の要約に任せる） |
+| `OVER\t<トークン数>\t<しきい値>` | tsukumo の MCP ツール（`mcp__tsukumo__` で始まる）に、文脈を空にして依頼を送り直すものがあれば、次の1件に着手せず、`/loop /next-task` を渡して呼び、`/loop` を止めてターンを終える（tsukumo が `/clear` してから送り直す）。無ければ tsukumo の外なので、`/loop` を止めずに次の1件へ進む（文脈は Claude Code の自動の要約に任せる） |
