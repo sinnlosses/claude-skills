@@ -1084,7 +1084,7 @@ def cmd_verify(toplevel: str, unplanned_work: Callable[[], list[str]]) -> None:
     if r.returncode != 0:
         ledger.clear_verify_stamp(cwd=toplevel)
         _record_claimed(toplevel, "verify", result="VERIFY_NOT_PASSED", seconds=round(time.monotonic() - started))
-        _print_verify_end(folded_line, f"VERIFY_NOT_PASSED\t{log_path}", tail)
+        _print_verify_end(folded_line, f"VERIFY_NOT_PASSED\t{ledger.keep_failed_log(log_path)}", tail)
         raise SystemExit(10)
     if ledger.content_key(verify_command, cwd=toplevel) != before:
         ledger.clear_verify_stamp(cwd=toplevel)

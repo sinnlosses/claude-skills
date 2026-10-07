@@ -89,6 +89,8 @@ def _run_logged(toplevel: str, command: str) -> tuple[int, str, str]:
         rc = subprocess.run(["sh", "-c", command], cwd=toplevel, stdout=log, stderr=subprocess.STDOUT).returncode
     with open(log_path, errors="replace") as log:
         tail = "\n".join(log.read().splitlines()[-40:])
+    if rc != 0:
+        log_path = ledger.keep_failed_log(log_path)
     return rc, log_path, tail
 
 

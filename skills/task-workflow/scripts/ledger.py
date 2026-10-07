@@ -702,6 +702,22 @@ def ship_verify_log_path(cwd: str | None = None) -> str:
     return os.path.join(worktree_state_dir(cwd), SHIP_VERIFY_LOG_FILE_NAME)
 
 
+FAILED_LOGS_KEPT = 3
+
+
+def keep_failed_log(log_path: str) -> str:
+    """落ちた回のログを時刻つきの別名へ写し、同じ種類の古いものを直近3本だけ残して消す。写したパスを返す。"""
+    directory, name = os.path.split(log_path)
+    stem = name.removesuffix(".log")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    kept = os.path.join(directory, f"{stem}.failed-{stamp}.log")
+    shutil.copyfile(log_path, kept)
+    older = sorted(n for n in os.listdir(directory) if n.startswith(f"{stem}.failed-") and n.endswith(".log"))
+    for old in older[:-FAILED_LOGS_KEPT]:
+        os.remove(os.path.join(directory, old))
+    return kept
+
+
 def write_verify_stamp(key: ContentKey, cwd: str | None = None) -> None:
     _write_key(os.path.join(worktree_state_dir(cwd), VERIFY_STAMP_FILE_NAME), key)
 
