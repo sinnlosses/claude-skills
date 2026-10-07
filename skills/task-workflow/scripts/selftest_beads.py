@@ -422,12 +422,14 @@ def test_plan_check_parallel() -> None:
             "### 1. 書く\n- 触るファイル: `src/a.py`\n"
             "### 2. 文書\n- 前の段: なし\n- 触るファイル: `docs/`\n"
             "### 3. 試す\n- 前の段: なし\n- 触るファイル: `src/`\n"
+            "### 4. 合わせる\n"
         )
         r = run_task(wt1, "edit", a, "--section", "やること", "--body-file", "-", stdin=plan)
         check("欄つきの計画を書ける", r.returncode == 0 and r.stdout.startswith("EDITED\t"), r.stdout + r.stderr)
         r = run_task(wt1, "plan-check", a)
-        check("PLAN_FIRST のあとに PARALLEL・SERIAL を出す", r.returncode == 0 and r.stdout.splitlines() == [
+        check("PLAN_FIRST のあとに PARALLEL・SERIAL・STEP を出す", r.returncode == 0 and r.stdout.splitlines() == [
             f"PLAN_FIRST\t{a}", f"PARALLEL\t{a}\t1,2", f"PARALLEL\t{a}\t2,3", f"SERIAL\t{a}\t1,3\tsrc/a.py",
+            f"STEP\t{a}\t1\tなし", f"STEP\t{a}\t2\tなし", f"STEP\t{a}\t3\t1", f"STEP\t{a}\t4\t2,3",
         ], r.stdout + r.stderr)
 
 

@@ -27,6 +27,7 @@ sys.path.insert(0, HERE)
 
 import ledger  # noqa: E402
 import legacy  # noqa: E402
+import metrics  # noqa: E402
 import taskfile  # noqa: E402
 from selftest_body import task_body  # noqa: E402
 
@@ -249,6 +250,20 @@ def test_taskfile_parse() -> None:
           err is None and [s.after for s in specs] == [(), (), (1,), (2, 3)]
           and specs[1].files == ("docs/", "README.md")
           and taskfile.parallel_steps(specs) == ([(1, 2), (2, 3)], []), repr((specs, err)))
+    check("段ごとの直の待つ段と、並列の組になる段の触るファイルを出す",
+          taskfile.step_waits(specs) == [(), (), (1,), (2, 3)]
+          and taskfile.parallel_files(specs, 2) == ("src/a.py", "src/a_test.py")
+          and taskfile.parallel_files(specs, 4) == (),
+          repr((taskfile.step_waits(specs), taskfile.parallel_files(specs, 2))))
+    specs, err = taskfile.plan_step_specs(fielded(
+        ("書く", "- 触るファイル: `src/a.py`"),
+        ("文書", "- 前の段: なし\n- 触るファイル: `docs/`"),
+        ("合わせる", "- 前の段: 2"),
+    ))
+    check("最後の段は欄によらずほかの段すべてのあとに走り、触るファイルの欄が無くても並列の組に入らない",
+          err is None and taskfile.parallel_steps(specs) == ([(1, 2)], [])
+          and taskfile.step_waits(specs) == [(), (), (1, 2)],
+          repr((specs, err, taskfile.parallel_steps(specs) if specs else None)))
     specs, err = taskfile.plan_step_specs(fielded(
         ("書く", "- 触るファイル: `src/`"),
         ("文書", "- 前の段: なし\n- 触るファイル: `docs/a.md`"),
@@ -256,12 +271,14 @@ def test_taskfile_parse() -> None:
         ("直す", "- 前の段: 2\n- 触るファイル: `docs/a.md`"),
     ))
     check("触るファイルがディレクトリの中で重なる組を外す（前後の決まった組の重なりは見ない）",
-          err is None and taskfile.parallel_steps(specs) == ([(1, 2), (2, 3), (1, 4), (3, 4)], [(1, 3, ("src/",))]),
+          err is None and taskfile.parallel_steps(specs) == ([(1, 2), (2, 3)], [(1, 3, ("src/",))])
+          and taskfile.step_waits(specs) == [(), (), (1,), (2, 3)],
           repr((specs, err, taskfile.parallel_steps(specs) if specs else None)))
     specs, err = taskfile.plan_step_specs(fielded(
         ("書く", "- 触るファイル: `src/a.py`"),
         ("足す", "- 前の段: なし\n- 触るファイル: `src/a.py`"),
         ("試す", "- 前の段: 2\n- 触るファイル: `src/b.py`"),
+        ("合わせる", ""),
     ))
     check("重なりで外した辺で前後の決まった組も並列から外す",
           err is None and taskfile.parallel_steps(specs) == ([], [(1, 2, ("src/a.py",))]),
@@ -274,7 +291,8 @@ def test_taskfile_parse() -> None:
         ("触るファイルが `パス` の並びでない", [("書く", "- 触るファイル: src/a.py")]),
         ("触るファイルが絶対パス", [("書く", "- 触るファイル: `/etc/x`")]),
         ("触るファイルに ..", [("書く", "- 触るファイル: `../x`")]),
-        ("並列の組に入る段に触るファイルが無い", [("書く", ""), ("試す", "- 前の段: なし\n- 触るファイル: `a`")]),
+        ("並列の組に入る段に触るファイルが無い",
+         [("書く", ""), ("試す", "- 前の段: なし\n- 触るファイル: `a`"), ("合わせる", "")]),
     ):
         check(f"{label} 計画は登録の検査で拒む", taskfile.validate_new_body(fielded(*steps), hold=False) is not None,
               repr(taskfile.plan_step_specs(fielded(*steps))))
@@ -1271,6 +1289,55 @@ def test_handback_guard_step() -> None:
               and "PLAN_NOT_FIRST\tT-101\tafter-work" in _block_reason(run_handback_guard(tmp, wt2)), r.stdout + r.stderr)
 
 
+def test_handback_guard_parallel_steps() -> None:
+    print("task.py step・pause・handback-guard: 同じ作業ツリーで並列の段の担当どうしが互いの控えを崩さない")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp, verify="`true`")
+        commit_task(main_path, taskfile.Task("T-100", "並列の段", "todo", "sonnet", "Y", (), BODY))
+        run_task(wt1, "claim", "T-100")
+        plan = (
+            "### 1. 書く\n- 触るファイル: `a.txt`\n"
+            "### 2. 文書\n- 前の段: なし\n- 触るファイル: `b.txt`\n"
+            "### 3. 合わせる\n"
+        )
+        run_task(wt1, "edit", "T-100", "--section", "やること", "--body-file", "-", stdin=plan)
+        write(os.path.join(wt1, "a.txt"), "1\n")
+        write(os.path.join(wt1, "b.txt"), "1\n")
+        r = run_task(wt1, "step", "T-100", "1")
+        check("段1の担当の tw step は通る", r.returncode == 0 and r.stdout.startswith("STEPPED\tT-100\t1/3\t"),
+              r.stdout + r.stderr)
+        write(os.path.join(wt1, "b.txt"), "2\n")
+        check("段2の担当が段2の触るファイルを書き換えても、段1の返却は通る", run_handback_guard(tmp, wt1) is None)
+        write(os.path.join(wt1, "a.txt"), "2\n")
+        check("段1の触るファイルを書き換えれば段1の控えは崩れる",
+              "NOT_VERIFIED" in _block_reason(run_handback_guard(tmp, wt1)))
+        run_task(wt1, "step", "T-100", "1")
+        r = run_task(wt1, "step", "T-100", "2")
+        steps = sorted(s.step for s in ledger.read_step_stamps(cwd=wt1) if s.task_id == "T-100")
+        check("段2の担当の tw step は段1の控えを上書きせず、段ごとに残る", r.returncode == 0 and steps == [1, 2]
+              and run_handback_guard(tmp, wt1) is None, r.stdout + r.stderr + repr(steps))
+        write(os.path.join(wt1, "c.txt"), "1\n")
+        check("どの並列の段の触るファイルでもない書き換えは、どちらの控えも崩す",
+              "NOT_VERIFIED" in _block_reason(run_handback_guard(tmp, wt1)))
+        r = run_task(wt1, "pause", "T-100", "2")
+        write(os.path.join(wt1, "a.txt"), "3\n")
+        check("tw pause <ID> 2 は段1の触るファイルの書き換えで崩れない", r.returncode == 0
+              and r.stdout.startswith("PAUSED\t") and run_handback_guard(tmp, wt1) is None, r.stdout + r.stderr)
+        write(os.path.join(wt1, "b.txt"), "3\n")
+        check("tw pause <ID> 2 は段2の触るファイルの書き換えで崩れる",
+              "NOT_VERIFIED" in _block_reason(run_handback_guard(tmp, wt1)))
+        r = run_task(wt1, "pause", "T-100", "3")
+        check("最後の段も tw pause <ID> <n> で控えられる", r.returncode == 0 and run_handback_guard(tmp, wt1) is None,
+              r.stdout + r.stderr)
+        for label, args in (("段の番号が無い", ("T-100",)), ("段の外の番号", ("T-100", "4"))):
+            r = run_task(wt1, "pause", *args)
+            check(f"tw pause の引数が{label}なら終了コード2", r.returncode == 2 and "usage:" in r.stderr, r.stdout + r.stderr)
+        ledger.write_step_stamp(ledger.StepStamp(ledger.content_key("", cwd=wt1), "T-999", 1), cwd=wt1)
+        run_task(wt1, "step", "T-100", "1")
+        check("着手中でないタスクの段の控えは tw step が消す",
+              all(s.task_id == "T-100" for s in ledger.read_step_stamps(cwd=wt1)))
+
+
 def test_handback_guard_other_repo() -> None:
     print("task.py step・pause・handback-guard: 作業先が別のリポジトリなら、枝の名前がタスクIDの作業ツリーも見る")
     with tempfile.TemporaryDirectory() as tmp:
@@ -1679,14 +1746,16 @@ def test_edit_and_plan_check() -> None:
             ("書く", "- 触るファイル: `src/a.py`"),
             ("文書", "- 前の段: なし\n- 触るファイル: `docs/`"),
             ("試す", "- 前の段: なし\n- 触るファイル: `src/a.py`"),
+            ("合わせる", "x"),
         ])
         r = run_task(wt1, "edit", "T-106", "--body-file", "-", stdin=fielded.replace("- 前の段: なし\n- 触るファイル: `docs/`", "- 前の段: 2"))
         check("段の欄の誤った計画は edit が終了コード2で拒む", r.returncode == 2 and "段 2" in r.stderr, r.stdout + r.stderr)
         run_task(wt1, "edit", "T-106", "--body-file", "-", stdin=fielded)
         r = run_task(wt1, "plan-check", "T-106")
-        check("plan-check は1行目のあとに並列の組と、触るファイルの重なりで外した組を出す", r.returncode == 0
+        check("plan-check は1行目のあとに並列の組と、触るファイルの重なりで外した組と、段ごとの待つ段を出す", r.returncode == 0
               and r.stdout.splitlines() == [
                   "PLAN_FIRST\tT-106", "PARALLEL\tT-106\t1,2", "PARALLEL\tT-106\t2,3", "SERIAL\tT-106\t1,3\tsrc/a.py",
+                  "STEP\tT-106\t1\tなし", "STEP\tT-106\t2\tなし", "STEP\tT-106\t3\t1", "STEP\tT-106\t4\t2,3",
               ], r.stdout + r.stderr)
         reset("T-106")
 
@@ -3043,6 +3112,21 @@ def test_metrics_stages() -> None:
             print(f"  | {line}")
 
 
+def test_metrics_stages_parallel_steps() -> None:
+    print("task.py metrics --stages: 並列の段の返却が重なっても、委譲の時間を段ごとの和で数えない")
+    base = datetime.now(timezone.utc) - timedelta(hours=2)
+    row = lambda sec, ev, **kw: metrics.Event(base + timedelta(seconds=sec), ev, "T-070", {"difficulty": "opus", **kw})
+    events = [
+        row(0, "claim"), row(10, "lap", stage="delegate"),
+        row(200, "step", step=1, steps=3), row(210, "step", step=2, steps=3),
+        row(400, "verify", result="VERIFIED", seconds=50), row(410, "lap", stage="accept"),
+        row(500, "done"), row(510, "ship", result="SHIPPED"),
+    ]
+    delegated = metrics.stage_durations(events, 1)[("委譲", "opus", "normal")]
+    check("委譲の時間の和は lap delegate から受け入れまでの壁時計から検証の秒を引いたもので、段1（190秒）と段2（200秒）の和を超えない",
+          sum(delegated) == 410 - 10 - 50, repr(delegated))
+
+
 def test_retrospect_due() -> None:
     print("task.py status: 横断の振り返りの時期に retrospect_due の行を出す")
     due_line = lambda out: next((l for l in out.splitlines() if l.startswith("retrospect_due\t")), None)
@@ -3621,6 +3705,7 @@ def main() -> None:
         test_agent_scoped_guard,
         test_handback_guard,
         test_handback_guard_step,
+        test_handback_guard_parallel_steps,
         test_lap,
         test_handback_guard_other_repo,
         test_worktree_state_dir,
@@ -3651,6 +3736,7 @@ def main() -> None:
         test_ship_verify_failed_keeps_full_log_in_order,
         test_flow_records_and_metrics,
         test_metrics_stages,
+        test_metrics_stages_parallel_steps,
         test_retrospect_due,
         test_ship_stale_verify_owed_does_not_block_nothing_or_main_worktree,
         test_ship_conflict_aborts_rebase,

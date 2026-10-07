@@ -560,14 +560,14 @@ VERIFY_STAMP_FILE_NAME = "task-verify-stamp"
 VERIFY_LOG_FILE_NAME = "task-verify.log"
 SHIP_VERIFY_LOG_FILE_NAME = "task-ship-verify.log"
 PAUSE_STAMP_FILE_NAME = "task-pause-stamp"
-STEP_STAMP_FILE_NAME = "task-step-stamp"
+STEP_STAMPS_DIR_NAME = "task-step-stamps"
 OPEN_CLAIMS_DIR_NAME = "task-open-claims"
 # `.tw/` を作るときに古い置き場（`git_dir`）から写すもの。
 _CARRIED_OVER = (
     VERIFY_OWED_FILE_NAME,
     VERIFY_STAMP_FILE_NAME,
     PAUSE_STAMP_FILE_NAME,
-    STEP_STAMP_FILE_NAME,
+    STEP_STAMPS_DIR_NAME,
     OPEN_CLAIMS_DIR_NAME,
 )
 
@@ -651,16 +651,16 @@ class ContentKey:
     verify_command: str
 
 
-def content_key(verify_command: str, cwd: str | None = None) -> ContentKey:
-    """いまの作業ツリーの中身の鍵。"""
+def content_key(verify_command: str, cwd: str | None = None, excluded: tuple[str, ...] = ()) -> ContentKey:
+    """いまの作業ツリーの中身の鍵。`excluded` のパスも木から外す。"""
     toplevel = git_toplevel(cwd)
     head = head_sha_or_none(toplevel) or "-"
-    return ContentKey(head, content_tree(toplevel), verify_command)
+    return ContentKey(head, content_tree(toplevel, excluded), verify_command)
 
 
-def content_tree(toplevel: str) -> str:
-    """鍵に取る木の SHA。`worktree_tree` の木から `develop/task/`・`develop/draft/` を外す。`.git` に書かない。"""
-    return worktree_tree(toplevel, objects_in_repo=False, excluded=(layout.TASK_DIR, layout.DRAFT_DIR))
+def content_tree(toplevel: str, excluded: tuple[str, ...] = ()) -> str:
+    """鍵に取る木の SHA。`worktree_tree` の木から `develop/task/`・`develop/draft/` と `excluded` を外す。`.git` に書かない。"""
+    return worktree_tree(toplevel, objects_in_repo=False, excluded=(layout.TASK_DIR, layout.DRAFT_DIR, *excluded))
 
 
 def scratch_object_env(toplevel: str, scratch_dir: str) -> dict[str, str]:
@@ -754,30 +754,53 @@ def read_pause_stamp(cwd: str | None = None) -> ContentKey | None:
     return _read_key(os.path.join(_worktree_state_read_dir(cwd), PAUSE_STAMP_FILE_NAME))
 
 
+STEP_STAMP_KINDS = ("step", "pause")
+
+
 @dataclass(frozen=True)
 class StepStamp:
+    """`tw step`（`kind` が `step`）か `tw pause <ID> <n>`（`pause`）を打った時点の中身の鍵と段。"""
+
     key: ContentKey
     task_id: str
     step: int
+    kind: str = "step"
 
 
 def write_step_stamp(stamp: StepStamp, cwd: str | None = None) -> None:
-    """`tw step` を打った時点の中身の鍵と、済ませた段。"""
-    _write_key(
-        os.path.join(worktree_state_dir(cwd), STEP_STAMP_FILE_NAME), stamp.key, (stamp.task_id, str(stamp.step))
-    )
+    """段ごとに1つ（`<タスクID>.<段の番号>`）書き、同じ段の前の控えを置き換える。"""
+    d = os.path.join(worktree_state_dir(cwd), STEP_STAMPS_DIR_NAME)
+    os.makedirs(d, exist_ok=True)
+    _write_key(os.path.join(d, f"{stamp.task_id}.{stamp.step}"), stamp.key, (stamp.task_id, str(stamp.step), stamp.kind))
 
 
-def read_step_stamp(cwd: str | None = None) -> StepStamp | None:
-    path = os.path.join(_worktree_state_read_dir(cwd), STEP_STAMP_FILE_NAME)
-    key = _read_key(path)
-    if key is None:
-        return None
-    with open(path, encoding="utf-8") as f:
-        lines = f.read().split("\n")
-    if len(lines) < 5 or not lines[4].isdigit():
-        return None
-    return StepStamp(key, lines[3], int(lines[4]))
+def read_step_stamps(cwd: str | None = None) -> list[StepStamp]:
+    """段の控えを全部。読めない控えは飛ばす。"""
+    d = os.path.join(_worktree_state_read_dir(cwd), STEP_STAMPS_DIR_NAME)
+    if not os.path.isdir(d):
+        return []
+    stamps: list[StepStamp] = []
+    for name in sorted(os.listdir(d)):
+        path = os.path.join(d, name)
+        key = _read_key(path) if os.path.isfile(path) else None
+        if key is None:
+            continue
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().split("\n")
+        if len(lines) < 6 or not lines[4].isdigit() or lines[5] not in STEP_STAMP_KINDS:
+            continue
+        stamps.append(StepStamp(key, lines[3], int(lines[4]), lines[5]))
+    return stamps
+
+
+def remove_step_stamps(task_ids: list[str], cwd: str | None = None) -> None:
+    """`task_ids` のタスクの段の控えを消す。"""
+    d = os.path.join(worktree_state_dir(cwd), STEP_STAMPS_DIR_NAME)
+    for stamp in read_step_stamps(cwd):
+        if stamp.task_id in task_ids:
+            path = os.path.join(d, f"{stamp.task_id}.{stamp.step}")
+            if os.path.exists(path):
+                os.remove(path)
 
 
 def _write_key(path: str, key: ContentKey, extra: tuple[str, ...] = ()) -> None:

@@ -214,7 +214,7 @@ def plan_step_specs(body: str) -> tuple[tuple[PlanStep, ...], str | None]:
 
     段の番号は `### 1.` から1つずつ増え、段は1つ以上。`### 名指すファイル`・`### 作業先` は段に数えず、
     ほかの `### ` 見出しは拒む。欄は段の見出しから次の `### ` 見出しまでに、それぞれ1行まで置く。
-    前の段の番号はその段より小さく、並列の組に入る段は触るファイルの欄を要る。
+    前の段の番号はその段より小さく、並列の組に入る段は触るファイルの欄を要る。最後の段は欄によらずほかの段すべてのあとに走る。
     """
     lines = dict(_frame_sections(body)[1]).get(PLAN_HEADING, "").split("\n")
     steps: list[tuple[str, dict[str, str]]] = []
@@ -251,7 +251,7 @@ def plan_step_specs(body: str) -> tuple[tuple[PlanStep, ...], str | None]:
         if error is not None:
             return (), error
         specs.append(PlanStep(name, after, files))
-    for a, b in _unordered_pairs([s.after for s in specs]):
+    for a, b in _unordered_pairs(_joined_after(specs)):
         bare = [n for n in (a, b) if not specs[n - 1].files]
         if bare:
             return (), f"段 {a} と段 {b} は並列になるので、段 {bare[0]} に `- {PLAN_TOUCHED_FIELD}:` を書く"
@@ -297,6 +297,14 @@ def _parse_touched(n: int, raw: str | None) -> tuple[tuple[str, ...], str | None
 _PLAN_TOUCHED_ITEM = re.compile(r"^`([^`]+)`$")
 
 
+def _joined_after(specs: tuple[PlanStep, ...] | list[PlanStep]) -> list[tuple[int, ...]]:
+    """段ごとの前の段。最後の段はほかの段すべて。"""
+    after = [s.after for s in specs]
+    if after:
+        after[-1] = tuple(range(1, len(after)))
+    return after
+
+
 def _ancestors(after: list[tuple[int, ...]]) -> list[set[int]]:
     """段ごとに、その段より先に済む段の番号（`after` を辿った閉包）。`after[i]` は段 `i + 1` の前の段。"""
     result: list[set[int]] = []
@@ -322,14 +330,40 @@ def parallel_steps(
 
     重なった組は番号の小さい段を先にして1本道にし、それで前後の決まった組も並列から外す。
     """
-    after = [s.after for s in specs]
+    after, serial = _serialized_after(specs)
+    return _unordered_pairs(after), serial
+
+
+def _serialized_after(
+    specs: tuple[PlanStep, ...],
+) -> tuple[list[tuple[int, ...]], list[tuple[int, int, tuple[str, ...]]]]:
+    """`(段ごとの前の段に、触るファイルの重なりで足した前後を加えたもの, 重なって外した組と重なったパス)`。"""
+    after = _joined_after(specs)
     serial: list[tuple[int, int, tuple[str, ...]]] = []
     for a, b in _unordered_pairs(after):
         shared = _overlap(specs[a - 1].files, specs[b - 1].files)
         if shared:
             serial.append((a, b, shared))
             after[b - 1] = (*after[b - 1], a)
-    return _unordered_pairs(after), serial
+    return after, serial
+
+
+def step_waits(specs: tuple[PlanStep, ...]) -> list[tuple[int, ...]]:
+    """段ごとに、走る前に済んでいる要る段（`parallel_steps` の前後）から、ほかの要る段の先に済むものを除いた番号。"""
+    after, _ = _serialized_after(specs)
+    ancestors = _ancestors(after)
+    waits: list[tuple[int, ...]] = []
+    for deps in after:
+        direct = set(deps)
+        waits.append(tuple(sorted(d for d in direct if not any(d in ancestors[o - 1] for o in direct))))
+    return waits
+
+
+def parallel_files(specs: tuple[PlanStep, ...], n: int) -> tuple[str, ...]:
+    """段 `n` と並列の組（`parallel_steps`）になる段の触るファイルを、段の番号の順に重ねずに。"""
+    pairs, _ = parallel_steps(specs)
+    others = sorted({b if a == n else a for a, b in pairs if n in (a, b)})
+    return tuple(dict.fromkeys(p for o in others for p in specs[o - 1].files))
 
 
 def _overlap(left: tuple[str, ...], right: tuple[str, ...]) -> tuple[str, ...]:
