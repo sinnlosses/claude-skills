@@ -204,6 +204,7 @@ def read_signals(path: str, root: str) -> dict | None:
         "tools": tools.most_common(8),
         "rewrites": [(k, v) for k, v in files.most_common(5) if v >= 2],
         "commands": [(k, v) for k, v in commands.most_common(6) if v >= 2],
+        "command_counts": dict(commands),
         "output_tokens": out_tokens,
         "slow_calls": sorted(waits, key=lambda w: -w[2])[:3],
     }

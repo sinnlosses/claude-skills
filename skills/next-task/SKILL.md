@@ -312,9 +312,19 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    手順7で `tw done` を打ったときの出力に `COMMITS_SINCE_CLAIM` の行が続いたら、
    `${CLAUDE_SKILL_DIR}/commits-since-claim.md` を読んで扱ってから先へ進む。
 
-6a. **振り返る**（`/loop` から回っているときも。委譲せずメインで行う）: 頭に `tw lap T-xxx retro` を打ち、`retrospect` スキルの
+6a. **振り返る**（`/loop` から回っているときも。委譲せずメインで行う）: 頭に `tw lap T-xxx retro` を打ち、
+   手順6の一言メモ・レビューの結果・委譲先の friction log から次の5つの値を決めて、
+   `python3 ${CLAUDE_SKILL_DIR}/../retrospect/scripts/material.py . T-xxx --gate --friction … --reverify … --fixes … --human … --review …` を打つ。
+   - `--friction`: 委譲先の段ごとの返却の friction log がすべて `なし` なら `none`、行が1つでもあれば `some`、friction log を書いていない返却があれば `missing`（委譲せずメインで進めた回は、自分で気づいた引っかかりで決める）
+   - `--reverify`: 検証を打ち直した回数（委譲先の friction log の打ち直して通った行と、受け入れで打ち直したもののメモの和）
+   - `--fixes`: 受け入れの差し戻しとメインの直しのメモの数の和
+   - `--human`: 人の差し戻しのメモの数
+   - `--review`: レビューしなかった（`SKIP`・`NOTHING`）なら `skip`、`指摘なし` だけが返ったなら `clean`、指摘が返ったなら（捨てた指摘も）`found`
+
+   出力が `QUIET` の1行なら、`retrospect` の `SKILL.md` を読まずに `- 振り返り: 兆候なし` に決めて先へ進む。
+   `SIGNAL` の行が1つでもあれば、`retrospect` スキルの
    `SKILL.md`（`${CLAUDE_SKILL_DIR}/../retrospect/SKILL.md`）の節「1件だけ振り返る」と、そこが指す
-   節「改善の7観点」「色と1行の書式」**だけ**を読んで従う。材料を7観点に当てて物差しを通った候補が
+   節「改善の7観点」「色と1行の書式」**だけ**を読んで従い、`SIGNAL` の行と手数の節をその手順1の材料にする。材料を7観点に当てて物差しを通った候補が
    残ったら、利用者が直接呼んだときは重い順に示して選ばれたものだけを、`/loop` から回っているときは
    残ったものをすべて `develop/draft/` にドラフトのファイルとして足す。どちらでも `## 結果` に入れる
    `- 振り返り:` の1行を決める。`/loop` から回っているときは、次の1件へ

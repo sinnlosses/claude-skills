@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""`weekly.py`（横断の振り返りの材料）と `material.py --signals` の `長く待った呼び出し` の自己テスト。
+"""`weekly.py`（横断の振り返りの材料）と `material.py --signals` の `長く待った呼び出し`・`--gate` の判定の自己テスト。
 
 使い方: python3 selftest.py
 
@@ -206,9 +206,98 @@ def test_slow_calls() -> None:
         check("コマンドの本文を出さない", "SECRET-COMMAND-BODY" not in r.stdout, r.stdout)
 
 
+def test_gate() -> None:
+    print("material.py --gate の判定")
+    quiet = {"--friction": "none", "--reverify": "0", "--fixes": "0", "--human": "0", "--review": "skip"}
+
+    with tempfile.TemporaryDirectory() as d:
+        root = os.path.join(d, "repo")
+        os.makedirs(root)
+        env = {**os.environ, "CLAUDE_CONFIG_DIR": os.path.join(d, "cfg")}
+
+        def gate(task_id: str, answers: dict[str, str]) -> subprocess.CompletedProcess:
+            args = [a for kv in answers.items() for a in kv]
+            return subprocess.run(
+                [sys.executable, os.path.join(HERE, "material.py"), root, task_id, "--gate", *args],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+        r = gate("GH-1", quiet)
+        check("5つとも当たらずトランスクリプトも無ければ QUIET の1行だけ", r.returncode == 0 and r.stdout == "QUIET\n", r.stdout + r.stderr)
+        r = gate("GH-1", {**quiet, "--review": "clean"})
+        check("レビューが指摘なしでも QUIET", r.stdout == "QUIET\n", r.stdout + r.stderr)
+
+        for opt, value, expected in (
+            ("--friction", "some", "SIGNAL\tfriction log\tsome"),
+            ("--friction", "missing", "SIGNAL\tfriction log\tmissing"),
+            ("--reverify", "1", "SIGNAL\t検証の打ち直し\t1回"),
+            ("--fixes", "2", "SIGNAL\t受け入れでの直し\t2回"),
+            ("--human", "1", "SIGNAL\t人の差し戻し\t1回"),
+            ("--review", "found", "SIGNAL\t受け入れでの直し\tレビューの指摘あり"),
+        ):
+            r = gate("GH-1", {**quiet, opt: value})
+            lines = r.stdout.splitlines()
+            check(f"{opt} {value} が当たれば SIGNAL を出し QUIET を出さない", expected in lines and "QUIET" not in lines, r.stdout + r.stderr)
+
+        def error_call(i: int) -> list[dict]:
+            at = f"2026-10-01T00:00:{i:02d}Z"
+            return [
+                {"type": "assistant", "timestamp": at, "message": {"content": [{"type": "tool_use", "id": f"e{i}", "name": "Read", "input": {}}]}},
+                {"type": "user", "timestamp": at, "message": {"content": [{"type": "tool_result", "tool_use_id": f"e{i}", "is_error": True}]}},
+            ]
+
+        rows = [{"type": "user", "timestamp": "2026-10-01T00:00:00Z", "message": {"content": "GH-2 の作り物"}}]
+        for i in range(1, 4):
+            rows += error_call(i)
+        slug = "".join(c if c.isalnum() else "-" for c in os.path.abspath(root))
+        write(
+            os.path.join(d, "cfg", "projects", slug, "s1", "subagents", "a.jsonl"),
+            "".join(json.dumps(x, ensure_ascii=False) + "\n" for x in rows),
+        )
+        r = gate("GH-2", quiet)
+        lines = r.stdout.splitlines()
+        check(
+            "5つが当たらなくてもトランスクリプトのエラー3件で SIGNAL と手数の節を出す",
+            "SIGNAL\tツールのエラー\t3件" in lines and "QUIET" not in lines and "===== 手数（トランスクリプトから取った数だけ） =====" in lines,
+            r.stdout + r.stderr,
+        )
+
+        def bash_call(i: int, command: str) -> list[dict]:
+            at = f"2026-10-01T00:01:{i:02d}Z"
+            return [
+                {"type": "assistant", "timestamp": at, "message": {"content": [{"type": "tool_use", "id": f"b{i}", "name": "Bash", "input": {"command": command}}]}},
+                {"type": "user", "timestamp": at, "message": {"content": [{"type": "tool_result", "tool_use_id": f"b{i}"}]}},
+            ]
+
+        rows = [{"type": "user", "timestamp": "2026-10-01T00:01:00Z", "message": {"content": "GH-3 の作り物"}}]
+        for i, command in enumerate(("./check.sh", "./check.sh --full", "./check.sh --full"), 1):
+            rows += bash_call(i, command)
+        write(
+            os.path.join(d, "cfg", "projects", slug, "s2", "subagents", "b.jsonl"),
+            "".join(json.dumps(x, ensure_ascii=False) + "\n" for x in rows),
+        )
+        r = gate("GH-3", quiet)
+        check("設定に検証コマンドが無ければ、それを3回打っても QUIET", r.stdout == "QUIET\n", r.stdout + r.stderr)
+        write(os.path.join(root, "CLAUDE.md"), "# x\n\n## タスク運用\n\n- 検証コマンド: `./check.sh`\n")
+        r = gate("GH-3", quiet)
+        check(
+            "設定の検証コマンドを引数違いも合わせて3回打てば SIGNAL",
+            "SIGNAL\t検証の打ち直し\t./check.sh×3" in r.stdout.splitlines(),
+            r.stdout + r.stderr,
+        )
+
+        r = gate("GH-1", {k: v for k, v in quiet.items() if k != "--human"})
+        check("5つのうち1つでも欠ければ終了コード2", r.returncode == 2 and r.stdout == "", r.stdout + r.stderr)
+        r = gate("GH-1", {**quiet, "--review": "maybe"})
+        check("値が違えば終了コード2", r.returncode == 2, r.stdout + r.stderr)
+
+
 def main() -> None:
     test_weekly()
     test_slow_calls()
+    test_gate()
     print()
     if failures:
         print(f"FAILED {len(failures)}件: " + ", ".join(failures))

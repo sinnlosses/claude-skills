@@ -2,9 +2,20 @@
 """1件のタスクについて、振り返りの材料をまとめて出す。
 
 使い方: material.py <リポジトリの根> <T-XXX> [--diff] [--diff-bytes N] [--signals]
+       material.py <リポジトリの根> <T-XXX> --gate --friction none|some|missing
+           --reverify N --fixes N --human N --review skip|clean|found
 
 出すのは4つ（`--signals` のときは「手数」だけ。`/next-task` の中の1件ごとの振り返りが、
 材料を観点に当てるときに、当たりの目安を数だけで見るのに使う。本文と diff はメインが受け入れで読み終えている）。
+
+`--gate` のときは判定だけを出す。5つの答えと手数の当たりの目安のどれにも当たらなければ `QUIET` の1行、
+当たれば当たった材料ごとに `SIGNAL\t<材料>\t<値>` を並べ、続けて「手数」を出す。5つの答え:
+
+- `--friction`: 委譲先の friction log が全部「なし」（`none`）／行がある（`some`）／書いていない返却がある（`missing`）
+- `--reverify`: 検証を打ち直した回数
+- `--fixes`: 受け入れの差し戻しとメインの直しの回数
+- `--human`: 人の差し戻しの回数
+- `--review`: レビューを省いた（`skip`）／指摘なし（`clean`）／指摘が返った（`found`）
 
 - **タスク**: `develop/task/T-XXX.md`（`HEAD` の版。front matter と本文、`## 結果`）。
   無ければ旧形式の `develop/tasks.json`、それも無ければ `docs/history/tasks.md` から本文と evidence。
@@ -40,15 +51,20 @@ if _TASK_WORKFLOW_SCRIPTS not in sys.path:
 
 import beads  # noqa: E402
 import layout  # noqa: E402
+import ship  # noqa: E402
 import transcript  # noqa: E402
 
 DEFAULT_DIFF_BYTES = 40000
 
 
 def main() -> None:
-    root, task_id, want_diff, diff_bytes, signals_only = parse_args(sys.argv[1:])
+    root, task_id, want_diff, diff_bytes, signals_only, gate = parse_args(sys.argv[1:])
     if not layout.ANY_ID_PATTERN.fullmatch(task_id):
         print(f"INVALID\t{task_id}\tタスクIDは T- + 3桁以上・GH- + 番号・Jira のキー（PROJ-123）")
+        return
+
+    if gate is not None:
+        print_gate(root, task_id, gate)
         return
 
     if signals_only:
@@ -346,13 +362,17 @@ def print_commits(root: str, task_id: str, want_diff: bool, diff_bytes: int) -> 
 # ---- トランスクリプトから取る数 ------------------------------------------------
 
 
-def print_signals(root: str, task_id: str) -> None:
-    paths = transcript.find_transcripts(root, task_id)
-    if not paths:
+def read_all_signals(root: str, task_id: str) -> list[tuple[str, dict | None]]:
+    return [(p, transcript.read_signals(p, root)) for p in transcript.find_transcripts(root, task_id)]
+
+
+def print_signals(root: str, task_id: str, read: list[tuple[str, dict | None]] | None = None) -> None:
+    if read is None:
+        read = read_all_signals(root, task_id)
+    if not read:
         print("-\tトランスクリプトが見つからない（材料を1つ諦めて先へ進む）")
         return
-    for p in paths:
-        stats = transcript.read_signals(p, root)
+    for p, stats in read:
         if stats is None:
             print(f"-\t読めない: {os.path.basename(p)}")
             continue
@@ -372,6 +392,70 @@ def print_signals(root: str, task_id: str) -> None:
         print(f"出力トークン\t{stats['output_tokens']}")
 
 
+# ---- 判定の口 -----------------------------------------------------------------
+
+GATE_CHOICES = {"--friction": ("none", "some", "missing"), "--review": ("skip", "clean", "found")}
+GATE_COUNTS = ("--reverify", "--fixes", "--human")
+SLOW_SECONDS = 180
+
+
+def verify_heads(root: str) -> list[str]:
+    heads = ["tw verify"]
+    try:
+        command = ship.read_verify_command(root)
+    except layout.ConfigConflict:
+        command = None
+    head = " ".join((command or "").split()[:2])
+    if head and head not in heads:
+        heads.append(head)
+    return heads
+
+
+def gate_signals(
+    root: str, gate: dict[str, str], read: list[tuple[str, dict | None]]
+) -> list[tuple[str, str]]:
+    hits: list[tuple[str, str]] = []
+    if gate["--friction"] != "none":
+        hits.append(("friction log", gate["--friction"]))
+    if int(gate["--reverify"]) > 0:
+        hits.append(("検証の打ち直し", f"{gate['--reverify']}回"))
+    if int(gate["--fixes"]) > 0:
+        hits.append(("受け入れでの直し", f"{gate['--fixes']}回"))
+    if gate["--review"] == "found":
+        hits.append(("受け入れでの直し", "レビューの指摘あり"))
+    if int(gate["--human"]) > 0:
+        hits.append(("人の差し戻し", f"{gate['--human']}回"))
+    heads = verify_heads(root)
+    for _p, stats in read:
+        if stats is None:
+            continue
+        if stats["errors"] >= 3:
+            hits.append(("ツールのエラー", f"{stats['errors']}件"))
+        for path, n in stats["rewrites"]:
+            if n >= 3:
+                hits.append(("同じファイルの直し直し", f"{path}×{n}"))
+        for head in heads:
+            n = sum(v for k, v in stats["command_counts"].items() if k == head or k.startswith(head + " "))
+            if n >= 3:
+                hits.append(("検証の打ち直し", f"{head}×{n}"))
+        for name, desc, secs in stats["slow_calls"]:
+            if secs >= SLOW_SECONDS:
+                hits.append(("時間の偏り", f"{(name + ' ' + desc).strip()} {secs:.0f}秒"))
+    return hits
+
+
+def print_gate(root: str, task_id: str, gate: dict[str, str]) -> None:
+    read = read_all_signals(root, task_id)
+    hits = gate_signals(root, gate, read)
+    if not hits:
+        print("QUIET")
+        return
+    for name, value in hits:
+        print(f"SIGNAL\t{name}\t{value}")
+    section("手数（トランスクリプトから取った数だけ）")
+    print_signals(root, task_id, read)
+
+
 # ---- 共通 ---------------------------------------------------------------------
 
 
@@ -380,10 +464,17 @@ def section(title: str) -> None:
     print(f"===== {title} =====")
 
 
-def parse_args(argv: list[str]) -> tuple[str, str, bool, int, bool]:
+USAGE = ("usage: material.py <リポジトリの根> <T-XXX> [--diff] [--diff-bytes N] [--signals]\n"
+         "       material.py <リポジトリの根> <T-XXX> --gate --friction none|some|missing"
+         " --reverify N --fixes N --human N --review skip|clean|found")
+
+
+def parse_args(argv: list[str]) -> tuple[str, str, bool, int, bool, dict[str, str] | None]:
     positional: list[str] = []
     want_diff = False
     signals_only = False
+    want_gate = False
+    answers: dict[str, str] = {}
     diff_bytes = DEFAULT_DIFF_BYTES
     i = 0
     while i < len(argv):
@@ -391,17 +482,28 @@ def parse_args(argv: list[str]) -> tuple[str, str, bool, int, bool]:
             want_diff = True
         elif argv[i] == "--signals":
             signals_only = True
+        elif argv[i] == "--gate":
+            want_gate = True
         elif argv[i] == "--diff-bytes" and i + 1 < len(argv):
             diff_bytes = int(argv[i + 1])
+            i += 1
+        elif (argv[i] in GATE_CHOICES or argv[i] in GATE_COUNTS) and i + 1 < len(argv):
+            answers[argv[i]] = argv[i + 1]
             i += 1
         else:
             positional.append(argv[i])
         i += 1
-    if len(positional) != 2:
-        print("usage: material.py <リポジトリの根> <T-XXX> [--diff] [--diff-bytes N] [--signals]",
-              file=sys.stderr)
+    if len(positional) != 2 or (want_gate and not gate_answers_valid(answers)):
+        print(USAGE, file=sys.stderr)
         raise SystemExit(2)
-    return positional[0], positional[1], want_diff, diff_bytes, signals_only
+    return positional[0], positional[1], want_diff, diff_bytes, signals_only, answers if want_gate else None
+
+
+def gate_answers_valid(answers: dict[str, str]) -> bool:
+    for opt, choices in GATE_CHOICES.items():
+        if answers.get(opt) not in choices:
+            return False
+    return all(answers.get(opt, "").isdigit() for opt in GATE_COUNTS)
 
 
 def git_out(root: str, *args: str) -> tuple[str | None, str]:
