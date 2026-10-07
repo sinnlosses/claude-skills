@@ -412,6 +412,25 @@ def test_handback_guard() -> None:
               r.stdout + r.stderr)
 
 
+def test_plan_check_parallel() -> None:
+    say("plan-check: Beads 方式でも並列にできる段の組と、触るファイルの重なりで外した組を出す")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp)
+        a = new_unplanned(main_path, "段を並べる")
+        run_task(wt1, "claim", a)
+        plan = (
+            "### 1. 書く\n- 触るファイル: `src/a.py`\n"
+            "### 2. 文書\n- 前の段: なし\n- 触るファイル: `docs/`\n"
+            "### 3. 試す\n- 前の段: なし\n- 触るファイル: `src/`\n"
+        )
+        r = run_task(wt1, "edit", a, "--section", "やること", "--body-file", "-", stdin=plan)
+        check("欄つきの計画を書ける", r.returncode == 0 and r.stdout.startswith("EDITED\t"), r.stdout + r.stderr)
+        r = run_task(wt1, "plan-check", a)
+        check("PLAN_FIRST のあとに PARALLEL・SERIAL を出す", r.returncode == 0 and r.stdout.splitlines() == [
+            f"PLAN_FIRST\t{a}", f"PARALLEL\t{a}\t1,2", f"PARALLEL\t{a}\t2,3", f"SERIAL\t{a}\t1,3\tsrc/a.py",
+        ], r.stdout + r.stderr)
+
+
 def test_verify_stamp() -> None:
     say("verify・verify-check: Beads 方式でも同じ形で控えて照らす")
     with tempfile.TemporaryDirectory() as tmp:
@@ -867,6 +886,7 @@ def main() -> None:
             test_commit_guard,
             test_claim_race_owner_and_release,
             test_handback_guard,
+            test_plan_check_parallel,
             test_setup_and_config_doctor,
             test_backup,
             test_branch_line_missing_does_not_ship,

@@ -231,6 +231,53 @@ def test_taskfile_parse() -> None:
     two_steps = named.replace("### 1. 書く\nx\n", "### 1. 書く\nx\n### 2. 試す\ny\n")
     check("段を番号の順に読み、名指すファイル・作業先は段に数えない",
           taskfile.plan_steps(two_steps) == (("書く", "試す"), None), repr(taskfile.plan_steps(two_steps)))
+    specs, err = taskfile.plan_step_specs(two_steps)
+    check("欄の無い段は直前の段のあとに走り、並列の組が無い",
+          err is None and [s.after for s in specs] == [(), (1,)] and taskfile.parallel_steps(specs) == ([], []),
+          repr((specs, err)))
+
+    def fielded(*steps: tuple[str, str]) -> str:
+        return task_body(list(steps), ["src/a.py"])
+
+    specs, err = taskfile.plan_step_specs(fielded(
+        ("書く", "- 触るファイル: `src/a.py`"),
+        ("文書", "- 前の段: なし\n- 触るファイル: `docs/`, `README.md`"),
+        ("試す", "- 前の段: 1\n- 触るファイル: `src/a_test.py`"),
+        ("合わせる", "- 前の段: 2, 3"),
+    ))
+    check("前の段・触るファイルの欄を読み、並列の組を番号の順に出す",
+          err is None and [s.after for s in specs] == [(), (), (1,), (2, 3)]
+          and specs[1].files == ("docs/", "README.md")
+          and taskfile.parallel_steps(specs) == ([(1, 2), (2, 3)], []), repr((specs, err)))
+    specs, err = taskfile.plan_step_specs(fielded(
+        ("書く", "- 触るファイル: `src/`"),
+        ("文書", "- 前の段: なし\n- 触るファイル: `docs/a.md`"),
+        ("試す", "- 前の段: なし\n- 触るファイル: `src/a.py`"),
+        ("直す", "- 前の段: 2\n- 触るファイル: `docs/a.md`"),
+    ))
+    check("触るファイルがディレクトリの中で重なる組を外す（前後の決まった組の重なりは見ない）",
+          err is None and taskfile.parallel_steps(specs) == ([(1, 2), (2, 3), (1, 4), (3, 4)], [(1, 3, ("src/",))]),
+          repr((specs, err, taskfile.parallel_steps(specs) if specs else None)))
+    specs, err = taskfile.plan_step_specs(fielded(
+        ("書く", "- 触るファイル: `src/a.py`"),
+        ("足す", "- 前の段: なし\n- 触るファイル: `src/a.py`"),
+        ("試す", "- 前の段: 2\n- 触るファイル: `src/b.py`"),
+    ))
+    check("重なりで外した辺で前後の決まった組も並列から外す",
+          err is None and taskfile.parallel_steps(specs) == ([], [(1, 2, ("src/a.py",))]),
+          repr((specs, err, taskfile.parallel_steps(specs) if specs else None)))
+    for label, steps in (
+        ("前の段がその段以上の番号", [("書く", ""), ("試す", "- 前の段: 2\n- 触るファイル: `a`")]),
+        ("前の段が数字でない", [("書く", ""), ("試す", "- 前の段: 一\n- 触るファイル: `a`")]),
+        ("前の段の番号が重なる", [("書く", ""), ("試す", ""), ("合わせる", "- 前の段: 1, 1")]),
+        ("同じ欄が2行", [("書く", ""), ("試す", "- 前の段: 1\n- 前の段: 1")]),
+        ("触るファイルが `パス` の並びでない", [("書く", "- 触るファイル: src/a.py")]),
+        ("触るファイルが絶対パス", [("書く", "- 触るファイル: `/etc/x`")]),
+        ("触るファイルに ..", [("書く", "- 触るファイル: `../x`")]),
+        ("並列の組に入る段に触るファイルが無い", [("書く", ""), ("試す", "- 前の段: なし\n- 触るファイル: `a`")]),
+    ):
+        check(f"{label} 計画は登録の検査で拒む", taskfile.validate_new_body(fielded(*steps), hold=False) is not None,
+              repr(taskfile.plan_step_specs(fielded(*steps))))
     for label, bad in (
         ("段が1つも無い", named.replace("### 1. 書く\n", "")),
         ("`### 2.` から始まる", named.replace("### 1. 書く", "### 2. 書く")),
@@ -1561,7 +1608,7 @@ def test_edit_and_plan_check() -> None:
     planned = task_body([("書く", "")])
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp)
-        for tid in ("T-100", "T-101", "T-102", "T-103", "T-105"):
+        for tid in ("T-100", "T-101", "T-102", "T-103", "T-105", "T-106"):
             commit_task(main_path, taskfile.Task(tid, "やることの順", "todo", "sonnet", "Y", (), BODY))
         commit_task(main_path, taskfile.Task("T-104", "閉じたもの", "done", "sonnet", "Y", (), BODY + "\n## 結果\n\nx\n"))
         task_file = lambda tid: os.path.join(wt1, "develop", "task", f"{tid}.md")  # noqa: E731
@@ -1626,6 +1673,22 @@ def test_edit_and_plan_check() -> None:
         check("作業の前なら --after-work を付けても first", r.returncode == 0 and r.stdout.strip() == "EDITED\tT-105"
               and r2.stdout.strip() == "PLAN_FIRST\tT-105", r.stdout + r2.stdout + r.stderr)
         reset("T-105")
+
+        run_task(wt1, "claim", "T-106")
+        fielded = task_body([
+            ("書く", "- 触るファイル: `src/a.py`"),
+            ("文書", "- 前の段: なし\n- 触るファイル: `docs/`"),
+            ("試す", "- 前の段: なし\n- 触るファイル: `src/a.py`"),
+        ])
+        r = run_task(wt1, "edit", "T-106", "--body-file", "-", stdin=fielded.replace("- 前の段: なし\n- 触るファイル: `docs/`", "- 前の段: 2"))
+        check("段の欄の誤った計画は edit が終了コード2で拒む", r.returncode == 2 and "段 2" in r.stderr, r.stdout + r.stderr)
+        run_task(wt1, "edit", "T-106", "--body-file", "-", stdin=fielded)
+        r = run_task(wt1, "plan-check", "T-106")
+        check("plan-check は1行目のあとに並列の組と、触るファイルの重なりで外した組を出す", r.returncode == 0
+              and r.stdout.splitlines() == [
+                  "PLAN_FIRST\tT-106", "PARALLEL\tT-106\t1,2", "PARALLEL\tT-106\t2,3", "SERIAL\tT-106\t1,3\tsrc/a.py",
+              ], r.stdout + r.stderr)
+        reset("T-106")
 
         run_task(wt1, "claim", "T-103")
         write(os.path.join(wt1, "work.txt"), "x\n")

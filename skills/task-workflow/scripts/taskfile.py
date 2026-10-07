@@ -194,16 +194,42 @@ def validate_edited_body(old_body: str, new_body: str) -> str | None:
     return plan_steps(new_body)[1]
 
 
+@dataclass(frozen=True)
+class PlanStep:
+    """`## やること` の段1つ。`after` は前の段の番号（欄が無ければ直前の段）、`files` は触るファイル（欄が無ければ空）。"""
+
+    name: str
+    after: tuple[int, ...]
+    files: tuple[str, ...]
+
+
 def plan_steps(body: str) -> tuple[tuple[str, ...], str | None]:
-    """`## やること` の段（`### n. 名前` の名前）を番号の順に。形が違えば `((), 理由)`。
+    """`## やること` の段（`### n. 名前` の名前）を番号の順に。形が違えば `((), 理由)`。"""
+    specs, error = plan_step_specs(body)
+    return tuple(s.name for s in specs), error
+
+
+def plan_step_specs(body: str) -> tuple[tuple[PlanStep, ...], str | None]:
+    """`## やること` の段を番号の順に、欄（`- 前の段:`・`- 触るファイル:`）ごと。形が違えば `((), 理由)`。
 
     段の番号は `### 1.` から1つずつ増え、段は1つ以上。`### 名指すファイル`・`### 作業先` は段に数えず、
-    ほかの `### ` 見出しは拒む。
+    ほかの `### ` 見出しは拒む。欄は段の見出しから次の `### ` 見出しまでに、それぞれ1行まで置く。
+    前の段の番号はその段より小さく、並列の組に入る段は触るファイルの欄を要る。
     """
     lines = dict(_frame_sections(body)[1]).get(PLAN_HEADING, "").split("\n")
-    steps: list[str] = []
+    steps: list[tuple[str, dict[str, str]]] = []
+    in_step = False
     for line in lines:
-        if not line.startswith("### ") or line.rstrip() in (PLAN_FILES_HEADING, PLAN_WORK_REPO_HEADING):
+        if not line.startswith("### "):
+            field = _PLAN_FIELD_LINE.match(line.rstrip()) if in_step else None
+            if field is not None:
+                fields = steps[-1][1]
+                if field.group(1) in fields:
+                    return (), f"段 {len(steps)} の `- {field.group(1)}:` は1行まで"
+                fields[field.group(1)] = field.group(2)
+            continue
+        if line.rstrip() in (PLAN_FILES_HEADING, PLAN_WORK_REPO_HEADING):
+            in_step = False
             continue
         m = _PLAN_STEP_LINE.match(line.rstrip())
         if m is None:
@@ -213,13 +239,106 @@ def plan_steps(body: str) -> tuple[tuple[str, ...], str | None]:
             )
         if int(m.group(1)) != len(steps) + 1:
             return (), f"{PLAN_HEADING} の段の番号は `### 1.` から穴なく続ける（{len(steps) + 1} の位置に {m.group(1)} がある）"
-        steps.append(m.group(2))
+        steps.append((m.group(2), {}))
+        in_step = True
     if not steps:
         return (), f"{PLAN_HEADING} に段（`### 1. 名前` から穴なく続く見出し）が1つも無い"
-    return tuple(steps), None
+    specs: list[PlanStep] = []
+    for n, (name, fields) in enumerate(steps, start=1):
+        after, error = _parse_after(n, fields.get(PLAN_AFTER_FIELD))
+        if error is None:
+            files, error = _parse_touched(n, fields.get(PLAN_TOUCHED_FIELD))
+        if error is not None:
+            return (), error
+        specs.append(PlanStep(name, after, files))
+    for a, b in _unordered_pairs([s.after for s in specs]):
+        bare = [n for n in (a, b) if not specs[n - 1].files]
+        if bare:
+            return (), f"段 {a} と段 {b} は並列になるので、段 {bare[0]} に `- {PLAN_TOUCHED_FIELD}:` を書く"
+    return tuple(specs), None
 
 
+PLAN_AFTER_FIELD = "前の段"
+PLAN_TOUCHED_FIELD = "触るファイル"
 _PLAN_STEP_LINE = re.compile(r"^### (\d+)\. (\S.*)$")
+_PLAN_FIELD_LINE = re.compile(rf"^- ({PLAN_AFTER_FIELD}|{PLAN_TOUCHED_FIELD}):\s*(.*)$")
+
+
+def _parse_after(n: int, raw: str | None) -> tuple[tuple[int, ...], str | None]:
+    if raw is None:
+        return ((n - 1,) if n > 1 else ()), None
+    if raw.strip() == "なし":
+        return (), None
+    items = [x.strip() for x in raw.split(",")]
+    if not all(x.isdigit() for x in items):
+        return (), f"段 {n} の `- {PLAN_AFTER_FIELD}:` は番号のコンマ区切りか `なし`: {raw.strip()}"
+    after = tuple(int(x) for x in items)
+    if len(set(after)) != len(after) or any(not 1 <= x < n for x in after):
+        return (), f"段 {n} の `- {PLAN_AFTER_FIELD}:` は {n} より小さい番号を重ねずに並べる: {raw.strip()}"
+    return tuple(sorted(after)), None
+
+
+def _parse_touched(n: int, raw: str | None) -> tuple[tuple[str, ...], str | None]:
+    if raw is None:
+        return (), None
+    items = [x.strip() for x in raw.split(",")]
+    paths: list[str] = []
+    for item in items:
+        m = _PLAN_TOUCHED_ITEM.match(item)
+        if m is None:
+            return (), f"段 {n} の `- {PLAN_TOUCHED_FIELD}:` は `` `パス` `` のコンマ区切り: {raw.strip()}"
+        path = m.group(1)
+        if path.startswith(("/", "~")) or ".." in path.split("/"):
+            return (), f"段 {n} の `- {PLAN_TOUCHED_FIELD}:` の {path} はリポジトリの根からの相対パスにする"
+        paths.append(path)
+    return tuple(paths), None
+
+
+_PLAN_TOUCHED_ITEM = re.compile(r"^`([^`]+)`$")
+
+
+def _ancestors(after: list[tuple[int, ...]]) -> list[set[int]]:
+    """段ごとに、その段より先に済む段の番号（`after` を辿った閉包）。`after[i]` は段 `i + 1` の前の段。"""
+    result: list[set[int]] = []
+    for deps in after:
+        found: set[int] = set()
+        for d in deps:
+            found.add(d)
+            found |= result[d - 1]
+        result.append(found)
+    return result
+
+
+def _unordered_pairs(after: list[tuple[int, ...]]) -> list[tuple[int, int]]:
+    """どちらも他方より先に済むと決まっていない段の組 `(a, b)`（`a < b`）を番号の順に。`after[i]` は段 `i + 1` の前の段。"""
+    ancestors = _ancestors(after)
+    return [(a, b) for b in range(2, len(after) + 1) for a in range(1, b) if a not in ancestors[b - 1]]
+
+
+def parallel_steps(
+    specs: tuple[PlanStep, ...],
+) -> tuple[list[tuple[int, int]], list[tuple[int, int, tuple[str, ...]]]]:
+    """`(並列にできる組, 触るファイルが重なって外した組と重なったパス)`。
+
+    重なった組は番号の小さい段を先にして1本道にし、それで前後の決まった組も並列から外す。
+    """
+    after = [s.after for s in specs]
+    serial: list[tuple[int, int, tuple[str, ...]]] = []
+    for a, b in _unordered_pairs(after):
+        shared = _overlap(specs[a - 1].files, specs[b - 1].files)
+        if shared:
+            serial.append((a, b, shared))
+            after[b - 1] = (*after[b - 1], a)
+    return _unordered_pairs(after), serial
+
+
+def _overlap(left: tuple[str, ...], right: tuple[str, ...]) -> tuple[str, ...]:
+    """`left` のパスのうち、`right` のどれかと同じか、片方がもう片方のディレクトリの中にあるもの。"""
+
+    def inside(p: str, q: str) -> bool:
+        return p == q or p.startswith(q.rstrip("/") + "/") or q.startswith(p.rstrip("/") + "/")
+
+    return tuple(p for p in left if any(inside(p, q) for q in right))
 
 
 def plan_work_repo(body: str) -> tuple[str | None, str | None]:

@@ -1067,20 +1067,25 @@ def _print_plan_check(
     段（`taskfile.plan_steps`）の読めない計画は、印によらず書き直しの経路（`PLAN_NOT_FIRST`・`steps`）へ回す。
     """
     has_plan = taskfile.has_plan(body)
-    if has_plan and taskfile.plan_steps(body)[1] is not None:
+    specs, steps_error = taskfile.plan_step_specs(body) if has_plan else ((), None)
+    if has_plan and steps_error is not None:
         print(f"PLAN_NOT_FIRST\t{shown}\tsteps")
         return
     if has_plan and mark == PLAN_FIRST:
         print(f"PLAN_FIRST\t{shown}")
-        return
-    if has_plan and mark == PLAN_REGISTERED:
+    elif has_plan and mark == PLAN_REGISTERED:
         print(f"PLAN_REGISTERED\t{shown}\t{plan_base or '?'}")
-        return
-    if has_plan and mark is None and stale is not None:
+    elif has_plan and mark is None and stale is not None:
         print(f"PLAN_STALE\t{shown}\t{','.join(stale) or '?'}")
+    else:
+        print(f"PLAN_NOT_FIRST\t{shown}\t{'missing' if not has_plan else (mark or 'unrecorded')}")
+    if not specs:
         return
-    reason = "missing" if not has_plan else (mark or "unrecorded")
-    print(f"PLAN_NOT_FIRST\t{shown}\t{reason}")
+    pairs, serial = taskfile.parallel_steps(specs)
+    for a, b in pairs:
+        print(f"PARALLEL\t{shown}\t{a},{b}")
+    for a, b, shared in serial:
+        print(f"SERIAL\t{shown}\t{a},{b}\t{','.join(shared)}")
 
 
 # --- verify・verify-check（検証コマンドが通った中身の控え） ------------------
