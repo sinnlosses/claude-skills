@@ -25,8 +25,9 @@ HIGHER_IS_WORSE = (
     "reclaim",
 )
 LOWER_IS_WORSE = ("shipped", "reflection_none_ratio")
-STAGE_ORDER = ("計画", "委譲", "検証", "受け入れ", "レビュー", "振り返り", "送り出し")
-LAP_STAGE_NAMES = {"delegate": "委譲", "accept": "受け入れ", "review": "レビュー", "retro": "振り返り"}
+STAGE_ORDER = ("計画", "直し", "委譲", "検証", "受け入れ", "レビュー", "振り返り", "送り出し")
+ROUTES = ("direct", "normal")
+LAP_STAGE_NAMES = {"direct": "直し", "delegate": "委譲", "accept": "受け入れ", "review": "レビュー", "retro": "振り返り"}
 KIND_STAGE_NAMES = {"claim": "計画", "step": "委譲", "verify": "検証", "done": "送り出し"}
 
 
@@ -97,7 +98,9 @@ def _column(events: list[Event], start: datetime, end: datetime) -> dict[str, st
         if e.kind == "claim"
         and any(r.kind == "release" and r.task == e.task for r in events[: events.index(e)])
     ]
-    dones = [e for e in inside if e.kind == "done" and not e.fields.get("dropped")]
+    dones = [
+        e for e in inside if e.kind == "done" and not e.fields.get("dropped") and e.fields.get("reflection") != "skipped"
+    ]
     clean = [e for e in dones if e.fields.get("reflection") == "none"]
     return {
         "shipped": str(len(shipped)),
@@ -117,14 +120,20 @@ def _stage_of(event: Event) -> str | None:
     return KIND_STAGE_NAMES.get(event.kind)
 
 
-def stage_durations(events: list[Event], days: int) -> dict[tuple[str, str], list[float]]:
-    """直近 days 日に送り出したタスクごとに、`(段, difficulty)` → 所要秒の並び。
+def _route(run: list[Event]) -> str:
+    """`direct`（`lap direct` があり `lap delegate` が無い）か `normal`。"""
+    stages = {e.fields.get("stage") for e in run if e.kind == "lap"}
+    return "direct" if "direct" in stages and "delegate" not in stages else "normal"
+
+
+def stage_durations(events: list[Event], days: int) -> dict[tuple[str, str, str], list[float]]:
+    """直近 days 日に送り出したタスクごとに、`(段, difficulty, 道)` → 所要秒の並び。
 
     段の所要時間は、その出来事から同じタスクの次の出来事までの差。`verify` は記録された所要秒。
     """
     now = datetime.now(timezone.utc)
     start = now - timedelta(days=days)
-    durations: dict[tuple[str, str], list[float]] = {}
+    durations: dict[tuple[str, str, str], list[float]] = {}
     shipped = [e for e in events if e.kind == "ship" and e.fields.get("result") == "SHIPPED" and start <= e.at <= now]
     for ship in shipped:
         own = [e for e in events if e.task == ship.task and e.at <= ship.at]
@@ -132,6 +141,7 @@ def stage_durations(events: list[Event], days: int) -> dict[tuple[str, str], lis
         if not claims:
             continue
         run = [e for e in own[claims[-1] :] if e.kind != "ship" or e is ship]
+        route = _route(run)
         for i, e in enumerate(run[:-1]):
             stage = _stage_of(e)
             if stage is None:
@@ -142,16 +152,16 @@ def stage_durations(events: list[Event], days: int) -> dict[tuple[str, str], lis
                     continue
             else:
                 seconds = (run[i + 1].at - e.at).total_seconds()
-            durations.setdefault((stage, str(e.fields.get("difficulty", "?"))), []).append(float(seconds))
+            durations.setdefault((stage, str(e.fields.get("difficulty", "?")), route), []).append(float(seconds))
     return durations
 
 
 def stage_lines(events: list[Event], days: int) -> list[str]:
     durations = stage_durations(events, days)
     return [
-        f"STAGE\t{stage}\t{difficulty}\t{len(values)}\t{round(statistics.median(values))}\t{round(max(values))}"
-        for (stage, difficulty), values in sorted(
-            durations.items(), key=lambda kv: (STAGE_ORDER.index(kv[0][0]), kv[0][1])
+        f"STAGE\t{stage}\t{difficulty}\t{route}\t{len(values)}\t{round(statistics.median(values))}\t{round(max(values))}"
+        for (stage, difficulty, route), values in sorted(
+            durations.items(), key=lambda kv: (STAGE_ORDER.index(kv[0][0]), kv[0][1], ROUTES.index(kv[0][2]))
         )
     ]
 

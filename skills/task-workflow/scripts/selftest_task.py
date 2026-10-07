@@ -189,6 +189,20 @@ def test_taskfile_parse() -> None:
     task2, err2 = taskfile.parse(taskfile.render(task))
     check("render→parseで往復する", err2 is None and task2 == task)
 
+    direct_text = ok_text.replace("loopable: Y\n", "loopable: Y\ndirect: Y\n")
+    task, err = taskfile.parse(direct_text)
+    check("loopable の次の direct: Y は近道の印として読める", err is None and task is not None and task.direct == "Y"
+          and task.body == "本文\n", str(err))
+    check("direct: Y を持つタスクは render→parse で往復する",
+          task is not None and taskfile.parse(taskfile.render(task)) == (task, None))
+    task, _ = taskfile.parse(ok_text)
+    check("direct 行が無ければ印なし（N）で、render は行を書かない",
+          task is not None and task.direct == "N" and "direct:" not in taskfile.render(task))
+    _, err = taskfile.parse(ok_text.replace("loopable: Y\n", "loopable: Y\ndirect: N\n"))
+    check("direct: N はINVALID（印が無ければ行を置かない）", err is not None, str(err))
+    _, err = taskfile.parse(ok_text.replace("dependencies: []\n", "dependencies: []\ndirect: Y\n"))
+    check("dependencies の後ろの direct 行はINVALID", err is not None, str(err))
+
     check("正しい登録時の本文はOK（空・「なし」の欄を含む）", taskfile.validate_new_body(PLANNED_BODY, hold=False) is None)
     check("枠の見出しが欠けた本文は拒む", taskfile.validate_new_body("## 目的・背景\nx\n", hold=True) is not None)
     check(
@@ -1139,24 +1153,35 @@ def test_handback_guard() -> None:
 
 
 def test_lap() -> None:
-    print("task.py lap: 4つの段が flow に1行ずつ書かれ、知らない段は拒み、印が無ければ記録しない")
+    print("task.py lap: 5つの段が flow に1行ずつ書かれ、知らない段は拒み、印が無ければ記録しない")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp, verify="`true`")
         commit_task(main_path, taskfile.Task("T-100", "段", "todo", "sonnet", "Y", (), BODY))
+        commit_task(main_path, taskfile.Task("T-101", "通常の振り返り", "todo", "sonnet", "Y", (), BODY))
         r = run_task(wt1, "lap", "T-100", "delegate")
         check("印が無ければ NOT_CLAIMED で記録しない", r.stdout.startswith("NOT_CLAIMED\tT-100") and not flow_rows(wt1),
               r.stdout + r.stderr)
         run_task(wt1, "claim", "T-100")
-        for stage in ("delegate", "accept", "review", "retro"):
+        for stage in ("direct", "delegate", "accept", "review", "retro"):
             r = run_task(wt1, "lap", "T-100", stage)
             check(f"{stage} は LAPPED", r.returncode == 0 and r.stdout.strip() == f"LAPPED\tT-100\t{stage}",
                   r.stdout + r.stderr)
         laps = [(e["task"], e["stage"]) for e in flow_rows(wt1) if e["event"] == "lap"]
-        check("flow に lap が4行、段の順で並ぶ",
-              laps == [("T-100", s) for s in ("delegate", "accept", "review", "retro")], repr(laps))
+        check("flow に lap が5行、段の順で並ぶ",
+              laps == [("T-100", s) for s in ("direct", "delegate", "accept", "review", "retro")], repr(laps))
         r = run_task(wt1, "lap", "T-100", "bogus")
         check("知らない段は終了コード2で記録しない", r.returncode == 2
-              and len([e for e in flow_rows(wt1) if e["event"] == "lap"]) == 4, r.stdout + r.stderr)
+              and len([e for e in flow_rows(wt1) if e["event"] == "lap"]) == 5, r.stdout + r.stderr)
+        run_task(wt1, "done", "T-100", "--result-file", "-", stdin="- 検証: x\n- 振り返り: 近道（省いた）\n")
+        done = [e for e in flow_rows(wt1) if e["event"] == "done"]
+        check("振り返りの行が近道なら done の reflection は skipped",
+              len(done) == 1 and done[0]["reflection"] == "skipped", repr(done))
+        run_task(wt2, "claim", "T-101")
+        run_task(wt2, "done", "T-101", "--result-file", "-",
+                 stdin="- 検証: x\n- 振り返り: 近道の基準が広い（ドラフト1件）\n")
+        done = [e for e in flow_rows(wt1) if e["event"] == "done" and e["task"] == "T-101"]
+        check("通常の道の振り返りの行が「近道」を含んでも reflection は some",
+              len(done) == 1 and done[0]["reflection"] == "some", repr(done))
 
 
 def test_handback_guard_step() -> None:
@@ -1928,6 +1953,80 @@ def test_registered_plan() -> None:
         check("ship で送ったタスクの控えは消える", r.stdout.startswith("SHIPPED\t")
               and ledger.read_plan_base(root, same) is None and ledger.read_plan_base(root, changed) == head,
               r.stdout + r.stderr)
+
+
+def test_direct_mark() -> None:
+    print("task.py new・edit・claim --direct: 近道の印は基準に当たるときだけ付き、着手時に測り直す")
+
+    def register(body: str, difficulty: str = "haiku") -> subprocess.CompletedProcess:
+        return run_task(main_path, "new", "--summary", "近道", "--difficulty", difficulty, "--loopable", "Y", "--direct",
+                        "--body-file", "-", stdin=body)
+
+    def front(task_id: str) -> str:
+        with open(os.path.join(main_path, "develop", "task", f"{task_id}.md"), encoding="utf-8") as f:
+            return f.read().split("\n---\n", 1)[0]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp, branch="切らない")
+        write(os.path.join(main_path, "src", "a.txt"), "a\n")
+        write(os.path.join(main_path, "src", "b.txt"), "b\n")
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "src を足す")
+        task_dir = os.path.join(main_path, "develop", "task")
+
+        for label, body, difficulty in (
+            ("difficulty が haiku でない", task_body([("書く", "x")], ["shared.txt"]), "sonnet"),
+            ("段が2つ", task_body([("書く", "x"), ("足す", "y")], ["shared.txt"]), "haiku"),
+            ("名指すファイルが3つ", task_body([("書く", "x")], ["shared.txt", "src/b.txt", "src/"]), "haiku"),
+            ("作業先がある", task_body([("書く", "x")], ["shared.txt"], tmp), "haiku"),
+        ):
+            r = register(body, difficulty)
+            check(f"{label}の --direct は終了コード2で、ファイルを作らない",
+                  r.returncode == 2 and "近道" in r.stderr and not os.path.isdir(task_dir), r.stdout + r.stderr)
+
+        r = register(task_body([("書く", "x")], ["shared.txt", "src/a.txt"]))
+        ok_id = r.stdout.split("\t")[1] if r.stdout.startswith("CREATED\t") else ""
+        check("haiku・1段・名指す2つの --direct は CREATED で、front matter に direct: Y の行が出る",
+              ok_id != "" and "\nloopable: Y\ndirect: Y\n" in front(ok_id), r.stdout + r.stderr)
+        r = register(task_body([("書く", "x")], ["src/b.txt"]))
+        stale_id = r.stdout.split("\t")[1] if r.stdout.startswith("CREATED\t") else ""
+
+        r = run_task(main_path, "new", "--summary", "通常", "--difficulty", "haiku", "--loopable", "Y",
+                     "--body-file", "-", stdin=task_body([("書く", "x")], ["shared.txt"]))
+        edit_id = r.stdout.split("\t")[1]
+        check("--direct なしの登録は direct 行を書かない", "direct:" not in front(edit_id))
+        r = run_task(main_path, "edit", edit_id, "--direct", "Y")
+        check("edit --direct Y は基準に当たれば印を付ける", r.returncode == 0 and "direct: Y" in front(edit_id),
+              r.stdout + r.stderr)
+        r = run_task(main_path, "edit", edit_id, "--direct", "N")
+        check("edit --direct N は印を外す", r.returncode == 0 and "direct:" not in front(edit_id), r.stdout + r.stderr)
+        run_task(main_path, "edit", edit_id, "--direct", "Y")
+        r = run_task(main_path, "edit", edit_id, "--body-file", "-",
+                     stdin=task_body([("書く", "x"), ("足す", "y")], ["shared.txt"]))
+        check("本文の書き換えで基準を外れたら書き込んで印を外し、EDITED の次に DIRECT_OFF を出す",
+              r.returncode == 0 and r.stdout.splitlines()[0] == f"EDITED\t{edit_id}"
+              and r.stdout.splitlines()[1].startswith(f"DIRECT_OFF\t{edit_id}\t近道は")
+              and "direct:" not in front(edit_id), r.stdout + r.stderr)
+        r = run_task(main_path, "edit", edit_id, "--direct", "Y")
+        check("基準を外れたタスクへの edit --direct Y は終了コード2で、書き込まない",
+              r.returncode == 2 and "近道" in r.stderr and "direct:" not in front(edit_id), r.stdout + r.stderr)
+
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "登録")
+        write(os.path.join(main_path, "src", "b.txt"), "b2\n")
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "b を変える")
+
+        r = run_task(wt1, "claim", ok_id)
+        check("印があり基準に当たり計画が古くなければ CLAIMED の行末に direct=Y",
+              r.returncode == 0 and r.stdout.splitlines()[0].endswith("\tdirect=Y"), r.stdout + r.stderr)
+        r = run_task(wt2, "claim", stale_id)
+        check("名指すファイルが登録のあとに変わったら direct=N:登録時の計画が古い",
+              r.returncode == 0 and r.stdout.splitlines()[0].endswith("\tdirect=N:登録時の計画が古い"), r.stdout + r.stderr)
+        run_task(wt2, "release", stale_id)
+        r = run_task(wt2, "claim", edit_id)
+        check("印の無いタスクの CLAIMED に direct の列は出ない",
+              r.returncode == 0 and "direct=" not in r.stdout, r.stdout + r.stderr)
 
 
 def test_verify_refuses_unplanned_work() -> None:
@@ -2761,6 +2860,12 @@ def test_flow_records_and_metrics() -> None:
             and table["reflection_none_ratio"] == ["100% (1/1)", "-"],
             r.stdout + r.stderr,
         )
+        with open(os.path.join(d, "2000-01.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps({"t": stamp(0), "event": "done", "task": "T-051", "difficulty": "haiku",
+                                "dropped": False, "reflection": "skipped"}) + "\n")
+        r = run_task(wt1, "metrics")
+        check("振り返りを近道で省いた done は reflection_none_ratio の分母に入らない",
+              "reflection_none_ratio\t100% (1/1)\t-" in r.stdout.splitlines(), r.stdout)
         r = run_task(wt1, "metrics", "--days", "30")
         check("--days で期間が変わる（前の期間の1件が今の期間に入る）", r.stdout.splitlines()[1].split("\t")[1:] == ["2", "0"], r.stdout)
 
@@ -2786,7 +2891,7 @@ def test_flow_records_and_metrics() -> None:
 
 
 def test_metrics_stages() -> None:
-    print("task.py metrics --stages: lap を含む flow から段×difficulty の件数・中央値・最大が出る")
+    print("task.py metrics --stages: lap を含む flow から段×difficulty×道の件数・中央値・最大が出る")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _wt2 = make_repo(tmp, branch="切らない")
         d = ledger.flow_dir(ledger.ledger_root(cwd=wt1))
@@ -2803,21 +2908,40 @@ def test_metrics_stages() -> None:
             row("T-061", 0, "claim"), row("T-061", 300, "step", step=1, steps=2), row("T-061", 900, "done"), row("T-061", 930, "ship", result="SHIPPED"),
             row("T-062", 0, "claim"), row("T-062", 10, "done"),
         ]
+        haiku = lambda task, sec, ev, **kw: json.dumps(
+            {"t": (base + timedelta(seconds=sec)).isoformat(timespec="seconds"), "event": ev, "task": task, "difficulty": "haiku", **kw}
+        )
+        lines += [
+            haiku("T-063", 0, "claim"), haiku("T-063", 20, "lap", stage="direct"),
+            haiku("T-063", 100, "verify", result="VERIFIED", seconds=30), haiku("T-063", 200, "done"),
+            haiku("T-063", 220, "ship", result="SHIPPED"),
+            haiku("T-064", 0, "claim"), haiku("T-064", 10, "lap", stage="direct"), haiku("T-064", 50, "lap", stage="delegate"),
+            haiku("T-064", 300, "done"), haiku("T-064", 310, "ship", result="SHIPPED"),
+        ]
         write(os.path.join(d, "2000-01.jsonl"), "\n".join(lines) + "\n")
         r = run_task(wt1, "metrics", "--stages")
         got = [tuple(l.split("\t")) for l in r.stdout.splitlines()]
         check(
-            "段×difficulty ごとに件数・中央値・最大の STAGE の行が段の順に出る（送り出していないタスクは入らない）",
+            "段×difficulty×道ごとに件数・中央値・最大の STAGE の行が段の順に出る（送り出していないタスクは入らない。"
+            "lap direct のあとに lap delegate があれば normal）",
             r.returncode == 0
             and got
             == [
-                ("STAGE", "計画", "sonnet", "2", "200", "300"),
-                ("STAGE", "委譲", "sonnet", "2", "450", "600"),
-                ("STAGE", "検証", "sonnet", "1", "50", "50"),
-                ("STAGE", "受け入れ", "sonnet", "1", "60", "60"),
-                ("STAGE", "レビュー", "sonnet", "1", "140", "140"),
-                ("STAGE", "振り返り", "sonnet", "1", "60", "60"),
-                ("STAGE", "送り出し", "sonnet", "2", "35", "40"),
+                ("STAGE", "計画", "haiku", "direct", "1", "20", "20"),
+                ("STAGE", "計画", "haiku", "normal", "1", "10", "10"),
+                ("STAGE", "計画", "sonnet", "normal", "2", "200", "300"),
+                ("STAGE", "直し", "haiku", "direct", "1", "80", "80"),
+                ("STAGE", "直し", "haiku", "normal", "1", "40", "40"),
+                ("STAGE", "委譲", "haiku", "normal", "1", "250", "250"),
+                ("STAGE", "委譲", "sonnet", "normal", "2", "450", "600"),
+                ("STAGE", "検証", "haiku", "direct", "1", "30", "30"),
+                ("STAGE", "検証", "sonnet", "normal", "1", "50", "50"),
+                ("STAGE", "受け入れ", "sonnet", "normal", "1", "60", "60"),
+                ("STAGE", "レビュー", "sonnet", "normal", "1", "140", "140"),
+                ("STAGE", "振り返り", "sonnet", "normal", "1", "60", "60"),
+                ("STAGE", "送り出し", "haiku", "direct", "1", "20", "20"),
+                ("STAGE", "送り出し", "haiku", "normal", "1", "10", "10"),
+                ("STAGE", "送り出し", "sonnet", "normal", "2", "35", "40"),
             ],
             r.stdout + r.stderr,
         )
@@ -3414,6 +3538,7 @@ def main() -> None:
         test_edit_section,
         test_edit_deps,
         test_registered_plan,
+        test_direct_mark,
         test_verify_refuses_unplanned_work,
         test_verify_stamp,
         test_verify_runs_format_first,

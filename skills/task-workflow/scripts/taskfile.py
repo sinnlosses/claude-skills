@@ -1,7 +1,8 @@
 """`develop/task/T-xxx.md` の読み書き（front matter の専用文法、本文の節の検査）。
 
 正典は `docs/task-workflow-redesign.md` の3章。front matter は **YAML ではない**
-専用の6行（`id` / `summary` / `status` / `difficulty` / `loopable` / `dependencies`）で、
+専用の6行（`id` / `summary` / `status` / `difficulty` / `loopable` / `dependencies`。
+`loopable` の次に任意の `direct: Y` を置けば7行）で、
 この順・この綴りでなければそのファイルを INVALID にする（同章「front matter の文法」）。
 YAML にしない理由・見出しの意味は正典を参照（同ファイル11章）。
 
@@ -22,6 +23,11 @@ ID_PATTERN = layout.ID_PATTERN
 STATUS_VALUES = ("todo", "hold", "done", "dropped")
 DIFFICULTY_VALUES = ("haiku", "sonnet", "opus")
 LOOPABLE_VALUES = ("Y", "N")
+
+# 委譲しない近道の基準（WORKFLOW.md「difficulty とモデルの切り替え」の表）。
+DIRECT_DIFFICULTY = "haiku"
+DIRECT_MAX_STEPS = 1
+DIRECT_MAX_PLAN_FILES = 2
 
 # 本文の枠（WORKFLOW.md「タスクファイル」）。7つの見出しを必ずこの順で置き、要らない欄は空か「なし」にする。
 PURPOSE_HEADING = "## 目的・背景"
@@ -59,6 +65,7 @@ class Task:
     loopable: str  # "Y" | "N"（真偽値にしない。3.2 の文法どおりの文字を保つ）
     dependencies: tuple[str, ...]
     body: str
+    direct: str = "N"  # 委譲しない近道の印。"Y" のときだけ front matter に `direct: Y` の行を置く
 
 
 def parse(text: str) -> tuple[Task | None, str | None]:
@@ -101,7 +108,14 @@ def parse(text: str) -> tuple[Task | None, str | None]:
     if loopable is None or loopable not in LOOPABLE_VALUES:
         return None, "loopable行が無い、または Y/N のいずれでもない"
 
-    deps_raw = field(6, "dependencies: [")
+    direct = field(6, "direct: ")
+    if direct is not None and direct != "Y":
+        return None, "direct行は `direct: Y` だけ（印が無ければ行を置かない）"
+    shift = 1 if direct is not None else 0
+    if len(lines) < _HEADER_LINE_COUNT + shift:
+        return None, "front matter の形になっていない（行数が足りない）"
+
+    deps_raw = field(6 + shift, "dependencies: [")
     if deps_raw is None or not deps_raw.endswith("]"):
         return None, "dependencies行が無い、または [ ... ] の形になっていない"
     deps_content = deps_raw[:-1]
@@ -113,13 +127,13 @@ def parse(text: str) -> tuple[Task | None, str | None]:
             return None, "dependenciesの区切りは', '固定、各要素はT-999の形式"
         dependencies = tuple(parts)
 
-    if lines[7] != "---":
+    if lines[7 + shift] != "---":
         return None, "front matter を閉じる2つ目の --- が無い"
 
     # `render` と同じ形（前後の空行を落とし、末尾は改行1つ）に揃え、往復で本文が変わらないようにする。
-    body = "\n".join(lines[8:]).strip("\n")
+    body = "\n".join(lines[8 + shift :]).strip("\n")
     body = f"{body}\n" if body else ""
-    return Task(id_value, summary, status, difficulty, loopable, dependencies, body), None
+    return Task(id_value, summary, status, difficulty, loopable, dependencies, body, direct or "N"), None
 
 
 def render(task: Task) -> str:
@@ -137,7 +151,8 @@ def render(task: Task) -> str:
         f"status: {task.status}\n"
         f"difficulty: {task.difficulty}\n"
         f"loopable: {task.loopable}\n"
-        f"dependencies: [{', '.join(task.dependencies)}]\n"
+        + ("direct: Y\n" if task.direct == "Y" else "")
+        + f"dependencies: [{', '.join(task.dependencies)}]\n"
         "---\n"
         + (f"\n{body}\n" if body else "")
     )
@@ -261,6 +276,21 @@ def plan_files(body: str) -> tuple[tuple[str, ...], str | None]:
     if not paths:
         return (), f"{PLAN_FILES_HEADING} にパスが1つも無い"
     return tuple(paths), None
+
+
+def direct_refusal(difficulty: str, body: str) -> str | None:
+    """近道の印を置けない理由。基準に当たれば `None`。"""
+    if difficulty != DIRECT_DIFFICULTY:
+        return f"近道は difficulty が {DIRECT_DIFFICULTY} のときだけ（{difficulty}）"
+    steps, _ = plan_steps(body)
+    if not steps or len(steps) > DIRECT_MAX_STEPS:
+        return f"近道は {PLAN_HEADING} の段が1〜{DIRECT_MAX_STEPS}つのときだけ（{len(steps)}つ）"
+    paths, _ = plan_files(body)
+    if not paths or len(paths) > DIRECT_MAX_PLAN_FILES:
+        return f"近道は {PLAN_FILES_HEADING} が1〜{DIRECT_MAX_PLAN_FILES}つのときだけ（{len(paths)}つ）"
+    if plan_work_repo(body) != (None, None):
+        return f"近道は {PLAN_WORK_REPO_HEADING} の無いタスクだけ"
+    return None
 
 
 _PLAN_FILE_LINE = re.compile(r"^- `([^`]+)`.*$")

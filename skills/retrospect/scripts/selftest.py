@@ -114,7 +114,11 @@ def test_weekly() -> None:
         check(
             "段の所要時間に STAGE の行が出る",
             lines_of("段の所要時間", r.stdout)
-            == ["STAGE\t計画\topus\t1\t43200\t43200", "STAGE\t委譲\topus\t1\t43200\t43200", "STAGE\t送り出し\topus\t1\t432000\t432000"],
+            == [
+                "STAGE\t計画\topus\tnormal\t1\t43200\t43200",
+                "STAGE\t委譲\topus\tnormal\t1\t43200\t43200",
+                "STAGE\t送り出し\topus\tnormal\t1\t432000\t432000",
+            ],
             r.stdout,
         )
         r = weekly(d, "--days", "0")

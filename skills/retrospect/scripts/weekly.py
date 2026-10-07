@@ -11,7 +11,7 @@
   `WORSE\t<名前>\t<今>\t<前>`。`WORSE` があれば、期間内に主ブランチへ入ったやり方の変更
   `CHANGE\t<project|skills>\t<短い SHA>\t<件名>`（プロジェクトは設定ファイル・`.claude/`・`docs/`
   （`docs/history/` を除く）を触ったコミット、skills はこのスクリプトのあるリポジトリ。各20件まで）
-- **段の所要時間**: `STAGE\t<段>\t<difficulty>\t<件数>\t<中央値秒>\t<最大秒>`（`tw metrics --stages --days N` と同じ行）
+- **段の所要時間**: `STAGE\t<段>\t<difficulty>\t<道>\t<件数>\t<中央値秒>\t<最大秒>`（道は `direct`・`normal`。`tw metrics --stages --days N` と同じ行）
 - **規則の棚卸し**: 設定ファイルの「## タスク運用」の `- 規則の発火の集計:` の最初の `` `…` `` を
   リポジトリの根で `sh -c` で打った標準出力をそのまま。行が無い・`なし`・落ちた・60秒で終わらない
   ときは `-\t<理由>`

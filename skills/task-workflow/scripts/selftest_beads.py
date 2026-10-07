@@ -188,6 +188,43 @@ def work_and_done(wt: str, task_id: str, *, dropped: bool = False) -> None:
 # --- テスト -------------------------------------------------------------------
 
 
+def test_direct_mark() -> None:
+    say("new・edit・claim --direct: 近道の印は label direct:Y で、基準に当たるときだけ付く")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _ = make_repo(tmp)
+
+        def register(difficulty: str, body: str = PLANNED_BODY) -> subprocess.CompletedProcess:
+            return run_task(main_path, "new", "--summary", "近道", "--difficulty", difficulty, "--loopable", "Y",
+                            "--direct", "--body-file", "-", stdin=body)
+
+        def shown(task_id: str) -> str:
+            return run_task(main_path, "show", task_id).stdout.split("\n---\n", 1)[0]
+
+        r = register("sonnet")
+        check("difficulty が haiku でない --direct は終了コード2", r.returncode == 2 and "近道" in r.stderr,
+              r.stdout + r.stderr)
+        r = register("haiku", task_body([("書く", "x"), ("足す", "y")], ["shared.txt"], acceptance="- 通る"))
+        check("段が2つの --direct は終了コード2", r.returncode == 2 and "近道" in r.stderr, r.stdout + r.stderr)
+        r = register("haiku")
+        task_id = r.stdout.split("\t")[1] if r.stdout.startswith("CREATED\t") else ""
+        check("haiku・1段の --direct は CREATED で、show の front matter に direct: Y が出る",
+              task_id != "" and "\nloopable: Y\ndirect: Y\n" in shown(task_id), r.stdout + r.stderr)
+        r = run_task(main_path, "edit", task_id, "--direct", "N")
+        check("edit --direct N は label を外す", r.returncode == 0 and "direct:" not in shown(task_id), r.stdout + r.stderr)
+        r = run_task(main_path, "edit", task_id, "--direct", "Y")
+        check("edit --direct Y は label を付ける", r.returncode == 0 and "direct: Y" in shown(task_id), r.stdout + r.stderr)
+        r = run_task(main_path, "edit", task_id, "--difficulty", "sonnet")
+        check("difficulty を上げて基準を外れたら label を外し DIRECT_OFF を出す",
+              r.returncode == 0 and tail_line(r.stdout, "DIRECT_OFF").startswith(f"DIRECT_OFF\t{task_id}\t近道は")
+              and "direct:" not in shown(task_id), r.stdout + r.stderr)
+
+        r = register("haiku")
+        claim_id = r.stdout.split("\t")[1] if r.stdout.startswith("CREATED\t") else ""
+        r = run_task(wt1, "claim", claim_id)
+        check("印があり計画が古くなければ CLAIMED の行末に direct=Y",
+              r.returncode == 0 and tail_line(r.stdout, "CLAIMED").endswith("\tdirect=Y"), r.stdout + r.stderr)
+
+
 def test_setup_and_config_doctor() -> None:
     say("init.py・config-doctor・MISSING・設定の読み違い")
     with tempfile.TemporaryDirectory() as tmp:
@@ -811,6 +848,7 @@ def main() -> None:
             test_backup,
             test_branch_line_missing_does_not_ship,
             test_verify_stamp,
+            test_direct_mark,
             test_file_mode_untouched_by_beads_dir,
             test_id_forms,
             test_bd_time_forms,

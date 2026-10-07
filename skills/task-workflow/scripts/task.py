@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import dataclasses
 import io
 import json
 import os
@@ -396,6 +397,8 @@ def cmd_new(toplevel: str, args: argparse.Namespace) -> None:
     if error is not None:
         print(f"usage: {error}", file=sys.stderr)
         raise SystemExit(2)
+    if args.direct:
+        _refuse_direct(args.difficulty, body)
     plan_base = _registered_plan_base(toplevel, body) if taskfile.has_plan(body) else None
 
     root = ledger.ledger_root_for_write(cwd=toplevel)
@@ -425,7 +428,7 @@ def cmd_new(toplevel: str, args: argparse.Namespace) -> None:
         os.makedirs(task_dir, exist_ok=True)
         path = taskfile.task_path(task_dir, task_id)
         rendered = taskfile.render(
-            taskfile.Task(task_id, summary, status, args.difficulty, args.loopable, deps, body)
+            taskfile.Task(task_id, summary, status, args.difficulty, args.loopable, deps, body, "Y" if args.direct else "N")
         )
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -437,6 +440,21 @@ def cmd_new(toplevel: str, args: argparse.Namespace) -> None:
         print(f"CREATED\t{task_id}\t{layout.TASK_DIR}/{task_id}.md")
     finally:
         ledger.release_lock(root)
+
+
+def _refuse_direct(difficulty: str, body: str) -> None:
+    reason = taskfile.direct_refusal(difficulty, body)
+    if reason is not None:
+        print(f"usage: {reason}（--direct を外す）", file=sys.stderr)
+        raise SystemExit(2)
+
+
+def _direct_column(direct: str, difficulty: str, body: str, registered: bool) -> str:
+    """`CLAIMED` の行末に足す近道の列。印が無ければ空。"""
+    if direct != "Y":
+        return ""
+    reason = taskfile.direct_refusal(difficulty, body) or (None if registered else "登録時の計画が古い")
+    return "\tdirect=Y" if reason is None else f"\tdirect=N:{reason}"
 
 
 def _registered_plan_base(toplevel: str, body: str) -> str:
@@ -557,10 +575,15 @@ def _record_claimed(toplevel: str, event: str, **fields: str | int | bool) -> No
         _record(toplevel, event, task_id, **fields)
 
 
+REFLECTION_SKIPPED_LINE = "- 振り返り: 近道（省いた）"
+
+
 def _reflection_of(result: str) -> str:
-    """`## 結果` の `- 振り返り:` の行が `none`（兆候なし）・`some`・`unknown`（行が無い）。"""
+    """`## 結果` の `- 振り返り:` の行が `none`（兆候なし）・`skipped`（近道で省いた）・`some`・`unknown`（行が無い）。"""
     for line in result.splitlines():
         if line.startswith("- 振り返り:"):
+            if line.strip() == REFLECTION_SKIPPED_LINE:
+                return "skipped"
             return "none" if "兆候なし" in line else "some"
     return "unknown"
 
@@ -608,14 +631,19 @@ def cmd_claim(toplevel: str, task_id: str) -> None:
     _record(toplevel, "claim", task_id)
 
     plan_base = ledger.read_plan_base(root, task_id)
+    registered = False
     if plan_base is not None and taskfile.has_plan(task.body):
         tip = _plan_tip(toplevel, task.body)
         if tip is not None:
             ledger.write_plan_tip(root, task_id, tip)
         if _registered_plan_changes(toplevel, plan_base, tip, task.body) == []:
             ledger.write_plan_mark(root, task_id, PLAN_REGISTERED)
+            registered = True
 
-    _claim_branch_out(toplevel, task_id, branch_setting, base, branch_after_sync, f"{layout.TASK_DIR}/{task_id}.md")
+    _claim_branch_out(
+        toplevel, task_id, branch_setting, base, branch_after_sync, f"{layout.TASK_DIR}/{task_id}.md",
+        _direct_column(task.direct, task.difficulty, task.body, registered),
+    )
     _print_split_claims(split)
 
 
@@ -662,18 +690,18 @@ def _claim_preflight(toplevel: str) -> tuple[str, str]:
 
 
 def _claim_branch_out(
-    toplevel: str, task_id: str, branch_setting: str, base: str, branch_after_sync: str, where: str
+    toplevel: str, task_id: str, branch_setting: str, base: str, branch_after_sync: str, where: str, direct: str = ""
 ) -> None:
-    """印を立てたあと、設定なら作業ブランチを切って `CLAIMED` を出す（`where` は3列目）。"""
+    """印を立てたあと、設定なら作業ブランチを切って `CLAIMED` を出す（`where` は3列目、`direct` は行末の列）。"""
     if branch_setting in ("既定", "作業ブランチを切る"):
         feature_branch = f"{layout.FEATURE_BRANCH_PREFIX}{task_id}"
         r = _run_git(toplevel, ["checkout", "-b", feature_branch, base])
         if r.returncode != 0:
-            print(f"CLAIMED\t{task_id}\t{where}\tbranch=(切れない: {r.stderr.strip()})")
+            print(f"CLAIMED\t{task_id}\t{where}\tbranch=(切れない: {r.stderr.strip()}){direct}")
             return
-        print(f"CLAIMED\t{task_id}\t{where}\tbranch={feature_branch}")
+        print(f"CLAIMED\t{task_id}\t{where}\tbranch={feature_branch}{direct}")
     else:
-        print(f"CLAIMED\t{task_id}\t{where}\tbranch={branch_after_sync}")
+        print(f"CLAIMED\t{task_id}\t{where}\tbranch={branch_after_sync}{direct}")
 
 
 # --- release（5.6） ---------------------------------------------------------
@@ -741,7 +769,7 @@ def cmd_done(toplevel: str, task_id: str, dropped: bool, result_path: str) -> No
     new_status = "dropped" if dropped else "done"
     new_body = taskfile.set_result_section(task.body, result)
     rendered = taskfile.render(
-        taskfile.Task(task.id, task.summary, new_status, task.difficulty, task.loopable, task.dependencies, new_body)
+        dataclasses.replace(task, status=new_status, body=new_body)
     )
     with open(path, "w", encoding="utf-8") as f:
         f.write(rendered)
@@ -851,8 +879,8 @@ def _apply_dep_edit(
 def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
     """ファイル方式の `edit`。本文と依存を書き換え、`## やること` を初めて書いた時点の判定を印に残す。"""
     edits_deps = bool(args.add_deps or args.remove_deps)
-    if any([args.summary, args.difficulty, args.loopable, args.status]) or not (args.body_file or edits_deps):
-        print("usage: ファイル方式の edit は --body-file（と --section・--after-work・--change-frame）か --add-deps・--remove-deps だけ（ほかはタスクファイルを直に直す）", file=sys.stderr)
+    if any([args.summary, args.difficulty, args.loopable, args.status]) or not (args.body_file or edits_deps or args.direct):
+        print("usage: ファイル方式の edit は --body-file（と --section・--after-work・--change-frame）か --add-deps・--remove-deps・--direct だけ（ほかはタスクファイルを直に直す）", file=sys.stderr)
         raise SystemExit(2)
     if not args.body_file and any([args.section, args.after_work, args.change_frame]):
         print("usage: --section・--after-work・--change-frame は --body-file と一緒に使う", file=sys.stderr)
@@ -887,6 +915,7 @@ def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
             print(f"usage: {error}", file=sys.stderr)
             raise SystemExit(2)
         _refuse_frame_change(task_id, taskfile.changed_frame_sections(task.body, body), args.change_frame)
+    direct, direct_off = _edited_direct(task.direct, args.direct, task.difficulty, body)
 
     root = ledger.ledger_root(cwd=toplevel)
     owner = ledger.read_owner(ledger.claim_dir(root, task_id))
@@ -904,9 +933,7 @@ def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
         _refuse_plan_after_work(task_id, state, args.after_work)
         root = ledger.ledger_root_for_write(cwd=toplevel)
 
-    rendered = taskfile.render(
-        taskfile.Task(task.id, task.summary, task.status, task.difficulty, task.loopable, dependencies, body)
-    )
+    rendered = taskfile.render(dataclasses.replace(task, dependencies=dependencies, body=body, direct=direct))
     with open(path, "w", encoding="utf-8") as f:
         f.write(rendered)
     if state is not None:
@@ -914,6 +941,23 @@ def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
     print(f"EDITED\t{task_id}")
     if state == PLAN_AFTER_WORK:
         print(f"PLAN_AFTER_WORK\t{task_id}\t作業の後に書いた")
+    _print_direct_off(task_id, direct_off)
+
+
+def _edited_direct(current: str, wanted: str | None, difficulty: str, body: str) -> tuple[str, str | None]:
+    """`edit` のあとの近道の印と、書き換えで基準を外れて外したときの理由。"""
+    if wanted == "Y":
+        _refuse_direct(difficulty, body)
+        return "Y", None
+    if wanted == "N" or current != "Y":
+        return "N", None
+    reason = taskfile.direct_refusal(difficulty, body)
+    return ("N", reason) if reason is not None else ("Y", None)
+
+
+def _print_direct_off(shown: str, reason: str | None) -> None:
+    if reason is not None:
+        print(f"DIRECT_OFF\t{shown}\t{reason}")
 
 
 def _section_body(args: argparse.Namespace, current: str, given: str) -> str:
@@ -1178,7 +1222,7 @@ def cmd_step(toplevel: str, task_id: str, step: str) -> None:
     print(f"STEPPED\t{shown}\t{step}/{len(steps)}\t{key.tree}")
 
 
-LAP_STAGES = ("delegate", "accept", "review", "retro")
+LAP_STAGES = ("direct", "delegate", "accept", "review", "retro")
 
 
 def cmd_lap(toplevel: str, task_id: str, stage: str) -> None:
@@ -1857,6 +1901,8 @@ def cmd_beads_new(toplevel: str, args: argparse.Namespace) -> None:
     if error is not None:
         print(f"usage: {error}", file=sys.stderr)
         raise SystemExit(2)
+    if args.direct:
+        _refuse_direct(args.difficulty, body)
     plan_base = _registered_plan_base(toplevel, body) if taskfile.has_plan(body) else None
 
     snap = _beads_snapshot(toplevel)
@@ -1868,6 +1914,8 @@ def cmd_beads_new(toplevel: str, args: argparse.Namespace) -> None:
     parts = beads.split_body(body)
     actor = _actor(toplevel)
     labels = f"{beads.DIFFICULTY_LABEL}{args.difficulty},{beads.LOOPABLE_LABEL}{args.loopable}"
+    if args.direct:
+        labels += f",{beads.DIRECT_ON}"
 
     def create_cmd(bd_id: str) -> list[str]:
         cmd = ["create", "--id", bd_id, "--title", summary, "--body-file", "-", "-l", labels, "--silent"]
@@ -1972,13 +2020,15 @@ def cmd_beads_claim(toplevel: str, task_id: str) -> None:
     metadata = issue.raw.get("metadata")
     plan_base = metadata.get(beads.PLAN_BASE_KEY) if isinstance(metadata, dict) else None
     plan = str(issue.raw.get("notes") or "")
+    plan_body = f"{taskfile.PLAN_HEADING}\n{plan}\n"
+    registered = False
     if plan_base and not taskfile.is_blank(plan):
-        plan_body = f"{taskfile.PLAN_HEADING}\n{plan}\n"
         tip = _plan_tip(toplevel, plan_body)
         if tip is not None:
             claim_args += ["--set-metadata", f"{beads.PLAN_TIP_KEY}={tip}"]
         if _registered_plan_changes(toplevel, plan_base, tip, plan_body) == []:
             claim_args += ["--set-metadata", f"{beads.PLAN_KEY}={PLAN_REGISTERED}"]
+            registered = True
         else:
             claim_args += ["--unset-metadata", beads.PLAN_KEY]
     r = beads.run(toplevel, claim_args, actor)
@@ -1989,7 +2039,10 @@ def cmd_beads_claim(toplevel: str, task_id: str) -> None:
         raise beads.BeadsError(f"bd update --claim が失敗: {(r.stderr or r.stdout).strip()}")
     ledger.mark_open_claim(shown, cwd=toplevel)
     _record(toplevel, "claim", shown)
-    _claim_branch_out(toplevel, shown, branch_setting, base, branch_after_sync, f"beads:{bd_id}")
+    _claim_branch_out(
+        toplevel, shown, branch_setting, base, branch_after_sync, f"beads:{bd_id}",
+        _direct_column(task.direct, task.difficulty, plan_body, registered),
+    )
     _print_lines(pulled + trk.after([bd_id]))
 
 
@@ -2136,8 +2189,8 @@ def cmd_beads_edit(toplevel: str, args: argparse.Namespace) -> None:
     if args.section is not None and not args.body_file:
         print("usage: --section は --body-file と一緒に使う", file=sys.stderr)
         raise SystemExit(2)
-    if not any([args.body_file, args.summary, args.difficulty, args.loopable, args.status, args.add_deps, args.remove_deps]):
-        print("usage: 直すもの（--body-file・--summary・--difficulty・--loopable・--status・--add-deps・--remove-deps）が無い", file=sys.stderr)
+    if not any([args.body_file, args.summary, args.difficulty, args.loopable, args.status, args.add_deps, args.remove_deps, args.direct]):
+        print("usage: 直すもの（--body-file・--summary・--difficulty・--loopable・--status・--add-deps・--remove-deps・--direct）が無い", file=sys.stderr)
         raise SystemExit(2)
     add = _parse_dep_list(args.add_deps, layout.ANY_ID_PATTERN, "--add-deps", "T-999・GH-5・PROJ-123")
     remove = _parse_dep_list(args.remove_deps, layout.ANY_ID_PATTERN, "--remove-deps", "T-999・GH-5・PROJ-123")
@@ -2158,13 +2211,14 @@ def cmd_beads_edit(toplevel: str, args: argparse.Namespace) -> None:
     cmd = ["update", bd_id]
     stdin = None
     state = None
+    current = beads.compose_body(
+        str(issue.raw.get("description") or ""),
+        str(issue.raw.get("acceptance_criteria") or ""),
+        str(issue.raw.get("notes") or ""),
+        None,
+    )
+    body = current
     if args.body_file:
-        current = beads.compose_body(
-            str(issue.raw.get("description") or ""),
-            str(issue.raw.get("acceptance_criteria") or ""),
-            str(issue.raw.get("notes") or ""),
-            None,
-        )
         body = _section_body(args, current, read_body(args.body_file))
         error = taskfile.validate_edited_body(current, body)
         if error is not None:
@@ -2195,6 +2249,13 @@ def cmd_beads_edit(toplevel: str, args: argparse.Namespace) -> None:
         if value:
             cmd += [x for l in issue.labels if l.startswith(prefix) for x in ("--remove-label", l)]
             cmd += ["--add-label", f"{prefix}{value}"]
+    difficulties = beads.label_values(issue.labels, beads.DIFFICULTY_LABEL)
+    difficulty = args.difficulty or (difficulties[0] if difficulties else "?")
+    had_direct = "Y" if beads.DIRECT_ON in issue.labels else "N"
+    direct, direct_off = _edited_direct(had_direct, args.direct, difficulty, body)
+    if direct != had_direct:
+        cmd += [x for l in issue.labels if l.startswith(beads.DIRECT_LABEL) for x in ("--remove-label", l)]
+        cmd += ["--add-label", beads.DIRECT_ON] if direct == "Y" else []
     if args.status:
         if issue.status not in ("open", *beads.HOLD_STATUSES):
             print(f"NOT_READY\t{shown}\t{issue.status}（todo↔hold は着手前だけ）")
@@ -2211,6 +2272,7 @@ def cmd_beads_edit(toplevel: str, args: argparse.Namespace) -> None:
     print(f"EDITED\t{shown}")
     if state == PLAN_AFTER_WORK:
         print(f"PLAN_AFTER_WORK\t{shown}\t作業の後に書いた")
+    _print_direct_off(shown, direct_off)
     _print_lines(pulled + trk.after([bd_id]))
 
 
@@ -2252,6 +2314,8 @@ def cmd_beads_adopt(toplevel: str, args: argparse.Namespace) -> None:
     if error is not None:
         print(f"usage: {error}", file=sys.stderr)
         raise SystemExit(2)
+    if args.direct:
+        _refuse_direct(args.difficulty, body)
     plan_base = _registered_plan_base(toplevel, body)
     trk = tracker.session(toplevel)
     pulled = trk.before([old])
@@ -2284,8 +2348,15 @@ def cmd_beads_adopt(toplevel: str, args: argparse.Namespace) -> None:
     parts = beads.split_body(body)
     cmd = ["update", new_id, "--body-file", "-", "--acceptance", parts.acceptance, "--notes", parts.notes]
     cmd += ["--set-metadata", f"{beads.PLAN_BASE_KEY}={plan_base}"]
-    cmd += [x for l in issue.labels if l.startswith((beads.DIFFICULTY_LABEL, beads.LOOPABLE_LABEL)) for x in ("--remove-label", l)]
+    cmd += [
+        x
+        for l in issue.labels
+        if l.startswith((beads.DIFFICULTY_LABEL, beads.LOOPABLE_LABEL, beads.DIRECT_LABEL))
+        for x in ("--remove-label", l)
+    ]
     cmd += ["--add-label", f"{beads.DIFFICULTY_LABEL}{args.difficulty}", "--add-label", f"{beads.LOOPABLE_LABEL}{args.loopable}"]
+    if args.direct:
+        cmd += ["--add-label", beads.DIRECT_ON]
     if args.summary:
         cmd += ["--title", args.summary.strip()]
     beads.run_ok(toplevel, cmd, actor, parts.description)
@@ -2362,6 +2433,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_new.add_argument("--loopable", required=True, choices=taskfile.LOOPABLE_VALUES)
     p_new.add_argument("--deps", default="")
     p_new.add_argument("--hold", action="store_true")
+    p_new.add_argument("--direct", action="store_true")
     p_new.add_argument("--body-file", required=True)
 
     p_claim = sub.add_parser("claim")
@@ -2408,7 +2480,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_step.add_argument("step")
     sub.add_parser("handback-guard").add_argument("--agent-scoped", dest="agent_scoped", action="store_true")
 
-    # ファイル方式は --body-file だけ（ほかはタスクファイルを直に直す）。
     p_edit = sub.add_parser("edit")
     p_edit.add_argument("task_id")
     p_edit.add_argument("--body-file", default=None)
@@ -2421,6 +2492,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_edit.add_argument("--remove-deps", dest="remove_deps", default=None)
     p_edit.add_argument("--after-work", dest="after_work", action="store_true")
     p_edit.add_argument("--change-frame", dest="change_frame", action="store_true")
+    p_edit.add_argument("--direct", default=None, choices=taskfile.LOOPABLE_VALUES)
 
     # 以下は Beads 方式だけ。
 
@@ -2429,6 +2501,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_adopt.add_argument("--difficulty", required=True, choices=taskfile.DIFFICULTY_VALUES)
     p_adopt.add_argument("--loopable", required=True, choices=taskfile.LOOPABLE_VALUES)
     p_adopt.add_argument("--summary", default=None)
+    p_adopt.add_argument("--direct", action="store_true")
     p_adopt.add_argument("--body-file", required=True)
 
     sub.add_parser("sync")

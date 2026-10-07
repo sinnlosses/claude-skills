@@ -18,6 +18,7 @@ Issue 番号（`gh-5` ↔ `GH-5`）、`t` なら `task` の採番（`t-123` ↔ 
 | `in_progress` | `todo` ＋ 着手の印（assignee が作業ツリー名） |
 | `closed` | `done`（label `cancelled` があれば `dropped`） |
 | label `difficulty:<値>`・`loopable:<Y/N>` | `difficulty`・`loopable` |
+| label `direct:Y`（無ければ印なし） | `direct` |
 | `blocks` の依存 | `dependencies` |
 | `title` | `summary` |
 
@@ -27,6 +28,7 @@ Issue 番号（`gh-5` ↔ `GH-5`）、`t` なら `task` の採番（`t-123` ↔ 
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import re
@@ -50,6 +52,8 @@ HOLD_STATUSES = (HOLD_STATUS, LEGACY_HOLD_STATUS)
 CANCELLED_LABEL = "cancelled"
 DIFFICULTY_LABEL = "difficulty:"
 LOOPABLE_LABEL = "loopable:"
+DIRECT_LABEL = "direct:"
+DIRECT_ON = f"{DIRECT_LABEL}Y"
 # `task done` が立て、`task ship` が主ブランチへ送ったあとに閉じる印（done と dropped の2つ）。
 SHIP_LABELS = {"done": "ship:done", "dropped": "ship:dropped"}
 # Jira の方式で、ローカルで閉じたが Jira で閉じてもらうのを待っている印。
@@ -292,22 +296,25 @@ def to_task(issue: Issue) -> tuple[taskfile.Task | None, str | None]:
     else:
         return None, f"Beads の状態 {issue.status!r} はこの運用に無い（open・{HOLD_STATUS}・in_progress・closed だけ）"
 
-    difficulty = _label_values(issue.labels, DIFFICULTY_LABEL)
-    loopable = _label_values(issue.labels, LOOPABLE_LABEL)
+    difficulty = label_values(issue.labels, DIFFICULTY_LABEL)
+    loopable = label_values(issue.labels, LOOPABLE_LABEL)
     if not (is_numbered(issue.bd_id) or is_provisional(issue.bd_id)) or (not difficulty and not loopable):
         return None, None
     if len(difficulty) != 1 or difficulty[0] not in taskfile.DIFFICULTY_VALUES:
         return None, "label difficulty:<haiku|sonnet|opus> がちょうど1つでない"
     if len(loopable) != 1 or loopable[0] not in taskfile.LOOPABLE_VALUES:
         return None, "label loopable:<Y|N> がちょうど1つでない"
+    direct = label_values(issue.labels, DIRECT_LABEL)
+    if direct not in ([], ["Y"]):
+        return None, "label direct: は direct:Y が1つだけ（印が無ければ置かない）"
     summary = issue.title.strip()
     if summary == "" or "\n" in summary:
         return None, "title が空か改行を含む"
     deps = tuple(to_task_id(d) for d in issue.dependencies)
-    return taskfile.Task(to_task_id(issue.bd_id), summary, status, difficulty[0], loopable[0], deps, ""), None
+    return taskfile.Task(to_task_id(issue.bd_id), summary, status, difficulty[0], loopable[0], deps, "", "Y" if direct else "N"), None
 
 
-def _label_values(labels: tuple[str, ...], prefix: str) -> list[str]:
+def label_values(labels: tuple[str, ...], prefix: str) -> list[str]:
     return [l[len(prefix) :] for l in labels if l.startswith(prefix)]
 
 
@@ -391,9 +398,7 @@ def render_task(task: taskfile.Task, issue: Issue, result: str | None) -> str:
         str(raw.get("notes") or ""),
         result,
     )
-    return taskfile.render(
-        taskfile.Task(task.id, task.summary, task.status, task.difficulty, task.loopable, task.dependencies, body)
-    )
+    return taskfile.render(dataclasses.replace(task, body=body))
 
 
 # --- 採番 ------------------------------------------------------------------------

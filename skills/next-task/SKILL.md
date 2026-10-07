@@ -56,7 +56,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 
    | 出力 | すること |
    | --- | --- |
-   | `CLAIMED` | 次へ（手順5の前に `tw plan-check T-xxx` を打つ）。`branch=` が作業する枝 |
+   | `CLAIMED` | 次へ（手順5の前に `tw plan-check T-xxx` を打つ）。`branch=` が作業する枝。行末の `direct=Y`／`direct=N:<理由>` は委譲しない近道の印の判定（手順5の頭で使う。印が無ければ列が無い） |
    | `TAKEN`・`NOT_READY` | 先を越された・状態が変わった。手順1から別の1件を選び直す（3回続いたら止まる） |
    | `DIRTY`・`UNSHIPPED`・`INVALID`・`GIT_READ_ONLY`・`STATE_READ_ONLY` | `${CLAUDE_SKILL_DIR}/start-stopped.md` の「手順4の表の残り」に従って終了する |
 
@@ -65,7 +65,9 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    立ち上げの記述に従う）。無ければ委譲せず、人に立ち上げを頼んで `tw release T-xxx` する。
    作業先が別のリポジトリのときは、続けて `${CLAUDE_SKILL_DIR}/other-repo.md` の「委譲の前に本体の汚れを控える（手順4aのあと）」に従う。
 
-5. **委譲する**: 委譲は `## やること` の段（`### <n>. <名前>`）を1段ずつ頼む。最初の委譲で段1を渡し、
+5. **委譲する**: 手順4の `CLAIMED` の行末が `direct=Y` で `tw plan-check T-xxx` が `PLAN_REGISTERED` なら、
+   委譲せず `${CLAUDE_SKILL_DIR}/direct-run.md` を読んで従う（手順5〜6aを飛ばし、`tw verify` → 手順7 → 7a → 8）。
+   委譲は `## やること` の段（`### <n>. <名前>`）を1段ずつ頼む。最初の委譲で段1を渡し、
    委譲先は段を1つ済ませるたびに返す。次の段は手順5bで、**同じ委譲先を `SendMessage` で再開して**渡す
    （新しい委譲先は起こさない。例外は `difficulty` を上げるときと手順5aの引き継ぎだけ）。
    最初の委譲を投げる直前に `tw lap T-xxx delegate` を打つ。
