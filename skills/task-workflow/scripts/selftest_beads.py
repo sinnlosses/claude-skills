@@ -40,6 +40,7 @@ import beads  # noqa: E402
 import layout  # noqa: E402
 import ledger  # noqa: E402
 import taskfile  # noqa: E402
+from selftest_body import task_body  # noqa: E402
 
 # 利用者の値のままだと、一時リポジトリの台帳がその置き場に積もる。
 os.environ.pop(ledger.STATE_DIR_ENV, None)
@@ -47,10 +48,9 @@ os.environ.pop(ledger.STATE_DIR_ENV, None)
 TASK_PY = os.path.join(HERE, "task.py")
 INIT_PY = os.path.join(HERE, "init.py")
 MATERIAL_PY = os.path.join(HERE, "..", "..", "retrospect", "scripts", "material.py")
-BODY = ("## 目的・背景\nx\n\n## 決まっていること（蒸し返さない）\n\n## 解くべき論点\nなし\n\n## やること\n\n"
-        "## 完了条件\n- 通る\n\n## 注意\nz\n\n## 参考情報\n")
+BODY = task_body(acceptance="- 通る", caution="z")
 # 登録の既定の本文。`make_repo` が主ブランチに置く `shared.txt` を名指す。
-PLANNED_BODY = BODY.replace("## やること\n", "## やること\n### 1. 書く\nx\n\n### 名指すファイル\n- `shared.txt`\n")
+PLANNED_BODY = task_body([("書く", "x")], ["shared.txt"], acceptance="- 通る", caution="z")
 
 failures: list[str] = []
 BASE_ENV = os.environ.copy()

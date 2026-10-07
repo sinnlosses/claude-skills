@@ -27,14 +27,15 @@ sys.path.insert(0, HERE)
 import ledger  # noqa: E402
 import legacy  # noqa: E402
 import taskfile  # noqa: E402
+from selftest_body import task_body  # noqa: E402
 
 # 利用者の値のままだと、一時リポジトリの台帳がその置き場に積もる。
 os.environ.pop(ledger.STATE_DIR_ENV, None)
 
 TASK_PY = os.path.join(HERE, "task.py")
-BODY = "## 目的・背景\nx\n\n## 決まっていること（蒸し返さない）\n\n## 解くべき論点\nなし\n\n## やること\n\n## 完了条件\nx\n\n## 注意\n\n## 参考情報\n"
+BODY = task_body()
 # 登録の既定の本文。`make_repo` が主ブランチに置く `shared.txt` を名指す。
-PLANNED_BODY = BODY.replace("## やること\n", "## やること\n### 1. 書く\nx\n\n### 名指すファイル\n- `shared.txt`\n")
+PLANNED_BODY = task_body([("書く", "x")], ["shared.txt"])
 
 failures: list[str] = []
 
@@ -201,12 +202,12 @@ def test_taskfile_parse() -> None:
           taskfile.validate_new_body(BODY.replace("## 完了条件\nx\n", "## 完了条件\n"), hold=True) is not None)
     check("空の ## やること は拒む", taskfile.validate_new_body(BODY, hold=False) is not None)
     check("--hold なら空の ## やること を通す", taskfile.validate_new_body(BODY, hold=True) is None)
-    filled_plan = BODY.replace("## やること\n", "## やること\n### 1. 書く\n")
+    filled_plan = task_body([("書く", "")])
     check("名指すファイルの小見出しが無い計画は拒む（--hold でも）",
           taskfile.validate_new_body(filled_plan, hold=False) is not None
           and taskfile.validate_new_body(filled_plan, hold=True) is not None)
     check("着手後の本文（やることあり）は validate_body を通る", taskfile.validate_body(filled_plan) is None)
-    named = BODY.replace("## やること\n", "## やること\n### 1. 書く\nx\n\n### 名指すファイル\n- `src/a.py`（直す）\n- `docs/`\n\n")
+    named = task_body([("書く", "x")], ["src/a.py", "docs/"]).replace("`src/a.py`", "`src/a.py`（直す）")
     check("名指すファイルつきの本文を通す（--hold でも）", taskfile.validate_new_body(named, hold=False) is None
           and taskfile.validate_new_body(named, hold=True) is None)
     two_steps = named.replace("### 1. 書く\nx\n", "### 1. 書く\nx\n### 2. 試す\ny\n")
@@ -235,7 +236,7 @@ def test_taskfile_parse() -> None:
           taskfile.validate_new_body(named.replace("`docs/`", "`/etc/x`"), hold=False) is not None)
 
     def with_repo(lines: str) -> str:
-        return named.replace("### 名指すファイル\n", f"### 作業先\n{lines}\n### 名指すファイル\n")
+        return task_body([("書く", "x")], ["src/a.py", "docs/"], "/w/placeholder").replace("- `/w/placeholder`\n", lines)
 
     check("作業先が無ければ (None, None)", taskfile.plan_work_repo(named) == (None, None))
     check("作業先の絶対パス1行を読み、名指すファイルの範囲に入れない",
@@ -1444,7 +1445,7 @@ def test_state_dir() -> None:
 
 def test_edit_and_plan_check() -> None:
     print("task.py edit・plan-check: ## やること を作業より先に書いたかを知らせる")
-    planned = BODY.replace("## やること\n", "## やること\n### 1. 書く\n")
+    planned = task_body([("書く", "")])
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp)
         for tid in ("T-100", "T-101", "T-102", "T-103", "T-105"):
@@ -1552,7 +1553,8 @@ def test_edit_and_plan_check() -> None:
 
 def test_edit_section() -> None:
     print("task.py edit --section: 指した節の中身だけを置き換える")
-    mentions = BODY.replace("## 目的・背景\nx", "## 目的・背景\n文中の `## やること` は境目でない\nx")
+    purpose = "文中の `## やること` は境目でない\nx"
+    mentions = task_body(purpose=purpose)
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _wt2 = make_repo(tmp)
         for tid in ("T-110", "T-111"):
@@ -1702,9 +1704,7 @@ def test_registered_plan() -> None:
     print("task.py new・claim・plan-check: 登録時の計画が名指すファイルが着手時までに変わったかを知らせる")
 
     def plan_body(*paths: str, work_repo: str | None = None) -> str:
-        listed = "".join(f"- `{p}`\n" for p in paths)
-        repo = f"### 作業先\n- `{work_repo}`\n\n" if work_repo else ""
-        return BODY.replace("## やること\n", f"## やること\n### 1. 書く\nx\n\n{repo}### 名指すファイル\n{listed}\n")
+        return task_body([("書く", "x")], paths, work_repo)
 
     def new_id(r: subprocess.CompletedProcess) -> str:
         return r.stdout.split("\t")[1] if r.stdout.startswith("CREATED\t") else ""
@@ -1844,7 +1844,7 @@ def test_registered_plan() -> None:
 
 def test_verify_refuses_unplanned_work() -> None:
     print("task.py verify: 着手中のタスクの ## やること が空のまま作業が始まっていたら検証を打たない")
-    planned = BODY.replace("## やること\n", "## やること\n### 1. 書く\n")
+    planned = task_body([("書く", "")])
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp, branch="切らない", verify="`echo verified`")
         for tid in ("T-110", "T-111"):
@@ -2004,7 +2004,7 @@ def _fold_repo(tmp: str, preship: str | None = None, planned: bool = True) -> tu
     main_path, wt1, _wt2 = make_repo(tmp, branch="切らない", verify="`sh ../verify-count.sh`", preship=preship)
     write(os.path.join(tmp, "verify-count.sh"), COUNTING_VERIFY_SCRIPT)
     write(os.path.join(main_path, "notes.txt"), NOTES)
-    body = BODY.replace("## やること\n", "## やること\n### 1. 書く\n") if planned else BODY
+    body = task_body([("書く", "")]) if planned else BODY
     commit_task(main_path, taskfile.Task("T-120", "取り込み", "todo", "sonnet", "Y", (), body))
     r = run_task(wt1, "claim", "T-120")
     if not r.stdout.startswith("CLAIMED\t"):

@@ -24,7 +24,7 @@ def task_body(
 
     `steps`・`files` が空なら空の `## やること`（`--hold` 用）になる。
     """
-    plan = [f"### {n}. {title}\n{text}\n" for n, (title, text) in enumerate(steps, 1)]
+    plan = [f"### {n}. {title}\n" + (f"{text}\n" if text else "") for n, (title, text) in enumerate(steps, 1)]
     if work_repo is not None:
         plan.append(f"{taskfile.PLAN_WORK_REPO_HEADING}\n- `{work_repo}`\n")
     if files:
