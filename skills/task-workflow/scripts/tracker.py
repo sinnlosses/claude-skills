@@ -63,10 +63,6 @@ SYNC_SLACK = timedelta(seconds=10)
 BULK_LOOKUP_THRESHOLD = 10
 
 
-class TrackerSettingError(RuntimeError):
-    """設定ファイルのトラッカーの行が読めない（呼ぶ側が `INVALID`・終了コード3にする）。"""
-
-
 @dataclass(frozen=True)
 class Tracker:
     kind: str  # "なし" | "github" | "jira"
@@ -75,21 +71,11 @@ class Tracker:
 
 
 def read_tracker(toplevel: str) -> Tracker:
-    value = layout.read_setting_value(toplevel, layout.TRACKER_KEY)
-    kind = layout.setting_word(value) if value else "なし"
-    if kind not in layout.TRACKER_VALUES:
-        raise TrackerSettingError(
-            f"- {layout.TRACKER_KEY}: の値 {kind!r} を機械が読めない（{' / '.join(layout.TRACKER_VALUES)}）"
-        )
-    if kind != "github":
-        return Tracker(kind)
-    project = layout.read_setting_value(toplevel, layout.GITHUB_PROJECT_KEY)
-    m = re.fullmatch(r"([^/\s]+)/(\d+)", layout.setting_word(project)) if project else None
-    if m is None:
-        raise TrackerSettingError(
-            f"- {layout.TRACKER_KEY}: github には - {layout.GITHUB_PROJECT_KEY}: `<owner>/<番号>` の行が要る"
-        )
-    return Tracker(kind, m.group(1), m.group(2))
+    config = layout.read_config(toplevel)
+    project = config.project_owner_number
+    if config.tracker != "github" or project is None:
+        return Tracker(config.tracker)
+    return Tracker(config.tracker, project[0], project[1])
 
 
 def session(toplevel: str) -> "Session":

@@ -206,34 +206,6 @@ def classify_claim(
     return "CLAIMED", f"{os.path.basename(worktree)} {elapsed}"
 
 
-BRANCH_WORDS = ("既定", "作業ブランチを切る", "切らない")
-BRANCH_UNSET_NO_SECTION = "<no section>"
-BRANCH_UNSET_NO_LINE = "<no line>"
-BRANCH_UNSET = (BRANCH_UNSET_NO_SECTION, BRANCH_UNSET_NO_LINE)
-
-
-def read_branch_setting(toplevel: str) -> str:
-    """設定ファイル（`layout.find_config_file`。`AGENTS.md` → `CLAUDE.md` の順）の
-    `- ブランチ:` 行の先頭語だけを読む（6.1）。「## タスク運用」節が無ければ
-    `BRANCH_UNSET_NO_SECTION`、節に行が無ければ `BRANCH_UNSET_NO_LINE` を返す（どちらも送らない）。
-
-    後ろは人向けの説明で自由なので、`切らない。主ブランチに積む` のように句読点で続いても
-    先頭語で決める。語彙のどれでも始まらなければ、その値の最初の語をそのまま返す
-    （呼ぶ側が `INVALID` にする）。両方のファイルに節があれば `layout.ConfigConflict`
-    （呼ぶ側の `main` が `INVALID`・終了コード3にする）。
-    """
-    found = layout.find_config_file(toplevel)
-    if found is None:
-        return BRANCH_UNSET_NO_SECTION
-    _path, text = found
-    m = re.search(r"^- ブランチ:[ \t]*(.*)$", text, flags=re.MULTILINE)
-    if m is None:
-        return BRANCH_UNSET_NO_LINE
-    value = m.group(1).strip()
-    word = next((w for w in BRANCH_WORDS if value.startswith(w)), None)
-    return word if word is not None else (value.split() or [""])[0]
-
-
 def _section_bullets(text: str, heading_prefix: str) -> int:
     lines = text.splitlines()
     start = next((i for i, l in enumerate(lines) if l.startswith(heading_prefix)), None)
@@ -293,6 +265,7 @@ def cmd_status(toplevel: str, show_all: bool, check: bool) -> None:
     _print_split_claims(ledger.split_claims(cwd=toplevel))
     _print_retrospect_due(toplevel)
     _print_legacy_progress(toplevel)
+    _print_old_layout(toplevel)
 
 
 def _print_status_table(
@@ -375,6 +348,42 @@ def _print_legacy_progress(toplevel: str) -> None:
             f"legacy_progress\tdevelop/progress.md\t未解決 {unresolved} / 注意 {notes}"
             "\t（移行の残り。振り分けたら消す）"
         )
+
+
+def _print_old_layout(toplevel: str) -> None:
+    config = layout.read_config(toplevel)
+    if config.legacy:
+        print(f"old_layout\t{config.source}\ttw migrate-layout --dry-run")
+
+
+# --- config ------------------------------------------------------------------
+
+CONFIG_COMMAND_KEYS = ("verify", "verify_before_ship", "format", "hook_tally")
+
+
+def cmd_config(toplevel: str) -> None:
+    """解けた設定を `<キー>\\t<値>\\t<config|default>` で出す（読むだけ）。"""
+    config = layout.read_config(toplevel)
+    if config.source is None:
+        print(f"MISSING\t{layout.CONFIG_PATH}")
+        raise SystemExit(6)
+    print(f"CONFIG\t{config.source}" + ("（旧節）" if config.legacy else ""))
+    for key in layout.CONFIG_KEYS:
+        value = getattr(config, key)
+        if key == "base_branch" and value is None:
+            try:
+                value = ledger.base_branch(toplevel)
+            except ledger.NoBaseBranch:
+                value = None
+        elif key == "backup" and value is None and config.store == layout.STORE_BEADS:
+            value = beads.backup_dir(toplevel)
+        if value is None:
+            value = layout.NO_COMMAND if key in CONFIG_COMMAND_KEYS else "-"
+        print(f"{key}\t{value}\t{'config' if key in config.written else 'default'}")
+    print(f"direction\t{layout.DIRECTION_PATH}")
+    print(f"draft\t{layout.DRAFT_DIR}")
+    if config.store == layout.STORE_FILES:
+        print(f"task\t{layout.TASK_DIR}")
 
 
 # --- new（5.4） -------------------------------------------------------------
@@ -536,7 +545,7 @@ def _base_tip(toplevel: str) -> str | None:
 def _task_difficulty(toplevel: str, task_id: str) -> str:
     """記録に入れる `difficulty`。引けなければ `?`（記録のために元のサブコマンドを落とさない）。"""
     try:
-        if layout.read_store(toplevel) == layout.STORE_BEADS:
+        if layout.read_config(toplevel).store == layout.STORE_BEADS:
             issue = beads.show(toplevel, beads.to_bd_id(task_id))
             task = beads.to_task(issue)[0] if issue is not None else None
         else:
@@ -553,7 +562,7 @@ def _record(toplevel: str, event: str, task_id: str, **fields: str | int | bool)
 def _claimed_here(toplevel: str) -> list[str]:
     """この作業ツリーが着手の印を持つタスク（`done` にしたあと `ship` までのものも含む）。引けなければ空。"""
     try:
-        if layout.read_store(toplevel) == layout.STORE_BEADS:
+        if layout.read_config(toplevel).store == layout.STORE_BEADS:
             actor = _actor(toplevel)
             return [
                 beads.to_task_id(i.bd_id)
@@ -661,8 +670,8 @@ def _claim_preflight(toplevel: str) -> tuple[str, str]:
     追い付くか枝を切るのに `.git` へ書けなければ、印を立てる前に `ledger.GitReadOnly`。
     ファイル方式と Beads 方式の `claim` が同じものを通る。
     """
-    branch_setting = read_branch_setting(toplevel)
-    if branch_setting not in BRANCH_WORDS + BRANCH_UNSET:
+    branch_setting = layout.read_config(toplevel).branch
+    if branch_setting not in layout.BRANCH_VALUES:
         print(f"INVALID\t- ブランチ: の値 {branch_setting!r} を機械が読めない")
         raise SystemExit(3)
 
@@ -1133,7 +1142,7 @@ def cmd_verify(toplevel: str, unplanned_work: Callable[[], list[str]]) -> None:
         folded_line = f"FOLDED\t{folded.old_base}..{folded.new_base}"
         print(folded_line)
     log_path = ledger.verify_log_path(cwd=toplevel)
-    format_command = ship.read_format_command(toplevel)
+    format_command = layout.read_config(toplevel).format
     started = time.monotonic()
     open(log_path, "w", encoding="utf-8").close()
     if format_command is not None:
@@ -1177,7 +1186,7 @@ def cmd_verify_check(toplevel: str) -> None:
         return
     base = ledger.base_branch(toplevel)
     if fold.can_fold(toplevel, base) and not (
-        ship.read_preship_command(toplevel) is not None and fold.folds_cleanly(toplevel, base)
+        layout.read_config(toplevel).verify_before_ship is not None and fold.folds_cleanly(toplevel, base)
     ):
         print("NOT_VERIFIED\tbase")
         return
@@ -1231,7 +1240,7 @@ def cmd_step(toplevel: str, task_id: str, step: str) -> None:
 
 def _owned_step(toplevel: str, task_id: str, step: str) -> tuple[str, tuple[taskfile.PlanStep, ...], int]:
     """`(表示のタスクID, 段, 段の番号)`。自分の着手でなければ `NOT_OWNER`（終了コード4）、段が読めないか番号が段の外なら終了コード2。"""
-    shown = beads.to_task_id(beads.to_bd_id(task_id)) if layout.read_store(toplevel) == layout.STORE_BEADS else task_id
+    shown = beads.to_task_id(beads.to_bd_id(task_id)) if layout.read_config(toplevel).store == layout.STORE_BEADS else task_id
     if shown not in _claimed_here(toplevel):
         print(f"NOT_OWNER\t{shown}")
         raise SystemExit(4)
@@ -1268,7 +1277,7 @@ def cmd_lap(toplevel: str, task_id: str, stage: str) -> None:
     if stage not in LAP_STAGES:
         print(f"usage: 段 {stage!r} が {'・'.join(LAP_STAGES)} のどれでもない", file=sys.stderr)
         raise SystemExit(2)
-    shown = beads.to_task_id(beads.to_bd_id(task_id)) if layout.read_store(toplevel) == layout.STORE_BEADS else task_id
+    shown = beads.to_task_id(beads.to_bd_id(task_id)) if layout.read_config(toplevel).store == layout.STORE_BEADS else task_id
     if shown not in _claimed_here(toplevel):
         print(f"NOT_CLAIMED\t{shown}")
         return
@@ -1301,7 +1310,7 @@ def _current_key(tree: str, excluded: tuple[str, ...] = ()) -> ledger.ContentKey
 
 def _claimed_plan_body(toplevel: str, task_id: str) -> str:
     """着手中のタスクの `## やること` を含む本文（Beads 方式は `## やること` の節だけ）。読めなければ空。"""
-    if layout.read_store(toplevel) == layout.STORE_BEADS:
+    if layout.read_config(toplevel).store == layout.STORE_BEADS:
         issue = beads.show(toplevel, beads.to_bd_id(task_id))
         return f"{taskfile.PLAN_HEADING}\n{issue.raw.get('notes') or ''}\n" if issue is not None else ""
     task, _ = taskfile.read_task_file(taskfile.task_path(os.path.join(toplevel, layout.TASK_DIR), task_id))
@@ -1324,7 +1333,7 @@ def _handback_refusal(where: str) -> str | None:
     if not claims:
         return None
     toplevel = ledger.git_toplevel(where)
-    store = layout.read_store(toplevel)
+    store = layout.read_config(toplevel).store
     gaps = [line for task_id in claims for line in _handback_gaps(toplevel, task_id, store)]
     if not gaps:
         return None
@@ -1480,18 +1489,7 @@ def cmd_ship(toplevel: str, hooks: "ShipHooks | None" = None) -> None:
         """ファイル方式の hooks は台帳の置き場を作るので、送る道では `require_git_writable` のあとに作る。"""
         return hooks if hooks is not None else _file_ship_hooks(toplevel)
 
-    branch_setting = read_branch_setting(toplevel)
-    if branch_setting in BRANCH_UNSET:
-        local_hooks = resolved_hooks()
-        ledger.clear_verify_owed(cwd=toplevel)
-        released = local_hooks.release_shipped()
-        for task_id in released:
-            _record(toplevel, "ship", task_id, result="NO_BRANCH_SETTING")
-        reason = "no-section" if branch_setting == BRANCH_UNSET_NO_SECTION else "no-line"
-        print(f"NO_BRANCH_SETTING\t{reason}\treleased={','.join(released) or '-'}")
-        _print_lines(local_hooks.after_send())
-        raise SystemExit(4)
-
+    branch_setting = layout.read_config(toplevel).branch
     base = ledger.base_branch(toplevel)
     branch = ledger.current_branch(cwd=toplevel)
 
@@ -1524,9 +1522,10 @@ def cmd_ship(toplevel: str, hooks: "ShipHooks | None" = None) -> None:
     hooks = resolved_hooks()
 
     old_base = _run_git(toplevel, ["rev-parse", base]).stdout.strip()
-    verify_command = ship.read_verify_command(toplevel)
+    config = layout.read_config(toplevel)
+    verify_command = config.verify
     verify_owed = ledger.is_verify_owed(cwd=toplevel)
-    preship_command = ship.read_preship_command(toplevel)
+    preship_command = config.verify_before_ship
     stamp = ledger.read_verify_stamp(cwd=toplevel)
     preship_stamped = (
         preship_command is not None
@@ -1740,54 +1739,37 @@ def cmd_migrate(toplevel: str, dry_run: bool) -> None:
 def cmd_config_doctor(toplevel: str) -> None:
     """設定と形式のズレの点検（読むだけ・`--fix` は無い）。検査1つに1行、タブ区切りで出す
     （`task status` と同じ形。人向けの段落は出さない）。判定は書き起こさず、既存の部品
-    （`ledger.base_branch`・`layout.find_config_file`・`init.check_claude_md`・旧形式の残りの
-    直接の検出）を呼ぶだけ（正典 WORKFLOW.md「ファイル配置と設定ファイル（AGENTS.md →
-    CLAUDE.md の順）」・T-013・T-020）。
+    （`ledger.base_branch`・`init.check_config`・旧形式の残りの
+    直接の検出）を呼ぶだけ（正典 WORKFLOW.md「ファイル配置と設定ファイル」）。
 
-    4行を必ず出す（途中の検査が INVALID でも残りの検査は続ける。呼び出し側が全体像を
+    `base_branch`・`config`・`legacy` の3行を必ず出す（途中の検査が INVALID でも残りの検査は続ける。呼び出し側が全体像を
     1回の実行で見られるようにする）。終了コードは 0（全部OK）／1（直すものがある）／
-    3（INVALID）——最悪のものを返す。`main` の `ledger.NoBaseBranch`・`layout.ConfigConflict`
+    3（INVALID）——最悪のものを返す。`main` の `ledger.NoBaseBranch`・`layout.ConfigError`
     の受け皿（呼び出し側で即 `INVALID` にする仕組み）は使わない。ここで捕まえて次の検査に進む。
     """
     exit_code = 0
 
-    # 検査1: 主ブランチが何で決まったか（T-013 の順1〜3。順4＝決まらない＝INVALID）。
+    # 検査1: 主ブランチが何で決まったか（順1〜3。決まらなければ INVALID）。
     try:
         base = ledger.base_branch(toplevel)
         order = ledger.base_branch_order(toplevel)
         print(f"base_branch\tOK\t{base}\t順{order}")
-    except (ledger.NoBaseBranch, layout.ConfigConflict) as e:
+    except (ledger.NoBaseBranch, layout.ConfigError) as e:
         print(f"base_branch\tINVALID\t{e}")
         exit_code = 3
 
-    # 検査2: 設定ファイルが AGENTS.md か CLAUDE.md か、両方に節があって INVALID か（T-020）。
-    try:
-        found = layout.find_config_file(toplevel)
-    except layout.ConfigConflict as e:
-        print(f"config_file\tINVALID\t{e}")
-        exit_code = 3
-    else:
-        if found is None:
-            existing = next(
-                (n for n in layout.CONFIG_FILENAMES if os.path.exists(os.path.join(toplevel, n))), None
-            )
-            print(f"config_file\tMISSING\t{existing or layout.CONFIG_FILENAMES[-1]}")
-            exit_code = max(exit_code, 1)
-        else:
-            path, _text = found
-            print(f"config_file\tOK\t{os.path.relpath(path, toplevel)}")
-
-    # 検査3: 「## タスク運用」の3行の在否と `- ブランチ:` の先頭語が語彙に当たるか
-    # （`init.check_claude_md` そのもの。新しく判定を書き起こさない）。
-    kind, _, rest = init.check_claude_md(toplevel).partition("\t")
-    rest = rest.replace(toplevel + os.sep, "")  # 絶対パスの根を削り、check_file と表記を揃える
-    print(f"claude_md_lines\t{kind}" + (f"\t{rest}" if rest else ""))
+    # 検査2: 設定が読めるか（`init.check_config`）。旧い節で読んでいればその行も出す。
+    line, config = init.check_config(toplevel)
+    kind = line.partition("\t")[0]
+    print(f"config\t{line}")
     if kind == "INVALID":
         exit_code = 3
     elif kind != "OK":
         exit_code = max(exit_code, 1)
+    if config is not None and config.legacy:
+        print(f"old_section\tFOUND\t{config.source}")
 
-    # 検査4: 旧形式の残り（develop/tasks.json・develop/progress.md）があるか。
+    # 検査3: 旧形式の残り（develop/tasks.json・develop/progress.md）があるか。
     tasks_json = os.path.exists(os.path.join(toplevel, "develop", "tasks.json"))
     progress_md = os.path.exists(os.path.join(toplevel, "develop", "progress.md"))
     if tasks_json or progress_md:
@@ -1801,13 +1783,9 @@ def cmd_config_doctor(toplevel: str) -> None:
     else:
         print("legacy\tOK")
 
-    # 検査5（`- タスクの置き場:` 行があるときだけ。無ければファイル方式で、4行のまま）。
-    try:
-        store_value = layout.read_setting_value(toplevel, layout.STORE_KEY)
-    except layout.ConfigConflict:
-        store_value = None
-    if store_value is not None:
-        store_code = _doctor_store(toplevel)
+    # 検査4: Beads 方式の用意とトラッカー。
+    if config is not None and "store" in config.written:
+        store_code = _doctor_store(toplevel, config)
         exit_code = 3 if 3 in (exit_code, store_code) else max(exit_code, store_code)
 
     if exit_code:
@@ -1941,6 +1919,7 @@ def cmd_beads_status(toplevel: str, show_all: bool, check: bool) -> None:
         print(f"jira_close\t{len(waiting)}\t" + (",".join(waiting) or "-"))
     _print_retrospect_due(toplevel)
     _print_legacy_progress(toplevel)
+    _print_old_layout(toplevel)
 
 
 def cmd_beads_new(toplevel: str, args: argparse.Namespace) -> None:
@@ -2447,15 +2426,10 @@ def cmd_beads_jira_closed(toplevel: str, task_ids: list[str]) -> None:
         print(f"CLEARED\t{beads.to_task_id(bd_id)}")
 
 
-def _doctor_store(toplevel: str) -> int:
-    """`config-doctor` の検査5。`store`・（Beads 方式なら）`beads`・`tracker` の行を出し、終了コードを返す。"""
-    try:
-        store = layout.read_store(toplevel)
-    except layout.StoreSettingError as e:
-        print(f"store\tINVALID\t{e}")
-        return 3
-    print(f"store\tOK\t{store}")
-    if store != layout.STORE_BEADS:
+def _doctor_store(toplevel: str, config: layout.Config) -> int:
+    """`config-doctor` の検査4。`store`・（Beads 方式なら）`beads`・`tracker` の行を出し、終了コードを返す。"""
+    print(f"store\tOK\t{config.store}")
+    if config.store != layout.STORE_BEADS:
         return 0
     code = 0
     if beads.is_initialized(toplevel):
@@ -2463,11 +2437,7 @@ def _doctor_store(toplevel: str) -> int:
     else:
         print(f"beads\tMISSING\t{beads.beads_dir(toplevel)}\tinit.py（bd init --stealth）")
         code = 1
-    try:
-        t = tracker.read_tracker(toplevel)
-    except tracker.TrackerSettingError as e:
-        print(f"tracker\tINVALID\t{e}")
-        return 3
+    t = tracker.read_tracker(toplevel)
     detail = f"\t{t.project_owner}/{t.project_number}" if t.kind == "github" else ""
     print(f"tracker\tOK\t{t.kind}{detail}")
     return code
@@ -2515,6 +2485,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_migrate.add_argument("--dry-run", dest="dry_run", action="store_true")
 
     sub.add_parser("config-doctor")
+    sub.add_parser("config")
 
     p_show = sub.add_parser("show")
     p_show.add_argument("task_id")
@@ -2599,7 +2570,10 @@ def main(argv: list[str] | None = None) -> None:
 
     # 主ブランチは要る道でだけ問い合わせる（`ledger.base_branch`。決まらなければ INVALID）。
     try:
-        store = layout.read_store(toplevel) if args.command not in ("migrate", "config-doctor") else None
+        store = layout.read_config(toplevel).store if args.command not in ("migrate", "config-doctor") else None
+        if args.command == "config":
+            cmd_config(toplevel)
+            return
         if store == layout.STORE_BEADS:
             _main_beads(toplevel, args)
             return
@@ -2642,7 +2616,7 @@ def main(argv: list[str] | None = None) -> None:
             cmd_lap(toplevel, args.task_id, args.stage)
         elif args.command == "metrics":
             (metrics.cmd_metrics_stages if args.stages else metrics.cmd_metrics)(toplevel, args.days)
-    except (ledger.NoBaseBranch, layout.ConfigConflict, layout.StoreSettingError, tracker.TrackerSettingError) as e:
+    except (ledger.NoBaseBranch, layout.ConfigError) as e:
         print(f"INVALID\t{e}")
         raise SystemExit(3)
     except ledger.StateReadOnly as e:

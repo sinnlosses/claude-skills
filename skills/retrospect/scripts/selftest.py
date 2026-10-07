@@ -73,6 +73,7 @@ def test_weekly() -> None:
         git(d, "config", "user.email", "test@example.com")
         git(d, "config", "user.name", "test")
         write(os.path.join(d, "hook.sh"), 'echo "直近 30 日の拒否の回数"\necho "deny-a: 0"\necho "deny-b: 12"\n')
+        write(os.path.join(d, "develop", "direction.md"), "# 未対応の指示メモ\n\n## ユーザーから\n")
         write(
             os.path.join(d, "CLAUDE.md"),
             "# x\n\n## タスク運用\n\n- 検証コマンド: なし\n- 規則の発火の集計: `sh hook.sh`（直近30日）\n",
@@ -106,7 +107,7 @@ def test_weekly() -> None:
         flow = lines_of("流れの数", out)
         check("悪くなった数に WORSE", "WORSE\tshipped\t0\t2" in flow, "\n".join(flow))
         check("WORSE があれば期間内のやり方の変更を CHANGE で並べる", any(l.startswith("CHANGE\tproject\t") and l.endswith("\tやり方を変える") for l in flow), "\n".join(flow))
-        check("規則の発火の集計のコマンドの出力をそのまま出す", lines_of("規則の棚卸し", out) == ["直近 30 日の拒否の回数", "deny-a: 0", "deny-b: 12"], out)
+        check("旧い節の規則の発火の集計のコマンドの出力をそのまま出す", lines_of("規則の棚卸し", out) == ["直近 30 日の拒否の回数", "deny-a: 0", "deny-b: 12"], out)
 
         check("期間内に送り出した段が無ければ段の所要時間は EMPTY", lines_of("段の所要時間", out) == ["EMPTY"], out)
         r = weekly(d, "--days", "30")
@@ -124,17 +125,17 @@ def test_weekly() -> None:
         r = weekly(d, "--days", "0")
         check("--days が1未満なら終了コード2", r.returncode == 2, r.stdout + r.stderr)
 
-        write(os.path.join(d, "CLAUDE.md"), "# x\n\n## タスク運用\n\n- 検証コマンド: なし\n- 規則の発火の集計: `exit 3`\n")
+        write(os.path.join(d, ".tw", "config.toml"), 'verify = "なし"\nhook_tally = "exit 3"\n')
         r = weekly(d)
-        check("集計のコマンドが落ちたら - と終了コード", lines_of("規則の棚卸し", r.stdout) == ["-\t終了コード 3"] and r.returncode == 0, r.stdout)
+        check("config.toml の hook_tally が落ちたら - と終了コード", lines_of("規則の棚卸し", r.stdout) == ["-\t終了コード 3"] and r.returncode == 0, r.stdout)
 
-        write(os.path.join(d, "CLAUDE.md"), "# x\n\n## タスク運用\n\n- 検証コマンド: なし\n")
+        write(os.path.join(d, ".tw", "config.toml"), 'verify = "なし"\n')
         r = weekly(d)
         check(
             "規則の発火の集計の行が無ければ - と理由で、traceback を出さない",
             r.returncode == 0
             and "Traceback" not in r.stderr
-            and lines_of("規則の棚卸し", r.stdout) == ["-\t「## タスク運用」に「- 規則の発火の集計:」の行が無い（この観点は飛ばす）"],
+            and lines_of("規則の棚卸し", r.stdout) == ["-\t設定に hook_tally が無い（この観点は飛ばす）"],
             r.stdout + r.stderr,
         )
 
@@ -280,7 +281,7 @@ def test_gate() -> None:
         )
         r = gate("GH-3", quiet)
         check("設定に検証コマンドが無ければ、それを3回打っても QUIET", r.stdout == "QUIET\n", r.stdout + r.stderr)
-        write(os.path.join(root, "CLAUDE.md"), "# x\n\n## タスク運用\n\n- 検証コマンド: `./check.sh`\n")
+        write(os.path.join(root, ".tw", "config.toml"), 'verify = "./check.sh"\n')
         r = gate("GH-3", quiet)
         check(
             "設定の検証コマンドを引数違いも合わせて3回打てば SIGNAL",

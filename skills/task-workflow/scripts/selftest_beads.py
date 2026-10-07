@@ -127,20 +127,27 @@ def tail_line(out: str, key: str) -> str:
 
 
 def make_repo(tmp: str, branch: str | None = "切らない", extra: str = "", verify: str | None = None,
-              prefix: str | None = beads.PREFIX_LOCAL) -> tuple[str, str, str]:
+              prefix: str | None = beads.PREFIX_LOCAL, legacy: bool = False) -> tuple[str, str, str]:
     """`(本体, 作業ツリー1, 作業ツリー2)`。`.beads` は `prefix` の作り置きを写してから `init.py` を打つ。
-    `prefix` が `None` なら `init.py` が `bd init` で作る。`branch` が `None` なら `- ブランチ:` 行を書かない。"""
+    `prefix` が `None` なら `init.py` が `bd init` で作る。設定は `.tw/config.toml` に書き、`extra` はその続きの行。
+    `verify` はコマンドそのもの。`branch` が `None` なら `branch` を書かない。`legacy` なら旧い「## タスク運用」節を
+    CLAUDE.md に書く（`extra` は節の行）。"""
     main_path = os.path.join(tmp, "base")
     os.makedirs(main_path)
     git(main_path, "init", "-q", "-b", "main")
     git(main_path, "config", "user.email", "test@example.com")
     git(main_path, "config", "user.name", "test")
     git(main_path, "config", "beads.role", "maintainer")
-    config = "# x\n\n## タスク運用\n\n"
-    config += f"- 検証コマンド: {verify}\n" if verify else "- 検証コマンド: なし\n"
-    config += "- 整形コマンド: なし\n" + (f"- ブランチ: {branch}\n" if branch is not None else "")
-    config += f"- タスクの置き場: beads\n{extra}"
-    write(os.path.join(main_path, "CLAUDE.md"), config)
+    if legacy:
+        config = "# x\n\n## タスク運用\n\n"
+        config += f"- 検証コマンド: `{verify}`\n" if verify else "- 検証コマンド: なし\n"
+        config += "- 整形コマンド: なし\n" + (f"- ブランチ: {branch}\n" if branch is not None else "")
+        config += f"- タスクの置き場: beads\n{extra}"
+        write(os.path.join(main_path, "CLAUDE.md"), config)
+    else:
+        config = f'verify = "{verify or "なし"}"\n' + (f'branch = "{branch}"\n' if branch is not None else "")
+        config += f'store = "beads"\n{extra}'
+        write(os.path.join(main_path, ".tw", "config.toml"), config)
     write(os.path.join(main_path, "shared.txt"), "line1\n")
     if prefix is not None:
         template, exclude = _beads_templates[prefix]
@@ -247,19 +254,36 @@ def test_setup_and_config_doctor() -> None:
         check(".beads が無ければ MISSING（終了コード6）", r.returncode == 6 and r.stdout.startswith("MISSING"), r.stdout)
 
     with tempfile.TemporaryDirectory() as tmp:
-        main_path, wt1, _ = make_repo(tmp, extra="- トラッカー: gitlab\n")
+        main_path, wt1, _ = make_repo(tmp, legacy=True, extra="- バックアップ: `/tmp/keep`（git の外）\n")
+        r = run_task(wt1, "config-doctor")
+        check("旧い節だけでも Beads 方式で読み、old_section を出す", r.returncode == 0
+              and tail_line(r.stdout, "store").startswith("store\tOK\tbeads")
+              and tail_line(r.stdout, "old_section") == "old_section\tFOUND\tCLAUDE.md", r.stdout)
+        r = run_task(wt1, "config")
+        check("旧い節の値を写して出す", r.returncode == 0 and "store\tbeads\tconfig" in r.stdout.splitlines()
+              and "backup\t/tmp/keep\tconfig" in r.stdout.splitlines(), r.stdout)
+        r = run_task(wt1, "status")
+        check("旧い節の status は old_layout の行を出す",
+              r.returncode == 0 and "old_layout\tCLAUDE.md\ttw migrate-layout --dry-run" in r.stdout.splitlines(), r.stdout)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _ = make_repo(tmp, extra='tracker = "gitlab"\n')
         r = run_task(wt1, "status")
         check("読めないトラッカーは INVALID（終了コード3）", r.returncode == 3 and r.stdout.startswith("INVALID"), r.stdout)
-        write(os.path.join(wt1, "CLAUDE.md"), "# x\n\n## タスク運用\n\n- ブランチ: 切らない\n- タスクの置き場: どこか\n")
+        write(os.path.join(wt1, ".tw", "config.toml"), 'verify = "なし"\nstore = "どこか"\n')
         r = run_task(wt1, "status")
         check("読めない置き場は INVALID（終了コード3）", r.returncode == 3 and r.stdout.startswith("INVALID"), r.stdout)
+        os.remove(os.path.join(wt1, ".tw", "config.toml"))
+        write(os.path.join(wt1, "CLAUDE.md"), "# x\n\n## タスク運用\n\n- ブランチ: 切らない\n- タスクの置き場: どこか\n")
+        r = run_task(wt1, "status")
+        check("旧い節の読めない置き場も INVALID（終了コード3）", r.returncode == 3 and r.stdout.startswith("INVALID"), r.stdout)
 
 
 def test_file_mode_untouched_by_beads_dir() -> None:
-    say("設定行が無ければ .beads があってもファイル方式のまま")
+    say("store が無ければ .beads があってもファイル方式のまま")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _ = make_repo(tmp)
-        write(os.path.join(main_path, "CLAUDE.md"), "# x\n\n## タスク運用\n\n- ブランチ: 切らない\n")
+        write(os.path.join(main_path, ".tw", "config.toml"), 'verify = "なし"\nbranch = "切らない"\n')
         git(main_path, "add", "-A")
         git(main_path, "commit", "-q", "-m", "ファイル方式へ")
         r = run_task(main_path, "new", "--summary", "f", "--difficulty", "haiku", "--loopable", "Y",
@@ -267,7 +291,7 @@ def test_file_mode_untouched_by_beads_dir() -> None:
         check("new がタスクファイルを作る", r.returncode == 0 and "develop/task/T-001.md" in r.stdout
               and os.path.exists(os.path.join(main_path, "develop", "task", "T-001.md")), r.stdout)
         r = run_task(main_path, "config-doctor")
-        check("config-doctor は4行のまま", len(r.stdout.strip().splitlines()) == 4, r.stdout)
+        check("config-doctor は store の行を足さない（3行）", len(r.stdout.strip().splitlines()) == 3, r.stdout)
         r = run_task(main_path, "edit", "T-001", "--summary", "x")
         check("edit はファイル方式では --body-file だけ（ほかは終了コード2）", r.returncode == 2, r.stdout + r.stderr)
         r = run_task(main_path, "show", "T-001")
@@ -383,7 +407,7 @@ def handback_reason(tmp: str, where: str) -> str | None:
 def test_handback_guard() -> None:
     say("handback-guard・pause: 作業があるのに計画か検証が欠けた返却を拒む")
     with tempfile.TemporaryDirectory() as tmp:
-        main_path, wt1, wt2 = make_repo(tmp, verify="`echo verified`")
+        main_path, wt1, wt2 = make_repo(tmp, verify="echo verified")
         a = new_unplanned(main_path, "先に計画")
         b = new_unplanned(main_path, "計画なしで作業")
 
@@ -436,7 +460,7 @@ def test_plan_check_parallel() -> None:
 def test_verify_stamp() -> None:
     say("verify・verify-check: Beads 方式でも同じ形で控えて照らす")
     with tempfile.TemporaryDirectory() as tmp:
-        main_path, wt1, _wt2 = make_repo(tmp, verify="`echo 3 pass`")
+        main_path, wt1, _wt2 = make_repo(tmp, verify="echo 3 pass")
         r = run_task(wt1, "verify")
         check("通れば VERIFIED", r.returncode == 0 and r.stdout.startswith("VERIFIED\t"), r.stdout + r.stderr)
         tree = r.stdout.split("\t")[1] if r.stdout.startswith("VERIFIED\t") else "?"
@@ -459,7 +483,7 @@ def test_ship_skips_preship_with_draft() -> None:
     say("ship: verify のあとに足したドラフトと done があっても、控えで送る前の検証を飛ばす")
     with tempfile.TemporaryDirectory() as tmp:
         count = os.path.join(tmp, "preship-count.log")
-        main_path, wt1, _wt2 = make_repo(tmp, extra=f"- 送る前の検証コマンド: `echo x >> {count}`\n")
+        main_path, wt1, _wt2 = make_repo(tmp, extra=f'verify_before_ship = "echo x >> {count}"\n')
         a = new(main_path, "作業")
         r = run_task(wt1, "claim", a)
         check("claim が通る", r.stdout.startswith("CLAIMED\t"), r.stdout + r.stderr)
@@ -720,7 +744,7 @@ def _github() -> Iterator[tuple["FakeGitHub", str, str, str]]:
     with tempfile.TemporaryDirectory() as tmp:
         _local.env = _with_fakes(tmp, fake)
         try:
-            main_path, wt1, _ = make_repo(tmp, extra="- トラッカー: github\n- GitHub Project: `sinnlosses/1`\n", prefix=None)
+            main_path, wt1, _ = make_repo(tmp, extra='tracker = "github"\ngithub_project = "sinnlosses/1"\n', prefix=None)
             bd(main_path, "config", "set", "github.repository", "o/r")
             yield fake, tmp, main_path, wt1
         finally:
@@ -764,22 +788,21 @@ def test_tracker_github_bidirectional() -> None:
               and fake.issues[n]["title"] == "Beads で直した題", r.stdout + repr(fake.issues[n]))
 
 
-def test_branch_line_missing_does_not_ship() -> None:
-    say("- ブランチ: 行が無ければ claim は枝を切らず、ship は NO_BRANCH_SETTING で送らずに後始末だけする")
+def test_branch_line_missing_is_default() -> None:
+    say("- ブランチ: 行が無ければ `既定` として claim は feature/ を切り、ship は送る")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _ = make_repo(tmp, branch=None)
-        a = new(main_path, "送らない")
+        a = new(main_path, "既定で送る")
         r = run_task(wt1, "claim", a)
-        check("claim は枝を切らずに印を立てる", r.returncode == 0 and r.stdout.strip().endswith("branch=wt1")
-              and git(main_path, "branch", "--list", "feature/*").stdout.strip() == "", r.stdout + r.stderr)
+        check("claim は feature/ を切る", r.returncode == 0 and r.stdout.strip().endswith(f"branch=feature/{a}"),
+              r.stdout + r.stderr)
         work_and_done(wt1, a)
         main_sha = git(main_path, "rev-parse", "main").stdout
         r = run_task(wt1, "ship")
         first = r.stdout.splitlines()[0] if r.stdout else ""
-        check("ship は NO_BRANCH_SETTING（終了コード4）で、done の印を閉じる",
-              r.returncode == 4 and first == f"NO_BRANCH_SETTING\tno-line\treleased={a}", r.stdout + r.stderr)
-        check("主ブランチは進まない", git(main_path, "rev-parse", "main").stdout == main_sha)
-        check("後始末にバックアップを取る", any(l.startswith("BACKUP\tOK") for l in r.stdout.splitlines()), r.stdout)
+        check("ship は SHIPPED で閉じた ID を released に出す",
+              r.returncode == 0 and first.startswith("SHIPPED") and f"released={a}" in first, r.stdout + r.stderr)
+        check("主ブランチが進む", git(main_path, "rev-parse", "main").stdout != main_sha)
         t = rows(run_task(wt1, "status", "--all").stdout)
         check("閉じたものは done", t.get(a, [""] * 8)[1] == "done", repr(t.get(a)))
 
@@ -795,7 +818,7 @@ def test_backup() -> None:
               and os.path.exists(os.path.join(target, "issues.jsonl"))
               and os.path.isdir(os.path.join(target, "dolt")), r.stdout + r.stderr)
     with tempfile.TemporaryDirectory() as tmp:
-        main_path, wt1, _ = make_repo(tmp, extra="- バックアップ: `./keep`\n")
+        main_path, wt1, _ = make_repo(tmp, extra='backup = "./keep"\n')
         r = run_task(main_path, "backup")
         check("リポジトリの中へは取らない（終了コード10）", r.returncode == 10 and "BACKUP\tFAILED" in r.stdout, r.stdout)
 
@@ -891,7 +914,7 @@ def main() -> None:
             test_plan_check_parallel,
             test_setup_and_config_doctor,
             test_backup,
-            test_branch_line_missing_does_not_ship,
+            test_branch_line_missing_is_default,
             test_verify_stamp,
             test_ship_skips_preship_with_draft,
             test_direct_mark,

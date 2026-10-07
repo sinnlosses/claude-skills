@@ -111,31 +111,35 @@ def test_progress_sections() -> None:
         )
 
 
-# --- layout.find_config_file（T-020: AGENTS.md → CLAUDE.md の順） ----------
+# --- layout.find_legacy_section（AGENTS.md → CLAUDE.md の順） ----------
 
 
-def test_find_config_file() -> None:
-    print("layout.find_config_file")
+def test_find_legacy_section() -> None:
+    print("layout.find_legacy_section")
     section = "## タスク運用\n\n- 検証コマンド: `なし`\n- 整形コマンド: `なし`\n- ブランチ: 既定\n"
 
     with tempfile.TemporaryDirectory() as d:
-        check("どちらも無ければ None", layout.find_config_file(d) is None)
+        check("どちらも無ければ None", layout.find_legacy_section(d) is None)
 
         write(os.path.join(d, "AGENTS.md"), f"# x\n\n{section}")
-        found = layout.find_config_file(d)
+        found = layout.find_legacy_section(d)
         check(
             "AGENTS.md だけなら AGENTS.md を設定とする",
             found is not None and os.path.basename(found[0]) == "AGENTS.md" and "検証コマンド" in found[1],
             str(found),
         )
 
+        check("develop/direction.md が無ければ read_config は旧い節を読まない", layout.read_config(d).source is None)
+        write(os.path.join(d, "develop", "direction.md"), "# x\n")
+        check("develop/direction.md があれば旧い節を写して読む", layout.read_config(d).source == "AGENTS.md")
+
         write(os.path.join(d, "CLAUDE.md"), f"# y\n\n{section}")
         raised = False
         try:
-            layout.find_config_file(d)
-        except layout.ConfigConflict:
+            layout.find_legacy_section(d)
+        except layout.ConfigError:
             raised = True
-        check("両方に節があれば ConfigConflict", raised)
+        check("両方に節があれば ConfigError", raised)
 
 
 def test_init() -> None:
@@ -147,7 +151,7 @@ def test_init() -> None:
             r = run("init.py", "develop")
             check("direction.md だけを作る", r.stdout.count("CREATED") == 1 and "direction.md" in r.stdout, r.stdout)
             check("tasks.json・progress.md は作らない", not os.path.exists("develop/tasks.json") and not os.path.exists("develop/progress.md"))
-            check("CLAUDE.md が無ければ MISSING", "MISSING\tCLAUDE.md" in r.stdout, r.stdout)
+            check("設定が無ければ config MISSING", "config\tMISSING\t.tw/config.toml" in r.stdout, r.stdout)
 
             created = open("develop/direction.md", encoding="utf-8").read()
             check(
@@ -196,17 +200,22 @@ def test_init() -> None:
                 r.stdout,
             )
 
-            write("CLAUDE.md", "# x\n\n## タスク運用\n\n- 検証コマンド: `なし`\n- 整形コマンド: `なし`\n")
+            write("CLAUDE.md", "# x\n\n## タスク運用\n\n- 整形コマンド: `なし`\n- ブランチ: 既定\n")
             r = run("init.py", "develop")
-            check("ブランチ行が無ければ MISSING_LINE", "MISSING_LINE" in r.stdout and "- ブランチ:" in r.stdout, r.stdout)
+            check("旧い節に検証コマンドの行が無ければ config MISSING", "config\tMISSING\tCLAUDE.md" in r.stdout, r.stdout)
 
-            write("CLAUDE.md", "# x\n\n## タスク運用\n\n- 検証コマンド: `なし`\n- 整形コマンド: `なし`\n- ブランチ: 自分で切らない\n")
+            write("CLAUDE.md", "# x\n\n## タスク運用\n\n- 検証コマンド: `なし`\n- ブランチ: 自分で切らない\n")
             r = run("init.py", "develop")
-            check("ブランチの先頭語が語彙に無ければ BAD_BRANCH", "BAD_BRANCH" in r.stdout, r.stdout)
+            check("旧い節のブランチの先頭語が語彙に無ければ config INVALID", "config\tINVALID\tCLAUDE.md" in r.stdout, r.stdout)
 
-            write("CLAUDE.md", "# x\n\n## タスク運用\n\n- 検証コマンド: `なし`\n- 整形コマンド: `なし`\n- ブランチ: 切らない。main に直接積む\n")
+            write("CLAUDE.md", "# x\n\n## タスク運用\n\n- 検証コマンド: `なし`\n")
             r = run("init.py", "develop")
-            check("3行そろい語彙に当たれば OK", "OK\tCLAUDE.md" in r.stdout, r.stdout)
+            check("旧い節は検証コマンドだけで OK（ブランチは省略可）", "config\tOK\tCLAUDE.md" in r.stdout, r.stdout)
+
+            write(".tw/config.toml", 'verify = "なし"\n')
+            r = run("init.py", "develop")
+            check(".tw/config.toml があればそれを読む", "config\tOK\t.tw/config.toml" in r.stdout, r.stdout)
+            os.remove(".tw/config.toml")
 
             r = run("init.py", "--help")
             check("打ち間違いをディレクトリにしない", r.returncode == 2 and not os.path.exists("--help"))
@@ -226,7 +235,7 @@ def test_init() -> None:
 
 
 def main() -> None:
-    for t in (test_load_tasks, test_progress_sections, test_find_config_file, test_init):
+    for t in (test_load_tasks, test_progress_sections, test_find_legacy_section, test_init):
         t()
     print()
     if failures:

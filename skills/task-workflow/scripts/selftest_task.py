@@ -83,24 +83,29 @@ def start_task(cwd: str, *args: str) -> subprocess.Popen:
     )
 
 
+def _toml_value(value: str) -> str:
+    """`` `cmd` `` か `なし` を TOML の文字列にする。"""
+    inner = value[1:-1] if value.startswith("`") and value.endswith("`") else value
+    return '"' + inner.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def make_repo(
     tmp: str,
     branch: str | None = "既定",
     verify: str | None = None,
     base: str = "main",
-    config_filename: str = "CLAUDE.md",
+    config_filename: str | None = None,
     format_command: str | None = None,
     preship: str | None = None,
     section: bool = True,
 ) -> tuple[str, str, str]:
     """`(本体, 作業ツリー1, 作業ツリー2)`。本体だけが主ブランチを出す。
 
-    `branch`/`verify` は設定ファイル「## タスク運用」の `- ブランチ:`／`- 検証コマンド:` の値
-    （6.1・6.3）。`verify` を省略すると行自体を書かない（`ship.read_verify_command` は
-    `None` を返す＝打たない）。`base` は主ブランチの名前——リモートを持たない足場なので
-    `ledger.base_branch` の順3（`main`・`master`・`trunk` のうち実在するもの）で決まる。
-    `config_filename` は設定ファイルの置き場（既定 `CLAUDE.md`。T-020: `AGENTS.md` も同じ形で読める）。
-    `branch` が `None` なら `- ブランチ:` 行を書かず、`section` が偽なら「## タスク運用」節ごと書かない。
+    設定は `.tw/config.toml` に書く。`verify`・`format_command`・`preship` は `` `cmd` `` か `なし` の形で渡し、
+    `verify` を省略すると `verify = "なし"`。`branch` が `None` なら `branch` を書かない。`base` は主ブランチの
+    名前——リモートを持たない足場なので `ledger.base_branch` の順3で決まる。
+    `config_filename`（`CLAUDE.md`・`AGENTS.md`）を渡すと、代わりに旧い「## タスク運用」節をそのファイルに書く
+    （互換の読み。値はそのまま行に書き、`verify` を省略すると行を書かない）。`section` が偽なら設定をどこにも書かない。
     """
     main_path = os.path.join(tmp, "base")
     os.makedirs(main_path)
@@ -112,16 +117,26 @@ def make_repo(
         "# 未対応の指示メモ\n\n## ユーザーから\n\n## エージェントのドラフト\n",
     )
     write(os.path.join(main_path, "docs", "history", "tasks.md"), "# 完了タスクのアーカイブ\n")
-    config_md = "# x\n\n## タスク運用\n\n"
-    if verify is not None:
-        config_md += f"- 検証コマンド: {verify}\n"
-    if format_command is not None:
-        config_md += f"- 整形コマンド: {format_command}\n"
-    if preship is not None:
-        config_md += f"- 送る前の検証コマンド: {preship}\n"
-    if branch is not None:
-        config_md += f"- ブランチ: {branch}\n"
-    write(os.path.join(main_path, config_filename), config_md if section else "# x\n")
+    if config_filename is not None:
+        config_md = "# x\n\n## タスク運用\n\n"
+        if verify is not None:
+            config_md += f"- 検証コマンド: {verify}\n"
+        if format_command is not None:
+            config_md += f"- 整形コマンド: {format_command}\n"
+        if preship is not None:
+            config_md += f"- 送る前の検証コマンド: {preship}\n"
+        if branch is not None:
+            config_md += f"- ブランチ: {branch}\n"
+        write(os.path.join(main_path, config_filename), config_md if section else "# x\n")
+    elif section:
+        toml = f"verify = {_toml_value(verify or 'なし')}\n"
+        if format_command is not None:
+            toml += f"format = {_toml_value(format_command)}\n"
+        if preship is not None:
+            toml += f"verify_before_ship = {_toml_value(preship)}\n"
+        if branch is not None:
+            toml += f'branch = "{branch}"\n'
+        write(os.path.join(main_path, ".tw", "config.toml"), toml)
     write(os.path.join(main_path, "shared.txt"), "line1\n")
     git(main_path, "add", "-A")
     git(main_path, "commit", "-q", "-m", "init")
@@ -1404,7 +1419,7 @@ def test_handback_guard_other_repo() -> None:
 def test_worktree_state_dir() -> None:
     print("ledger.py .tw/: 作業ツリーごとの控えとログを作業ツリーの根に置き、古い置き場の控えも読む")
     with tempfile.TemporaryDirectory() as tmp:
-        main_path, wt1, wt2 = make_repo(tmp, verify="`true`")
+        main_path, wt1, wt2 = make_repo(tmp, verify="`true`", config_filename="CLAUDE.md")
         commit_task(main_path, taskfile.Task("T-100", "新しい置き場", "todo", "sonnet", "Y", (), BODY))
         commit_task(main_path, taskfile.Task("T-101", "古い置き場", "todo", "sonnet", "Y", (), BODY))
 
@@ -1412,8 +1427,8 @@ def test_worktree_state_dir() -> None:
         run_task(wt1, "claim", "T-100")
         with open(os.path.join(tw1, ".gitignore"), encoding="utf-8") as f:
             ignore = f.read()
-        check("claim が .tw/task-open-claims/ に控えを置き、.tw/.gitignore は * の1行",
-              os.path.isfile(os.path.join(tw1, "task-open-claims", "T-100")) and ignore == "*\n"
+        check("claim が .tw/task-open-claims/ に控えを置き、.tw/.gitignore は config.toml のほかを外す",
+              os.path.isfile(os.path.join(tw1, "task-open-claims", "T-100")) and ignore == ledger.WORKTREE_STATE_IGNORE
               and not os.path.exists(os.path.join(ledger.git_dir(wt1), "task-open-claims")), ignore)
         run_task(wt1, "edit", "T-100", "--section", "やること", "--body-file", "-", stdin="### 1. 書く\n")
         write(os.path.join(wt1, "work.txt"), "x\n")
@@ -1448,6 +1463,17 @@ def test_worktree_state_dir() -> None:
               and not os.path.exists(os.path.join(old, "task-verify-stamp"))
               and not os.path.exists(os.path.join(old, "task-open-claims"))
               and run_task(wt2, "verify-check").stdout.startswith("VERIFIED_SAME\t"), r.stdout + r.stderr)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp, verify="`true`")
+        commit_task(main_path, taskfile.Task("T-100", "config.toml の .tw/", "todo", "sonnet", "Y", (), BODY))
+        run_task(wt1, "claim", "T-100")
+        r = run_task(wt1, "verify")
+        with open(os.path.join(wt1, ".tw", ".gitignore"), encoding="utf-8") as f:
+            ignore = f.read()
+        check("config.toml だけをコミットした .tw/ にも .gitignore を置き、控えとログが git status に出ない",
+              ignore == ledger.WORKTREE_STATE_IGNORE and git(wt1, "status", "--porcelain").stdout == "",
+              r.stdout + git(wt1, "status", "--porcelain").stdout)
 
 
 @contextlib.contextmanager
@@ -2303,8 +2329,8 @@ def test_verify_stamp() -> None:
         check("HEAD が動けば NOT_VERIFIED head", verify_check() == "NOT_VERIFIED\thead")
 
         run_task(wt1, "verify")
-        config = os.path.join(wt1, "CLAUDE.md")
-        write(config, open(config, encoding="utf-8").read().replace("`sh verify.sh`", "`sh ./verify.sh`"))
+        config = os.path.join(wt1, ".tw", "config.toml")
+        write(config, open(config, encoding="utf-8").read().replace('"sh verify.sh"', '"sh ./verify.sh"'))
         check("検証コマンドが変われば NOT_VERIFIED command", verify_check() == "NOT_VERIFIED\tcommand")
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -2506,6 +2532,7 @@ def test_readonly_commands_stay_out_of_git() -> None:
         "plan-check": ["plan-check", "T-120"],
         "verify-check": ["verify-check"],
         "metrics": ["metrics"],
+        "config": ["config"],
         "config-doctor": ["config-doctor"],
     }
     names = readonly_subcommands()
@@ -3341,53 +3368,58 @@ def test_ship_default_branch_leaves_feature_branch() -> None:
 
 
 def test_branch_setting_reads_leading_word() -> None:
-    print("task.py claim: - ブランチ: は先頭語だけを読む（後ろの説明は自由）")
+    print("task.py claim: 旧い節の - ブランチ: は先頭語だけを読み、config.toml の branch は語彙の外なら INVALID")
     with tempfile.TemporaryDirectory() as tmp:
-        main_path, wt1, _wt2 = make_repo(tmp, branch="切らない。作業ツリーの枝のまま ship で送る")
+        main_path, wt1, _wt2 = make_repo(
+            tmp, branch="切らない。作業ツリーの枝のまま ship で送る", config_filename="CLAUDE.md"
+        )
         commit_task(main_path, taskfile.Task("T-100", "先頭語", "todo", "sonnet", "Y", (), BODY))
         r = run_task(wt1, "claim", "T-100")
-        check("句読点で続いても切らない として読む", r.returncode == 0 and "branch=wt1-branch" in r.stdout, r.stdout + r.stderr)
+        check("旧い節は句読点で続いても切らない として読む", r.returncode == 0 and "branch=wt1-branch" in r.stdout,
+              r.stdout + r.stderr)
+
+    for where, kwargs in (("旧い節", {"config_filename": "CLAUDE.md"}), ("config.toml", {})):
+        with tempfile.TemporaryDirectory() as tmp:
+            main_path, wt1, _wt2 = make_repo(tmp, branch="自分で切らない", **kwargs)
+            commit_task(main_path, taskfile.Task("T-100", "語彙外", "todo", "sonnet", "Y", (), BODY))
+            r = run_task(wt1, "claim", "T-100")
+            check(f"{where}: 語彙に無い値は INVALID（終了コード3）", r.returncode == 3 and r.stdout.startswith("INVALID\t"),
+                  r.stdout + r.stderr)
 
     with tempfile.TemporaryDirectory() as tmp:
-        main_path, wt1, _wt2 = make_repo(tmp, branch="自分で切らない")
-        commit_task(main_path, taskfile.Task("T-100", "語彙外", "todo", "sonnet", "Y", (), BODY))
-        r = run_task(wt1, "claim", "T-100")
-        check("語彙に無い先頭語は INVALID（終了コード3）", r.returncode == 3 and r.stdout.startswith("INVALID\t"), r.stdout + r.stderr)
+        main_path, wt1, _wt2 = make_repo(tmp, branch="切らない。説明")
+        r = run_task(wt1, "status")
+        check("config.toml は値の後ろの説明文を許さず INVALID", r.returncode == 3 and r.stdout.startswith("INVALID\t.tw/config.toml:"),
+              r.stdout + r.stderr)
+        write(os.path.join(wt1, ".tw", "config.toml"), 'verify = "なし"\nverify_cmd = "x"\n')
+        r = run_task(wt1, "status")
+        check("知らないキーは行番号付きで INVALID（終了コード3）",
+              r.returncode == 3 and r.stdout.startswith("INVALID\t.tw/config.toml:2:") and "verify_cmd" in r.stdout,
+              r.stdout + r.stderr)
 
 
-def test_branch_setting_missing_does_not_ship() -> None:
-    print("task.py claim・ship: 節か - ブランチ: 行が無ければ枝を切らず、ship は NO_BRANCH_SETTING で送らない")
-    for reason, kwargs in (("no-section", {"section": False}), ("no-line", {"branch": None})):
+def test_branch_setting_missing_is_default() -> None:
+    print("task.py claim・ship: branch が無ければ `既定` として枝を切り、ship は送る")
+    for reason, kwargs in (
+        ("config.toml に branch が無い", {"branch": None}),
+        ("旧い節に - ブランチ: 行が無い", {"branch": None, "config_filename": "CLAUDE.md"}),
+        ("設定がどこにも無い", {"section": False}),
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             main_path, wt1, _wt2 = make_repo(tmp, **kwargs)
             commit_task(main_path, taskfile.Task("T-100", "作業ツリーで", "todo", "sonnet", "Y", (), BODY))
-            commit_task(main_path, taskfile.Task("T-101", "本体で", "todo", "sonnet", "Y", (), BODY))
             git(wt1, "merge", "-q", "--ff-only", "main")
 
             r = run_task(wt1, "claim", "T-100")
-            check(f"{reason}: claim は枝を切らずに印を立てる",
-                  r.returncode == 0 and r.stdout.startswith("CLAIMED\tT-100\t") and "branch=wt1-branch" in r.stdout
-                  and os.path.isdir(ledger.claim_dir(ledger.ledger_root(cwd=wt1), "T-100")), r.stdout + r.stderr)
-            check(f"{reason}: feature/ の枝は無い", git(main_path, "branch", "--list", "feature/*").stdout.strip() == "")
+            check(f"{reason}: claim は feature/T-100 を切る",
+                  r.returncode == 0 and r.stdout.startswith("CLAIMED\tT-100\t") and "branch=feature/T-100" in r.stdout,
+                  r.stdout + r.stderr)
             _claim_work_and_done(wt1, "T-100")
-            main_sha = git(main_path, "rev-parse", "main").stdout
             r = run_task(wt1, "ship")
-            check(f"{reason}: 作業ツリーの ship は NO_BRANCH_SETTING（終了コード4）",
-                  r.returncode == 4 and r.stdout.startswith(f"NO_BRANCH_SETTING\t{reason}\treleased=-"),
+            check(f"{reason}: ship は送る（SHIPPED）", r.returncode == 0 and r.stdout.startswith("SHIPPED\t"),
                   r.stdout + r.stderr)
-            check(f"{reason}: 主ブランチは進まない", git(main_path, "rev-parse", "main").stdout == main_sha)
-
-            r = run_task(main_path, "claim", "T-101")
-            check(f"{reason}: 本体でも claim は main のまま", r.returncode == 0 and "branch=main" in r.stdout,
-                  r.stdout + r.stderr)
-            _claim_work_and_done(main_path, "T-101", note="2")
-            main_sha = git(main_path, "rev-parse", "main").stdout
-            r = run_task(main_path, "ship")
-            check(f"{reason}: 本体の ship も NO_BRANCH_SETTING で、main で done の印を消す",
-                  r.returncode == 4 and r.stdout.startswith(f"NO_BRANCH_SETTING\t{reason}\treleased=T-101")
-                  and not os.path.isdir(ledger.claim_dir(ledger.ledger_root(cwd=main_path), "T-101")),
-                  r.stdout + r.stderr)
-            check(f"{reason}: ship は main を動かさない", git(main_path, "rev-parse", "main").stdout == main_sha)
+            check(f"{reason}: 主ブランチが作業のコミットまで進む",
+                  git(main_path, "log", "-1", "--format=%s", "main").stdout.strip() == "T-100: 完了")
 
 
 def test_prune() -> None:
@@ -3445,22 +3477,32 @@ def test_prune() -> None:
 
 
 def test_base_branch_resolution() -> None:
-    print("ledger.base_branch: CLAUDE.md の行 → origin/HEAD → main/master/trunk → NoBaseBranch")
+    print("ledger.base_branch: 設定の base_branch → origin/HEAD → main/master/trunk → NoBaseBranch")
     with tempfile.TemporaryDirectory() as tmp:
         ledger.clear_base_branch_cache()
         master_repo, _wt1, _wt2 = make_repo(tmp, base="master")
         check("順3: master しか無ければ master", ledger.base_branch(cwd=master_repo) == "master")
 
-        # 順1（CLAUDE.md の任意行）が順2・順3より先。
         git(master_repo, "branch", "main")
         ledger.clear_base_branch_cache()
         check("main も出来たら順3では main が先", ledger.base_branch(cwd=master_repo) == "main")
+        config = os.path.join(master_repo, ".tw", "config.toml")
+        with open(config, encoding="utf-8") as f:
+            body = f.read()
+        write(config, body + 'base_branch = "master"  # 保護ブランチ\n')
+        ledger.clear_base_branch_cache()
+        check("順1: base_branch が最優先", ledger.base_branch(cwd=master_repo) == "master")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ledger.clear_base_branch_cache()
+        master_repo, _wt1, _wt2 = make_repo(tmp, base="master", config_filename="CLAUDE.md")
+        git(master_repo, "branch", "main")
         claude_md = os.path.join(master_repo, "CLAUDE.md")
         with open(claude_md, encoding="utf-8") as f:
             body = f.read()
         write(claude_md, body.replace("- ブランチ:", "- 主ブランチ: `master`（保護ブランチ）\n- ブランチ:"))
         ledger.clear_base_branch_cache()
-        check("順1: `- 主ブランチ:` 行が最優先（バッククォートも落ちる）", ledger.base_branch(cwd=master_repo) == "master")
+        check("旧い節の `- 主ブランチ:` 行も順1（バッククォートも落ちる）", ledger.base_branch(cwd=master_repo) == "master")
 
     with tempfile.TemporaryDirectory() as tmp:
         # 順2: origin/HEAD の枝名。候補の順（main が先）より優先する。
@@ -3523,15 +3565,14 @@ def test_config_file_agents_md_and_conflict() -> None:
             r.returncode == 3 and r.stdout.startswith("INVALID\t") and "AGENTS.md" in r.stdout and "CLAUDE.md" in r.stdout,
             r.stdout + r.stderr,
         )
+        write(os.path.join(main_path, ".tw", "config.toml"), 'verify = "なし"\n')
+        r = run_task(main_path, "status")
+        check(".tw/config.toml があれば旧い節を読まない（両方に節があっても通り、old_layout も出ない）",
+              r.returncode == 0 and "old_layout" not in r.stdout, r.stdout + r.stderr)
 
 
 def _make_config_doctor_repo(tmp: str, name: str) -> str:
-    """`task config-doctor`（T-021）のフィクスチャ用の最小リポジトリ。
-
-    `make_repo` は「## タスク運用」の3行のうち `- 整形コマンド:` を書かない（他のテストが
-    `read_verify_command`／`read_branch_setting` しか見ないため）ので、`claude_md_lines`
-    検査が必ず `MISSING_LINE` になってしまう。ここでは3行そろった CLAUDE.md を直接書く。
-    """
+    """`task config-doctor`・`task config` のフィクスチャ用の最小リポジトリ（旧い節の CLAUDE.md）。"""
     repo = os.path.join(tmp, name)
     os.makedirs(repo)
     git(repo, "init", "-q", "-b", "main")
@@ -3559,11 +3600,11 @@ def test_config_doctor() -> None:
         r = run_task(repo, "config-doctor")
         lines = r.stdout.splitlines()
         check(
-            "OKのリポジトリは終了コード0で4検査ともOK",
+            "OKのリポジトリは終了コード0で検査がOK、旧い節で読んでいれば old_section の行も出す",
             r.returncode == 0
             and any(l.startswith("base_branch\tOK\tmain\t順3") for l in lines)
-            and any(l.startswith("config_file\tOK\tCLAUDE.md") for l in lines)
-            and any(l.startswith("claude_md_lines\tOK") for l in lines)
+            and any(l.startswith("config\tOK\tCLAUDE.md") for l in lines)
+            and "old_section\tFOUND\tCLAUDE.md" in lines
             and "legacy\tOK" in lines,
             r.stdout + r.stderr,
         )
@@ -3585,7 +3626,7 @@ def test_config_doctor() -> None:
                 for l in lines
             )
             and any(l.startswith("base_branch\tOK") for l in lines)
-            and any(l.startswith("claude_md_lines\tOK") for l in lines),
+            and any(l.startswith("config\tOK") for l in lines),
             r.stdout + r.stderr,
         )
 
@@ -3599,11 +3640,89 @@ def test_config_doctor() -> None:
             "両方に節があれば終了コード3で全検査がINVALIDと言う",
             r.returncode == 3
             and any(l.startswith("base_branch\tINVALID\t") for l in lines)
-            and any(l.startswith("config_file\tINVALID\t") for l in lines)
-            and any(l.startswith("claude_md_lines\tINVALID\t") for l in lines)
+            and any(l.startswith("config\tINVALID\t") for l in lines)
             and "legacy\tOK" in lines,
             r.stdout + r.stderr,
         )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = _make_config_doctor_repo(tmp, "bad-branch")
+        write(
+            os.path.join(repo, "CLAUDE.md"),
+            "# x\n\n## タスク運用\n\n- 検証コマンド: なし\n- ブランチ: 自分で切らない\n- タスクの置き場: develop/task\n",
+        )
+        r = run_task(repo, "config-doctor")
+        lines = r.stdout.splitlines()
+        check(
+            "旧い節のブランチが語彙の外なら config INVALID で、store の検査は続ける",
+            r.returncode == 3
+            and any(l.startswith("config\tINVALID\tCLAUDE.md\t") for l in lines)
+            and "store\tOK\tfiles" in lines,
+            r.stdout + r.stderr,
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = _make_config_doctor_repo(tmp, "toml")
+        write(os.path.join(repo, "CLAUDE.md"), "# x\n")
+        write(os.path.join(repo, ".tw", "config.toml"), 'verify = "なし"\n')
+        r = run_task(repo, "config-doctor")
+        lines = r.stdout.splitlines()
+        check(
+            ".tw/config.toml なら config は OK で old_section の行は出ない",
+            r.returncode == 0
+            and any(l.startswith("config\tOK\t.tw/config.toml") for l in lines)
+            and not any(l.startswith("old_section") for l in lines),
+            r.stdout + r.stderr,
+        )
+        write(os.path.join(repo, ".tw", "config.toml"), 'verify = "なし"\nfoo = "x"\n')
+        r = run_task(repo, "config-doctor")
+        check(
+            "知らないキーは行番号付きで config INVALID（終了コード3）",
+            r.returncode == 3 and any(l.startswith("config\tINVALID\t.tw/config.toml\t") and ":2:" in l
+                                      for l in r.stdout.splitlines()),
+            r.stdout + r.stderr,
+        )
+
+
+def test_config_command() -> None:
+    print("task.py config: 解けた設定を出す")
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = _make_config_doctor_repo(tmp, "legacy")
+        r = run_task(repo, "config")
+        lines = r.stdout.splitlines()
+        check(
+            "旧い節なら CONFIG に（旧節）を付け、書いたキーは config・無いキーは default",
+            r.returncode == 0
+            and lines[:1] == ["CONFIG\tCLAUDE.md（旧節）"]
+            and "verify\tなし\tconfig" in lines
+            and "branch\t既定\tconfig" in lines
+            and "base_branch\tmain\tdefault" in lines
+            and "task\tdevelop/task" in lines,
+            r.stdout + r.stderr,
+        )
+        r = run_task(repo, "status")
+        check("status は old_layout の行を出す",
+              "old_layout\tCLAUDE.md\ttw migrate-layout --dry-run" in r.stdout.splitlines(), r.stdout + r.stderr)
+
+        write(os.path.join(repo, ".tw", "config.toml"), 'verify = "./check.sh"  # 説明\nbranch = "切らない"\n')
+        r = run_task(repo, "config")
+        lines = r.stdout.splitlines()
+        check(
+            ".tw/config.toml の値を出す",
+            r.returncode == 0
+            and lines[:1] == ["CONFIG\t.tw/config.toml"]
+            and "verify\t./check.sh\tconfig" in lines
+            and "branch\t切らない\tconfig" in lines
+            and "format\tなし\tdefault" in lines,
+            r.stdout + r.stderr,
+        )
+        r = run_task(repo, "status")
+        check("status は old_layout の行を出さない", "old_layout" not in r.stdout, r.stdout + r.stderr)
+
+        write(os.path.join(repo, ".tw", "config.toml"), 'verify = "x"\nbranch = 1\n')
+        r = run_task(repo, "config")
+        check("読めなければ INVALID（終了コード3）", r.returncode == 3 and r.stdout.startswith("INVALID\t.tw/config.toml:2:"),
+              r.stdout + r.stderr)
 
 
 def test_full_cycle_on_master_repo() -> None:
@@ -3745,11 +3864,12 @@ def main() -> None:
         test_ship_race_gives_up_after_three_tries,
         test_ship_default_branch_leaves_feature_branch,
         test_branch_setting_reads_leading_word,
-        test_branch_setting_missing_does_not_ship,
+        test_branch_setting_missing_is_default,
         test_prune,
         test_base_branch_resolution,
         test_config_file_agents_md_and_conflict,
         test_config_doctor,
+        test_config_command,
         test_full_cycle_on_master_repo,
     ):
         t()

@@ -51,7 +51,6 @@ if _TASK_WORKFLOW_SCRIPTS not in sys.path:
 
 import beads  # noqa: E402
 import layout  # noqa: E402
-import ship  # noqa: E402
 import transcript  # noqa: E402
 
 DEFAULT_DIFF_BYTES = 40000
@@ -231,8 +230,8 @@ def find_archived_task(path: str, task_id: str) -> str | None:
 
 def is_beads(root: str) -> bool:
     try:
-        return layout.read_store(root) == layout.STORE_BEADS
-    except (layout.ConfigConflict, layout.StoreSettingError):
+        return layout.read_config(root).store == layout.STORE_BEADS
+    except layout.ConfigError:
         return False
 
 
@@ -402,8 +401,8 @@ SLOW_SECONDS = 180
 def verify_heads(root: str) -> list[str]:
     heads = ["tw verify"]
     try:
-        command = ship.read_verify_command(root)
-    except layout.ConfigConflict:
+        command = layout.read_config(root).verify
+    except layout.ConfigError:
         command = None
     head = " ".join((command or "").split()[:2])
     if head and head not in heads:

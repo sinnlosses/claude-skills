@@ -4,7 +4,7 @@
 使い方: init.py [develop-dir]   （既定: develop）
 
 作るのは `develop/direction.md` の骨組み（見出しと `## ユーザーから` の節）だけ（正典は
-task-workflow の WORKFLOW.md「ファイル配置と設定ファイル（AGENTS.md → CLAUDE.md の順）」）。
+task-workflow の WORKFLOW.md「ファイル配置と設定ファイル」）。
 `develop/task/` は最初の `task new` が、`develop/draft/` は最初のドラフトが作り、`direction.md` が
 新形式の目印になる（空のディレクトリは git に載らないため）。骨組みは決まりきっているのでモデルに書かせない
 （`direction.md` に見出し以外の行が混ざると `/plan-tasks` が「未対応の指示がある」と誤判定する）。
@@ -13,14 +13,13 @@ task-workflow の WORKFLOW.md「ファイル配置と設定ファイル（AGENTS
 `task.py` と同じ）。移すのは `task migrate` で、ここでは骨組みを混ぜない。
 
 **既存ファイルは上書きしない。** 中身の点検結果だけを出し、直すかどうかは呼び出し側が決める。
-設定ファイル（`AGENTS.md`／`CLAUDE.md`）は**点検するだけで書かない**（節に入る値は検証コマンドの
-選定そのもので、判断が要る。書くのは `/setup-tasks` の手順2）。
+設定（`.tw/config.toml`）は**点検するだけで書かない**（値は検証コマンドの選定そのもので、
+判断が要る。書くのは `/setup-tasks`）。
 """
 
 from __future__ import annotations
 
 import os
-import re
 import sys
 
 import beads
@@ -31,14 +30,6 @@ SECTION_USER = layout.SECTION_USER
 LEGACY_SECTION_DRAFT = layout.LEGACY_SECTION_DRAFT
 # 見出しの行は数えないので、ドラフトの置き場は見出しの括弧に書く。
 DIRECTION = f"# 未対応の指示メモ（エージェントのドラフトは {layout.DRAFT_DIR}/ に1件1ファイル）\n\n{SECTION_USER}\n"
-
-# 設定ファイル側の正典（正典「ファイル配置と設定ファイル」）。スキルと task.py はこの節を読む。
-# ファイルの探索そのものは layout.find_config_file（`AGENTS.md` → `CLAUDE.md` の順）に寄せる。
-CLAUDE_MD = "CLAUDE.md"
-CLAUDE_SECTION = layout.TASK_SECTION_HEADING
-CLAUDE_KEYS = ("- 検証コマンド:", "- 整形コマンド:", "- ブランチ:")
-# `- ブランチ:` の値の先頭語（正典「ファイル配置と設定ファイル」の語彙。task.py の read_branch_setting と同じ）。
-BRANCH_WORDS = ("既定", "作業ブランチを切る", "切らない")
 
 
 def main() -> None:
@@ -56,25 +47,25 @@ def main() -> None:
 
     os.makedirs(root, exist_ok=True)
     create(os.path.join(root, os.path.basename(layout.DIRECTION_PATH)), DIRECTION, check_direction)
-    print(check_claude_md())
+    print(f"config\t{check_config()[0]}")
     code = prepare_beads(".")
     if code:
         raise SystemExit(code)
 
 
 def prepare_beads(root: str) -> int:
-    """設定が Beads 方式（`- タスクの置き場: beads`）なら `.beads` を用意する。終了コードを返す。
+    """設定が Beads 方式（`store = "beads"`）なら `.beads` を用意する。終了コードを返す。
 
     `bd init --stealth` は `.git/info/exclude` で `.beads` を外し、コミットも `AGENTS.md`・
     `CLAUDE.md` への書き足しもしない（`--stealth` なしでは両方をして自動でコミットする）。
     `.beads` は主ブランチを出している作業ツリーの根に置くので、別の作業ツリーからは作らない。
-    ファイル方式（行が無い）なら何もしない。
+    ファイル方式なら何もしない。
     """
     try:
-        value = layout.read_setting_value(root, layout.STORE_KEY)
-    except layout.ConfigConflict:
+        config = layout.read_config(root)
+    except layout.ConfigError:
         return 0
-    if value is None or layout.setting_word(value) != layout.STORE_BEADS:
+    if config.store != layout.STORE_BEADS:
         return 0
     target = beads.beads_dir(root)
     if os.path.isdir(target):
@@ -85,9 +76,7 @@ def prepare_beads(root: str) -> int:
             print(f"NOT_MAIN_WORKTREE\t{os.path.dirname(target)}\t（.beads はそこで作る）")
             return 4
         # トラッカーが github なら ID は Issue 番号（`gh-<n>`）、それ以外は `task` の採番（`t-<n>`）。
-        tracker_value = layout.read_setting_value(root, layout.TRACKER_KEY)
-        github = tracker_value is not None and layout.setting_word(tracker_value) == "github"
-        prefix = beads.PREFIX_GITHUB if github else beads.PREFIX_LOCAL
+        prefix = beads.PREFIX_GITHUB if config.tracker == "github" else beads.PREFIX_LOCAL
         r = beads.run(root, ["init", "--stealth", "-p", prefix, "--non-interactive", "--skip-hooks", "--quiet"])
         if r.returncode != 0:
             print(f"FAILED\tbd init\t{(r.stderr or r.stdout).strip()}")
@@ -106,41 +95,24 @@ def create(path: str, body: str, check) -> None:
     print(f"CREATED\t{path}")
 
 
-def check_claude_md(root: str = ".") -> str:
-    """「## タスク運用」節と3行が在るか、`- ブランチ:` の先頭語が語彙に当たるかを見る。書き換えはしない。
+def check_config(root: str = ".") -> tuple[str, layout.Config | None]:
+    """設定が読めるかの1行 `<OK|MISSING|INVALID>\t<ファイル>\t<詳細>` と、読めた `Config`（読めなければ `None`）。
 
-    設定ファイルは `layout.find_config_file`（`AGENTS.md` → `CLAUDE.md` の順）で決める。
-    両方に節があれば `INVALID`（`SystemExit` はしない。他の返り値と同じ「印字するだけ」の形）。
-    どちらにも節が無ければ、実在する最初のファイル（無ければ `CLAUDE.md`）を指して報告する
-    （従来どおり `MISSING`／`NO_SECTION` を区別する）。
-
-    `root` は既定でカレントディレクトリ（`init.py` 自身の呼び方）。`task config-doctor`
-    （T-021）はリポジトリの根の絶対パスを渡す（toplevel を渡す呼び方に対応するための引数で、
-    判定そのものは変えない）。
+    旧い節の `- ブランチ:` が語彙の外なら行は `INVALID` で、`Config` は返す。書き換えはしない。
     """
     try:
-        found = layout.find_config_file(root)
-    except layout.ConfigConflict as e:
-        return f"INVALID\t{'/'.join(layout.CONFIG_FILENAMES)}\t{e}"
-    if found is not None:
-        path, text = found
-        lines = text.splitlines()
-        missing = [k for k in CLAUDE_KEYS if not any(l.startswith(k) for l in lines)]
-        if missing:
-            return f"MISSING_LINE\t{path}\t" + ", ".join(missing)
-        branch_line = next(l for l in lines if l.startswith("- ブランチ:"))
-        m = re.match(r"- ブランチ:\s*(\S+)", branch_line)
-        word = m.group(1).rstrip("。、") if m else ""
-        if not any(word.startswith(w) for w in BRANCH_WORDS):
-            return f"BAD_BRANCH\t{path}\t（- ブランチ: の先頭語 {word!r} が {' / '.join(BRANCH_WORDS)} のどれでもない）"
-        return f"OK\t{path}\t（{CLAUDE_SECTION} 節あり）"
-
-    existing = next((n for n in layout.CONFIG_FILENAMES if os.path.exists(os.path.join(root, n))), None)
-    if existing is None:
-        return f"MISSING\t{CLAUDE_MD}\t（「{CLAUDE_SECTION}」節ごと作る）"
-    # 実測した3プロジェクトとも、検証コマンド自体は CLAUDE.md の別の節に書いてあった。
-    # 拾い直せるので、足す前に既存の記述を読むこと。
-    return f"NO_SECTION\t{existing}\t（「{CLAUDE_SECTION}」節が無い。既存の記述を読んでから足す）"
+        config = layout.read_config(root)
+    except layout.ConfigError as e:
+        where = layout.CONFIG_PATH if os.path.exists(os.path.join(root, layout.CONFIG_PATH)) else "/".join(layout.CONFIG_FILENAMES)
+        return f"INVALID\t{where}\t{e}", None
+    if config.source is None:
+        return f"MISSING\t{layout.CONFIG_PATH}\t（verify を書いて作る）", config
+    if config.branch not in layout.BRANCH_VALUES:
+        values = " / ".join(layout.BRANCH_VALUES)
+        return f"INVALID\t{config.source}\t- ブランチ: の値 {config.branch!r} が {values} のどれでもない", config
+    if "verify" not in config.written:
+        return f"MISSING\t{config.source}\t（検証コマンドが無い）", config
+    return f"OK\t{config.source}\tverify={config.verify or layout.NO_COMMAND}", config
 
 
 def check_direction(path: str) -> str:

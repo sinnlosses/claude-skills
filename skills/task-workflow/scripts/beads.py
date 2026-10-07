@@ -442,11 +442,11 @@ def workflow_state(issue: Issue) -> str:
 
 
 def backup_dir(toplevel: str) -> str:
-    """写しの置き場。設定ファイルの `- バックアップ:` 行、無ければ
+    """写しの置き場。設定の `backup`、無ければ
     `${XDG_DATA_HOME:-~/.local/share}/task-workflow/<主ブランチを出している作業ツリーの名前>`。"""
-    value = layout.read_setting_value(toplevel, layout.BACKUP_KEY)
+    value = layout.read_config(toplevel).backup
     if value:
-        return os.path.abspath(os.path.expanduser(layout.setting_word(value)))
+        return os.path.abspath(os.path.expanduser(value))
     data_home = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
     project = os.path.basename(os.path.dirname(beads_dir(toplevel)))
     return os.path.join(data_home, "task-workflow", project)

@@ -34,8 +34,8 @@ if _TASK_WORKFLOW_SCRIPTS not in sys.path:
 import layout  # noqa: E402
 
 # 設定ファイル（`AGENTS.md`／`CLAUDE.md`）の「## タスク運用」節で行頭が固定されている行
-# （task-workflow の WORKFLOW.md「ファイル配置と設定ファイル（AGENTS.md → CLAUDE.md の順）」
-# が正典。ファイルの探索そのものは `layout.find_config_file` に寄せる）。
+# （task-workflow の WORKFLOW.md「ファイル配置と設定ファイル」
+# が正典。ファイルの探索そのものは `layout.find_legacy_section` に寄せる）。
 TASK_SECTION_KEYS = ("検証コマンド", "整形コマンド", "ブランチ")
 # 行頭がズレているのか、行そのものが無いのかを見分けるための短い手がかり。
 TASK_SECTION_STEMS = {"検証コマンド": "検証", "整形コマンド": "整形", "ブランチ": "ブランチ"}
@@ -321,13 +321,13 @@ def main() -> int:
 
     # 検査5: 「## タスク運用」節の形と develop/ の揃い。
     #
-    # 節を持つファイルの探索は `layout.find_config_file`（`AGENTS.md` → `CLAUDE.md` の順。
+    # 節を持つファイルの探索は `layout.find_legacy_section`（`AGENTS.md` → `CLAUDE.md` の順。
     # task-workflow の WORKFLOW.md「ファイル配置と設定ファイル」）に寄せる。CLAUDE.md を
     # **ドキュメントとして**見る他の検査（4・8・10 の `claude_body`）はそのまま CLAUDE.md 限定。
     try:
-        config_found = layout.find_config_file(root)
+        config_found = layout.find_legacy_section(root)
         config_conflict = None
-    except layout.ConfigConflict as e:
+    except layout.ConfigError as e:
         config_found = None
         config_conflict = str(e)
     sec = task_section(config_found[1]) if config_found else []

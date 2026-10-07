@@ -12,7 +12,6 @@ import errno
 import hashlib
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -114,36 +113,7 @@ def head_sha_or_none(cwd: str | None = None) -> str | None:
 # --- 主ブランチ（`main`・`master`・`trunk` …） -----------------------------
 
 BASE_BRANCH_CANDIDATES = ("main", "master", "trunk")
-# 設定ファイル（`AGENTS.md`／`CLAUDE.md`）「## タスク運用」の**任意**行。3行（検証コマンド・
-# 整形コマンド・ブランチ）とは違い、無いのが既定で、無くても `MISSING_LINE` にしない
-# （保護ブランチや複数リモートの逃げ道）。
-BASE_BRANCH_LINE = re.compile(r"^- 主ブランチ:[ \t]*(.*)$", re.MULTILINE)
-
 _base_branch_cache: dict[str, tuple[str, int]] = {}
-
-
-def _configured_base_branch(toplevel: str) -> str | None:
-    """設定ファイル（`layout.find_config_file`。`AGENTS.md` → `CLAUDE.md` の順）の
-    `- 主ブランチ:` 行の枝名。
-
-    値は `` `master` `` のようにバッククォートで囲むのが推奨（囲んであればその中だけを読む）。
-    囲んでいなければ最初の語を採り、`master（保護ブランチ）` のように説明が続いていても
-    括弧・句読点の前で切る（`- ブランチ:` と同じく、後ろは人向けの説明として許す）。
-    両方のファイルに「## タスク運用」節があれば `layout.ConfigConflict`（呼ぶ側が `INVALID`・
-    終了コード3にする）。
-    """
-    found = layout.find_config_file(toplevel)
-    if found is None:
-        return None
-    _path, text = found
-    m = BASE_BRANCH_LINE.search(text)
-    if m is None:
-        return None
-    value = m.group(1).strip()
-    quoted = re.search(r"`([^`]+)`", value)
-    word = quoted.group(1).strip() if quoted else (value.split() or [""])[0]
-    word = re.split(r"[（(、。]", word)[0].strip("`").strip()
-    return word or None
 
 
 def _resolve_base_branch(cwd: str | None) -> tuple[str, int]:
@@ -152,7 +122,7 @@ def _resolve_base_branch(cwd: str | None) -> tuple[str, int]:
 
     決め方の順:
 
-    1. 設定ファイル（`AGENTS.md` → `CLAUDE.md` の順）の `- 主ブランチ:` 行（任意）
+    1. 設定の `base_branch`（任意）
     2. `git symbolic-ref --short refs/remotes/origin/HEAD` の枝名。**`origin` だけを見る**
        （別名のリモートしか無いリポジトリは順3へ落ちる。唯一のリモートを `origin` 扱いすると、
        fork 元を指す `upstream` を主ブランチの出どころにしてしまう。逃げ道は順1の行）
@@ -169,7 +139,7 @@ def _resolve_base_branch(cwd: str | None) -> tuple[str, int]:
     if cached is not None:
         return cached
 
-    found = _configured_base_branch(toplevel)
+    found = layout.read_config(toplevel).base_branch
     order = 1
     if found is None:
         order = 2
@@ -196,7 +166,7 @@ def _resolve_base_branch(cwd: str | None) -> tuple[str, int]:
                 break
     if found is None:
         raise NoBaseBranch(
-            "主ブランチが決まらない（CLAUDE.md の `- 主ブランチ:` 行も、origin/HEAD も、"
+            "主ブランチが決まらない（設定の base_branch も、origin/HEAD も、"
             f"{'・'.join(BASE_BRANCH_CANDIDATES)} の枝も無い）"
         )
 
@@ -572,17 +542,25 @@ _CARRIED_OVER = (
 )
 
 
+WORKTREE_STATE_IGNORE = "*\n!config.toml\n"
+
+
 def worktree_state_dir(cwd: str | None = None) -> str:
-    """書く・消す側の置き場。`.tw/` が無ければ、中身が `*` の `.gitignore` と古い置き場の控えの写しを
-    一時ディレクトリに揃えてから `.tw` へ `rename` し、写した古い控えを消す（消せなければ残す）。"""
+    """書く・消す側の置き場。`.tw/` が無ければ、`.gitignore`（`WORKTREE_STATE_IGNORE`）と古い置き場の控えの写しを
+    一時ディレクトリに揃えてから `.tw` へ `rename` し、写した古い控えを消す（消せなければ残す）。
+    `.tw/` があって `.gitignore` が無ければ（`config.toml` だけをコミットした `.tw/`）、`.gitignore` だけを置く。"""
     toplevel = git_toplevel(cwd)
     target = os.path.join(toplevel, WORKTREE_STATE_DIR_NAME)
     if os.path.isdir(target):
+        ignore = os.path.join(target, ".gitignore")
+        if not os.path.exists(ignore):
+            with open(ignore, "w", encoding="utf-8") as f:
+                f.write(WORKTREE_STATE_IGNORE)
         return target
     old = git_dir(toplevel)
     tmp = tempfile.mkdtemp(prefix=WORKTREE_STATE_DIR_NAME + "-", dir=toplevel)
     with open(os.path.join(tmp, ".gitignore"), "w", encoding="utf-8") as f:
-        f.write("*\n")
+        f.write(WORKTREE_STATE_IGNORE)
     carried: list[str] = []
     for name in _CARRIED_OVER:
         src = os.path.join(old, name)

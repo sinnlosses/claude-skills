@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import re
 import subprocess
 from dataclasses import dataclass, field
 
@@ -34,45 +33,10 @@ class ShipOutcome:
     preship_ran: bool = False
 
 
-def read_verify_command(toplevel: str) -> str | None:
-    """設定ファイル（`layout.find_config_file`。`AGENTS.md` → `CLAUDE.md` の順）の
-    `- 検証コマンド:` 行の最初の `` `…` `` を読む（6.3）。
-
-    行が無い、または値が `なし` で始まるなら `None`（打たない。`verify=none`）。両方の
-    ファイルに節があれば `layout.ConfigConflict`（呼ぶ側の `task.py` の `main` が
-    `INVALID`・終了コード3にする）。
-    """
-    return _read_command_line(toplevel, "検証コマンド")
-
-
 def read_stamp_command(toplevel: str) -> str | None:
     """`tw verify` が打ち、控えの鍵に入れるコマンド。送る前の検証コマンドがあればそれ、無ければ検証コマンド。"""
-    return read_preship_command(toplevel) or read_verify_command(toplevel)
-
-
-def read_format_command(toplevel: str) -> str | None:
-    """`- 整形コマンド:` 行の最初の `` `…` ``。行が無い、または値が `なし` で始まるなら `None`。"""
-    return _read_command_line(toplevel, "整形コマンド")
-
-
-def read_preship_command(toplevel: str) -> str | None:
-    """`- 送る前の検証コマンド:` 行の最初の `` `…` ``。行が無い、または値が `なし` で始まるなら `None`。"""
-    return _read_command_line(toplevel, "送る前の検証コマンド")
-
-
-def _read_command_line(toplevel: str, label: str) -> str | None:
-    found = layout.find_config_file(toplevel)
-    if found is None:
-        return None
-    _path, text = found
-    m = re.search(rf"^- {label}:\s*(.*)$", text, flags=re.MULTILINE)
-    if m is None:
-        return None
-    value = m.group(1).strip()
-    if value.startswith("なし"):
-        return None
-    cmd_m = re.search(r"`([^`]+)`", value)
-    return cmd_m.group(1) if cmd_m else None
+    config = layout.read_config(toplevel)
+    return config.verify_before_ship or config.verify
 
 
 def find_base_worktree(

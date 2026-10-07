@@ -51,7 +51,7 @@ description: "docs/（history/ 以外）・README.md・CLAUDE.md を10個の検�
 
 | 契約 | 正典 |
 | --- | --- |
-| `develop/` と `docs/history/` の置き場、`## タスク運用` 節の形 | `task-workflow` スキルの `WORKFLOW.md`「ファイル配置と設定ファイル（AGENTS.md → CLAUDE.md の順）」 |
+| `develop/` と `docs/history/` の置き場、`## タスク運用` 節の形 | `task-workflow` スキルの `WORKFLOW.md`「ファイル配置と設定ファイル」 |
 | 提案書と採用後の正典の別、索引に1行足す指示 | `architecture-proposal` スキル |
 | `CONTEXT.md` と `docs/adr/` の置き場、遅延作成 | `domain-modeling` スキル |
 | `docs/research/<topic>.md` の置き場 | `research` スキル |

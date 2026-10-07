@@ -12,9 +12,8 @@
   `CHANGE\t<project|skills>\t<短い SHA>\t<件名>`（プロジェクトは設定ファイル・`.claude/`・`docs/`
   （`docs/history/` を除く）を触ったコミット、skills はこのスクリプトのあるリポジトリ。各20件まで）
 - **段の所要時間**: `STAGE\t<段>\t<difficulty>\t<道>\t<件数>\t<中央値秒>\t<最大秒>`（道は `direct`・`normal`。`tw metrics --stages --days N` と同じ行）
-- **規則の棚卸し**: 設定ファイルの「## タスク運用」の `- 規則の発火の集計:` の最初の `` `…` `` を
-  リポジトリの根で `sh -c` で打った標準出力をそのまま。行が無い・`なし`・落ちた・60秒で終わらない
-  ときは `-\t<理由>`
+- **規則の棚卸し**: 設定の `hook_tally` のコマンドをリポジトリの根で `sh -c` で打った標準出力を
+  そのまま。無い・落ちた・60秒で終わらないときは `-\t<理由>`
 
 材料が無い節は `EMPTY`（読めたが該当なし）・`-\t<理由>` を出す。
 会話の中身は読まない（読むのは記録・台帳・設定ファイル・コミットの件名だけ）。
@@ -25,7 +24,6 @@
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import sys
 from datetime import date, datetime, timedelta, timezone
@@ -42,7 +40,6 @@ import metrics  # noqa: E402
 
 MIN_DAYS = 7
 MAX_DAYS = 28
-HOOK_TALLY_KEY = "規則の発火の集計"
 HOOK_TALLY_TIMEOUT_SECONDS = 60
 CHANGE_LIMIT = 20
 PROJECT_CHANGE_PATHS = ("CLAUDE.md", "AGENTS.md", ".claude", "docs", ":(exclude)docs/history")
@@ -135,20 +132,16 @@ def print_changes(root: str, start: datetime) -> None:
 
 def print_hook_tally(root: str) -> None:
     try:
-        value = layout.read_setting_value(root, HOOK_TALLY_KEY)
-    except (layout.ConfigConflict, OSError, UnicodeDecodeError) as e:
+        command = layout.read_config(root).hook_tally
+    except (layout.ConfigError, OSError, UnicodeDecodeError) as e:
         print(f"-\t設定ファイルが読めない（{e}）")
         return
-    if value is None or value.startswith("なし"):
-        print(f"-\t「{layout.TASK_SECTION_HEADING}」に「- {HOOK_TALLY_KEY}:」の行が無い（この観点は飛ばす）")
-        return
-    m = re.search(r"`([^`]+)`", value)
-    if m is None:
-        print(f"-\t「- {HOOK_TALLY_KEY}:」の値に `…` で囲んだコマンドが無い")
+    if command is None:
+        print("-\t設定に hook_tally が無い（この観点は飛ばす）")
         return
     try:
         r = subprocess.run(
-            ["sh", "-c", m.group(1)], cwd=root, capture_output=True, text=True, timeout=HOOK_TALLY_TIMEOUT_SECONDS
+            ["sh", "-c", command], cwd=root, capture_output=True, text=True, timeout=HOOK_TALLY_TIMEOUT_SECONDS
         )
     except subprocess.TimeoutExpired:
         print(f"-\t{HOOK_TALLY_TIMEOUT_SECONDS}秒で打ち切った")

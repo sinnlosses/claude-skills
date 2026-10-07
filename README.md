@@ -99,7 +99,7 @@ frontmatter の `hooks` は無視されるので、`no-delegate` の hook（`tw 
 タスク系スキルを使うプロジェクトは、`develop/direction.md` を置き（タスクは `develop/task/` に
 1件1ファイルで `tw new` が作る）、検証コマンド・整形コマンド・ブランチの3行を CLAUDE.md の
 「## タスク運用」節に書く。**用意するのは `/setup-tasks`**（既にあるファイルは上書きしない）。
-置き場と節の形は `skills/task-workflow/WORKFLOW.md`「ファイル配置と設定ファイル（AGENTS.md → CLAUDE.md の順）」。旧形式
+置き場と節の形は `skills/task-workflow/WORKFLOW.md`「ファイル配置と設定ファイル」。旧形式
 （`develop/tasks.json`）のプロジェクトでは、タスク系のスキルが `LEGACY` で止まって
 `tw migrate` を案内する（同「旧形式からの移行」）。「## タスク運用」節に
 `- タスクの置き場: beads` を足したプロジェクトは、錠と本文・履歴を Beads に置く（同「Beads 方式」）。
