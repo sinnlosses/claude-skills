@@ -15,6 +15,7 @@ import os
 import re
 import sys
 from collections import Counter
+from datetime import datetime
 
 _TASK_WORKFLOW_SCRIPTS = os.path.normpath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "task-workflow", "scripts")
@@ -124,11 +125,23 @@ def _repo_key(fp: str, root: str) -> str:
     return rel
 
 
+def _seconds_between(start: str, end: str) -> float | None:
+    try:
+        a = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        b = datetime.fromisoformat(end.replace("Z", "+00:00"))
+        return (b - a).total_seconds()
+    except (ValueError, TypeError):
+        return None
+
+
 def read_signals(path: str, root: str) -> dict | None:
     """ツール名・ファイルパス・コマンドの先頭2語・件数・時刻だけを数える。
 
     `files` の集計キーは `root` から見たリポジトリ相対パス（`_repo_key` 参照）。
+    `slow_calls` は呼び出しから結果までの秒数の長い3件（道具名・Bash の description の先頭40字・秒数）。
     """
+    pending: dict[str, tuple[str, str, str]] = {}
+    waits: list[tuple[str, str, float]] = []
     tools: Counter[str] = Counter()
     files: Counter[str] = Counter()
     commands: Counter[str] = Counter()
@@ -160,6 +173,9 @@ def read_signals(path: str, root: str) -> dict | None:
                         name = str(b.get("name") or "?")
                         tools[name] += 1
                         inp = b.get("input") if isinstance(b.get("input"), dict) else {}
+                        if b.get("id") and ts:
+                            desc = str(inp.get("description") or "")[:40] if name == "Bash" else ""
+                            pending[str(b["id"])] = (name, desc, ts)
                         if name in ("Edit", "Write", "NotebookEdit"):
                             fp = str(inp.get("file_path") or "")
                             if fp:
@@ -170,9 +186,15 @@ def read_signals(path: str, root: str) -> dict | None:
                                 commands[head] += 1
                 elif o.get("type") == "user":
                     for b in blocks:
-                        if (isinstance(b, dict) and b.get("type") == "tool_result"
-                                and b.get("is_error")):
+                        if not (isinstance(b, dict) and b.get("type") == "tool_result"):
+                            continue
+                        if b.get("is_error"):
                             errors += 1
+                        started = pending.pop(str(b.get("tool_use_id")), None)
+                        if started and ts:
+                            secs = _seconds_between(started[2], ts)
+                            if secs is not None and secs >= 0:
+                                waits.append((started[0], started[1], secs))
     except OSError:
         return None
     return {
@@ -183,4 +205,5 @@ def read_signals(path: str, root: str) -> dict | None:
         "rewrites": [(k, v) for k, v in files.most_common(5) if v >= 2],
         "commands": [(k, v) for k, v in commands.most_common(6) if v >= 2],
         "output_tokens": out_tokens,
+        "slow_calls": sorted(waits, key=lambda w: -w[2])[:3],
     }

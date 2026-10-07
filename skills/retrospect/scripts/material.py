@@ -366,6 +366,9 @@ def print_signals(root: str, task_id: str) -> None:
         if stats["commands"]:
             print("よく打ったコマンド\t"
                   + ", ".join(f"{k}×{v}" for k, v in stats["commands"]))
+        if stats["slow_calls"]:
+            print("長く待った呼び出し\t"
+                  + ", ".join(f"{(n + ' ' + d).strip()} {s:.0f}秒" for n, d, s in stats["slow_calls"]))
         print(f"出力トークン\t{stats['output_tokens']}")
 
 
