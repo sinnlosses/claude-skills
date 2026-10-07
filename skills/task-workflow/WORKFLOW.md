@@ -210,11 +210,14 @@ TEXT         = 1文字以上、改行を含まない。前後の空白は落と�
 - **委譲先の返却を拒む**: 同じ間、その作業ツリーに作業（`claim` した時点の `HEAD` より後のコミットか、
   タスク自身のファイル以外の変更）があるのに、`plan-check` が `PLAN_FIRST`・`PLAN_REGISTERED` でないか
   `verify-check` が `VERIFIED_SAME`・`NOTHING` でないまま `no-delegate` の委譲先が返そうとすると、hook
-  （`tw handback-guard`）が拒んで理由を委譲先へ返す。作業の無い返却（前提が誤り・`dropped`・計画だけの回・
-  作業先が別のリポジトリの回）は通す。最後でない段を済ませた返却は、委譲先が `tw step T-xxx <n>` で
+  （`tw handback-guard`）が拒んで理由を委譲先へ返す。作業の無い返却（前提が誤り・`dropped`・計画だけの回）は通す。
+  `## やること` の `### 作業先` が別のリポジトリなら、そのリポジトリの作業ツリーのうち枝の名前がタスクIDを
+  小文字にしたもの（`T-012` なら `t-012`）にも同じ規則を当てる（作業は主ブランチとの分かれ目より後のコミットか変更。
+  `verify-check` はその作業ツリーで照らす。その作業ツリーがまだ無ければ見ない）。最後でない段を済ませた返却は、委譲先が `tw step T-xxx <n>` で
   いまの中身に段の印を付けてから返す（`plan-check` は通っている要がある。最後の段は印を付けられず、
   `verify-check` を求める）。目視待ち・判断が要って止める返却は、委譲先が `tw pause` で
-  いまの中身に印を付けてから返す（どちらの印も、印のあとに中身が変われば効かない）。`general-purpose` への委譲には効かない
+  いまの中身に印を付けてから返す（どちらの印も、印のあとに中身が変われば効かない。どちらも着手した作業ツリーで打ち、
+  作業先の作業ツリーにもその中身の鍵で印を置く）。`general-purpose` への委譲には効かない
 - **取り残し**（前提: 1つの作業ツリーでは同時に1セッション）:
 
 | 状態 | 表示 | 誰が何をする |
@@ -455,9 +458,9 @@ PATH に無ければ plugin を入れるか、`./install.sh` を打ち直す（`
 | `metrics [--days N]` | 台帳の `flow/` の記録（`claim`・`release`・`verify`・`pause`・`step`・`ship`・`done` のたびに両方式で `tw` が1行足す。書けなくても元のサブコマンドの出力と終了コードは変わらず、標準エラーに1行出るだけ）から、直近 N 日（既定 7）と、その前の同じ長さの期間の数を並べる（読むだけ）。`verify` は着手の印を持つタスクごと、`ship` は送れたタスクごと（`VERIFY_FAILED`・`CONFLICT`・`RACE` は印を持つタスクごと）に1行 | 1行目 `PERIOD\t<N>d\tcurrent\tprevious`、続けて `shipped`（送り出した件数）・`lead_median_seconds`・`lead_max_seconds`（着手から送り出しまで）・`verify_per_task`（1件あたりの `verify` の回数の平均）・`verify_failed`（`FORMAT_FAILED`・`VERIFY_NOT_PASSED` の件数）・`ship_verify_failed`（`ship` の `VERIFY_FAILED`）・`reclaim`（`release` のあとの `claim`）・`reflection_none_ratio`（`done` のうち振り返りが兆候なしの割合。`dropped` は除く）の各行が `<名前>\t<今>\t<前>`（無ければ `-`）。壊れた行は読み飛ばし `SKIPPED\t<件数>`。記録が無ければ `EMPTY` |
 | `config-doctor` | このリポジトリが今の読み取りに合っているかを点検する（**読むだけ。`--fix` は無い**）。主ブランチが何で決まったか・設定ファイルがどちらか・「## タスク運用」の3行・旧形式の残り、の4検査を必ず1行ずつ出す | `base_branch`・`config_file`・`claude_md_lines`・`legacy` の4行。各行の2語目が `OK`／`MISSING`／`MISSING_LINE`／`BAD_BRANCH`／`NO_SECTION`／`FOUND`／`INVALID` |
 | `commit-guard [--agent-scoped]` | Claude Code の PreToolUse hook（`agents/no-delegate.md` の frontmatter と、plugin の `hooks/hooks.json`）から呼ばれる。`--agent-scoped`（`hooks/hooks.json` だけが付け、`"${CLAUDE_PLUGIN_ROOT}/bin/tw"` の絶対パスで呼ぶ）があるときは、入力の `agent_type` の末尾が `no-delegate` のときだけ掛け、`agent_type` が無い・ほかの名前なら通す。stdin の hook の入力を読み、Bash のコマンドのうちコミットを作る git のサブコマンド（`commit`・`merge`・`pull`・`cherry-pick`・`revert`・`am`・`rebase`）の実効の作業先（入力の `cwd`・`cd <dir>`・`git -C <dir>`）に `.tw/task-open-claims/` の控え（`.tw/` が無ければ作業ツリー固有の git dir の `task-open-claims/`）があれば拒む。両方式で同じ（`bd` を呼ばない） | 拒むときだけ PreToolUse の deny の JSON 1行（理由は「コミットせず…報告で返す」）。通すときは何も出さない |
-| `pause` | いまの中身の鍵（`verify` と同じ取り方）を `.tw/task-pause-stamp` に控え、`flow/` に `pause` を1行足す。`handback-guard` は、この控えがいまの中身と同じなら計画・検証が欠けていても返却を通す（目視待ち・判断が要って止める・計画を作業の後に書いた回の委譲先が、返す直前に打つ） | `PAUSED\t<木の SHA>` |
-| `step T-xxx <n>` | 自分の着手の印のタスクの `## やること` の段 `n` を済ませた印として、いまの中身の鍵（`verify` と同じ取り方）とタスクID・段の番号を `.tw/task-step-stamp` に控え、`flow/` に `step` を1行足す。`handback-guard` は、この控えがそのタスク・いまの中身と同じで、段がいまの計画の最後より前なら、`plan-check` が通っている限り検証が欠けていても返却を通す（最後でない段を済ませた委譲先が、返す直前に打つ）。段の読めない計画・1〜段の数の外の番号は終了コード2。最後の段は控えずに `LAST_STEP`（終了コード4。`tw verify` を通して返す） | `STEPPED\tT-xxx\t<n>/<段の数>\t<木の SHA>`・`LAST_STEP\tT-xxx\t<n>/<段の数>\t<次の一手>`・`NOT_OWNER` |
-| `handback-guard [--agent-scoped]` | Claude Code の hook（`agents/no-delegate.md` の frontmatter の `Stop`（委譲先では `SubagentStop` として効く）と、`SubagentHandback` の `PreToolUse`。plugin では `hooks/hooks.json` の `SubagentStop` と `PreToolUse`）から呼ばれる。`--agent-scoped` の扱いは `commit-guard` と同じ。入力の `cwd` の作業ツリーに `.tw/task-open-claims/` の控え（`.tw/` が無ければ作業ツリー固有の git dir の控え。`verify`・`step`・`pause` の控えも同じ）があり、控えのタスクのどれかに作業（`claim` した時点の `HEAD` より後のコミットか、タスク自身のファイル以外の変更）があって、`plan-check` が `PLAN_FIRST`・`PLAN_REGISTERED` でないか、`verify-check` が `VERIFIED_SAME`・`NOTHING` でなく `step` の控えも効かず、`pause` の控えもいまの中身と違えば拒む。Beads 方式では `bd` を呼ぶ | 拒むときだけ JSON 1行（`SubagentStop` は `{"decision":"block","reason":…}`、`PreToolUse` は deny。理由は欠けた `plan-check`・`verify-check` の行と次の一手）。通すとき・ほかのイベントやツールには何も出さない |
+| `pause` | いまの中身の鍵（`verify` と同じ取り方）を `.tw/task-pause-stamp` に控え、`flow/` に `pause` を1行足す。着手中のタスクの `### 作業先` が別のリポジトリで、枝の名前がタスクIDの小文字の作業ツリーがあれば、その作業ツリーの `.tw/task-pause-stamp` にもその中身の鍵を控える。`handback-guard` は、この控えがいまの中身と同じなら計画・検証が欠けていても返却を通す（目視待ち・判断が要って止める・計画を作業の後に書いた回の委譲先が、返す直前に打つ） | `PAUSED\t<木の SHA>` |
+| `step T-xxx <n>` | 自分の着手の印のタスクの `## やること` の段 `n` を済ませた印として、いまの中身の鍵（`verify` と同じ取り方）とタスクID・段の番号を `.tw/task-step-stamp` に控え、`flow/` に `step` を1行足す。`pause` と同じく、作業先の作業ツリーがあればそこにもその中身の鍵で控える（作業先の作業ツリーでは打たず、着手した作業ツリーで打つ）。`handback-guard` は、この控えがそのタスク・いまの中身と同じで、段がいまの計画の最後より前なら、`plan-check` が通っている限り検証が欠けていても返却を通す（最後でない段を済ませた委譲先が、返す直前に打つ）。段の読めない計画・1〜段の数の外の番号は終了コード2。最後の段は控えずに `LAST_STEP`（終了コード4。`tw verify` を通して返す） | `STEPPED\tT-xxx\t<n>/<段の数>\t<木の SHA>`・`LAST_STEP\tT-xxx\t<n>/<段の数>\t<次の一手>`・`NOT_OWNER` |
+| `handback-guard [--agent-scoped]` | Claude Code の hook（`agents/no-delegate.md` の frontmatter の `Stop`（委譲先では `SubagentStop` として効く）と、`SubagentHandback` の `PreToolUse`。plugin では `hooks/hooks.json` の `SubagentStop` と `PreToolUse`）から呼ばれる。`--agent-scoped` の扱いは `commit-guard` と同じ。入力の `cwd` の作業ツリーに `.tw/task-open-claims/` の控え（`.tw/` が無ければ作業ツリー固有の git dir の控え。`verify`・`step`・`pause` の控えも同じ）があり、控えのタスクのどれかに作業（`claim` した時点の `HEAD` より後のコミットか、タスク自身のファイル以外の変更）があって、`plan-check` が `PLAN_FIRST`・`PLAN_REGISTERED` でないか、`verify-check` が `VERIFIED_SAME`・`NOTHING` でなく `step` の控えも効かず、`pause` の控えもいまの中身と違えば拒む。タスクの `### 作業先` が別のリポジトリなら、枝の名前がタスクIDの小文字の作業ツリーにも同じ判定を当てる（作業は主ブランチとの分かれ目より後のコミットか変更で、`verify-check`・`step`・`pause` の控えはその作業ツリーのもの。作業先の設定ファイルに検証コマンドの行が無ければ `NOTHING` で通す）。Beads 方式では `bd` を呼ぶ | 拒むときだけ JSON 1行（`SubagentStop` は `{"decision":"block","reason":…}`、`PreToolUse` は deny。理由は欠けた `plan-check`・`verify-check` の行と次の一手。作業先の作業ツリーの行にはそのパスを添える）。通すとき・ほかのイベントやツールには何も出さない |
 
 | 終了コード | 先頭語 | 意味 | スキルがすること |
 | --- | --- | --- | --- |
