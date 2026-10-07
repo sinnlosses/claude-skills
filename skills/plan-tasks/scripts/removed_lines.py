@@ -2,11 +2,13 @@
 """差分で消された行を、残る先を埋める表の下書きにして出す。
 
 使い方:
-  python3 removed_lines.py                  # 作業ツリーの差分（git diff そのまま）
-  python3 removed_lines.py main..HEAD        # 範囲を渡すと git diff の引数になる
+  python3 removed_lines.py                  # 作業ツリー（git add 済み・未追跡のファイルを含む）の HEAD からの差分
+  python3 removed_lines.py main..HEAD        # 範囲を渡すと git diff の引数になる（未追跡のファイルは見ない）
 
 空行は出さない。前後の空白を除いて同じ中身の行が差分のどこかで足されていれば、その数だけ
 消した行と相殺して出さない（同じファイルの別の場所へも、別のファイルへも動かした扱い）。
+文字（英数字・かな・漢字）を含まない記号だけの行（`}`・`---`・`` ``` `` など）は無関係な場所の
+同じ行と区別が付かないので、相殺に使わず必ず出す。
 出力はファイルごとの見出しと、`消した行 | 残る先` の表。残る先は空欄で出す。
 """
 
@@ -20,18 +22,40 @@ FILE_HEADER = "diff --git "
 
 
 def main() -> int:
-    out = subprocess.run(
-        ["git", "diff", "--no-color", "-U0", *sys.argv[1:]], capture_output=True, text=True
-    )
-    if out.returncode != 0:
-        sys.exit(out.stderr.strip() or "git diff が失敗した")
-    print(render(unmatched_removals(out.stdout)), end="")
+    ranged = bool(sys.argv[1:])
+    diff_args = sys.argv[1:] or ["HEAD"]
+    out = git("diff", "--no-color", "-U0", *diff_args)
+    added: Counter[str] = Counter()
+    if not ranged:
+        for path in git("ls-files", "--others", "--exclude-standard", "-z").split("\0"):
+            if path:
+                added.update(untracked_lines(path))
+    print(render(unmatched_removals(out, added)), end="")
     return 0
 
 
-def unmatched_removals(diff_text: str) -> list[tuple[str, list[str]]]:
+def git(*args: str) -> str:
+    out = subprocess.run(
+        ["git", "-c", "core.quotepath=off", *args], capture_output=True, text=True, errors="replace"
+    )
+    if out.returncode != 0:
+        sys.exit(out.stderr.strip() or f"git {args[0]} が失敗した")
+    return out.stdout
+
+
+def untracked_lines(path: str) -> list[str]:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return [line.strip() for line in f]
+    except OSError:
+        return []
+
+
+def unmatched_removals(
+    diff_text: str, extra_added: Counter[str]
+) -> list[tuple[str, list[str]]]:
     removed: list[tuple[str, str]] = []
-    added: Counter[str] = Counter()
+    added: Counter[str] = Counter(extra_added)
     path = ""
     in_hunk = False
 
@@ -53,11 +77,15 @@ def unmatched_removals(diff_text: str) -> list[tuple[str, list[str]]]:
         key = text.strip()
         if not key:
             continue
-        if added[key] > 0:
+        if has_letter(key) and added[key] > 0:
             added[key] -= 1
             continue
         by_path.setdefault(file_path, []).append(text)
     return list(by_path.items())
+
+
+def has_letter(text: str) -> bool:
+    return any(c.isalnum() for c in text)
 
 
 def render(files: list[tuple[str, list[str]]]) -> str:

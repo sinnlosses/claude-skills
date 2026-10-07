@@ -79,6 +79,38 @@ def test_moved_line_not_listed() -> None:
         check("消えた行は出る", "| one |  |" in out, out)
 
 
+def test_symbol_only_line_listed() -> None:
+    print("記号だけの行は無関係な場所で足されても出す")
+    with tempfile.TemporaryDirectory() as d:
+        init_repo(d, {"a.md": "one\n---\ntwo\n", "b.md": "x\n"})
+        write(d, "a.md", "one\ntwo\n")
+        write(d, "b.md", "x\n---\n")
+        out = run(d)
+        check("消した記号の行が出る", "| --- |  |" in out, out)
+
+
+def test_staged_and_untracked() -> None:
+    print("git add 済みの削除と、未追跡のファイルへ動かした行を扱う")
+    with tempfile.TemporaryDirectory() as d:
+        init_repo(d, {"a.md": "one\ntwo\nthree\n"})
+        write(d, "a.md", "one\nthree\n")
+        git(d, "add", "a.md")
+        out = run(d)
+        check("段階に入れた削除が出る", "| two |  |" in out, out)
+        write(d, "new.md", "two\n")
+        out = run(d)
+        check("未追跡のファイルへ動かした行は出ない", out == "", out)
+
+
+def test_non_ascii_path() -> None:
+    print("日本語のファイル名を読める見出しで出す")
+    with tempfile.TemporaryDirectory() as d:
+        init_repo(d, {"文書.md": "one\ntwo\n"})
+        write(d, "文書.md", "one\n")
+        out = run(d)
+        check("見出しがエスケープされない", "### 文書.md" in out, out)
+
+
 def test_blank_only_removal_not_listed() -> None:
     print("空行だけ消した差分は出さない")
     with tempfile.TemporaryDirectory() as d:
@@ -91,6 +123,9 @@ def test_blank_only_removal_not_listed() -> None:
 def main() -> int:
     test_removed_line_listed()
     test_moved_line_not_listed()
+    test_symbol_only_line_listed()
+    test_staged_and_untracked()
+    test_non_ascii_path()
     test_blank_only_removal_not_listed()
     if failures:
         print(f"\n{len(failures)} 件失敗")
