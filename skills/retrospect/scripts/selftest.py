@@ -258,19 +258,6 @@ def test_weekly() -> None:
             os.path.join(d, "CLAUDE.md"),
             "# x\n\n## タスク運用\n\n- 検証コマンド: なし\n- 規則の発火の集計: `sh hook.sh`（直近30日）\n",
         )
-        write(
-            os.path.join(d, "docs", "history", "direction.md"),
-            "# 指示の履歴\n\n"
-            "## 2026-09-01 手を打った（振り返り: GH-10）\n\n（GH-20 にした）\n\n- 札: 黄 揺れ（1回目）\n- 根: flaky-check\n\n"
-            "## 2026-10-01 また出た（振り返り: GH-30）\n\n- 札: 黄 揺れ（2回目）\n- 根: flaky-check\n\n"
-            + CROSS_DRAFT_TEMPLATE,
-        )
-        write(os.path.join(d, "develop", "draft", f"{today.isoformat()}-flaky.md"), DRAFT_ITEM_TEMPLATE)
-        write(
-            os.path.join(d, "develop", "draft", f"{today.isoformat()}-no-root.md"),
-            "# 道具が足りない（振り返り: GH-31）\n\n- 札: 黄 道具（1回目）\n- 根拠: …\n- 出し先: …\n",
-        )
-        write(os.path.join(d, "develop", "draft", "2000-01-01-old.md"), "# 古い（振り返り: GH-1）\n\n- 札: 黄 道具（1回目）\n- 根: old-root\n")
         git(d, "add", "-A")
         git(d, "commit", "-q", "-m", "やり方を変える")
         write(
@@ -289,23 +276,11 @@ def test_weekly() -> None:
             print(f"  | {line}")
         check("材料が全部あれば終了コード0で traceback が無い", r.returncode == 0 and "Traceback" not in r.stderr, r.stderr)
         check("記録が無ければ期間は7日で last=-", lines_of("期間", out) == [f"PERIOD\t7d\t{(today - timedelta(days=7)).isoformat()}\t{today.isoformat()}\tlast=-"], out)
-        bundles = lines_of("根の束ね", out)
+        headings = [l for l in out.splitlines() if l.startswith("===== ")]
         check(
-            "期間内の札を1件ずつ並べ（期間の外・横断の節は出さない）、根が2件以上なら BUNDLE",
-            bundles
-            == [
-                f"TAG\t揺れ\tflaky-check\tGH-30\t{tally.DIRECTION_HISTORY_PATH}",
-                f"TAG\t揺れ\tflaky-check\tT-302,T-318\tdevelop/draft/{today.isoformat()}-flaky.md",
-                f"TAG\t道具\t-\tGH-31\tdevelop/draft/{today.isoformat()}-no-root.md",
-                "BUNDLE\tflaky-check\t2\tGH-30,T-302,T-318",
-            ],
-            "\n".join(bundles),
-        )
-        recur = lines_of("効かなかった手", out)
-        check(
-            "手の完了のあとに期間内で出た根は RECUR と期間内の再発件数",
-            len(recur) == 1 and recur[0].startswith("RECUR\tflaky-check\tGH-20\t") and recur[0].endswith("\t2"),
-            "\n".join(recur),
+            "節は期間・流れの数・規則の棚卸しの3つだけ",
+            headings == ["===== 期間 =====", "===== 流れの数 =====", "===== 規則の棚卸し ====="],
+            "\n".join(headings),
         )
         flow = lines_of("流れの数", out)
         check("悪くなった数に WORSE", "WORSE\tshipped\t0\t2" in flow, "\n".join(flow))
@@ -347,9 +322,7 @@ def test_weekly() -> None:
         check("記録の無い初回は期間7日・last=-", lines_of("期間", r.stdout)[0].startswith("PERIOD\t7d\t") and r.stdout.count("last=-") == 1, r.stdout)
         check(
             "どの節も欠席の理由を出す",
-            lines_of("根の束ね", r.stdout) == [f"-\t{tally.DIRECTION_HISTORY_PATH} が無い（承認済みの札は読まない）", "EMPTY"]
-            and lines_of("効かなかった手", r.stdout) == ["MISSING"]
-            and lines_of("流れの数", r.stdout) == ["-\t台帳が読めない（git のリポジトリでない）"]
+            lines_of("流れの数", r.stdout) == ["-\t台帳が読めない（git のリポジトリでない）"]
             and lines_of("規則の棚卸し", r.stdout)[0].startswith("-\t"),
             r.stdout,
         )
