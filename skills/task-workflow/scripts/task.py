@@ -1131,14 +1131,19 @@ HANDBACK_VERIFY_OK = ("VERIFIED_SAME", "NOTHING")
 
 
 def cmd_pause(toplevel: str) -> None:
-    key = ledger.content_key(ship.read_stamp_command(toplevel) or "", cwd=toplevel)
+    """いまの中身の鍵を、着手した作業ツリーと着手中のタスクの作業先の作業ツリーそれぞれに控える。"""
+    key = _current_key(toplevel)
     ledger.write_pause_stamp(key, cwd=toplevel)
+    others = [tree for task_id in _claimed_here(toplevel) for tree in _task_trees(toplevel, task_id)[1:]]
+    for tree in dict.fromkeys(others):
+        ledger.write_pause_stamp(_current_key(tree), cwd=tree)
     _record_claimed(toplevel, "pause")
     print(f"PAUSED\t{key.tree}")
 
 
 def cmd_step(toplevel: str, task_id: str, step: str) -> None:
-    """途中の段（`## やること` の最後でない段）を済ませた印を、いまの中身の鍵と一緒に残す。"""
+    """途中の段（`## やること` の最後でない段）を済ませた印を、タスクの作業ツリー（`_task_trees`）
+    それぞれに、その作業ツリーのいまの中身の鍵と一緒に残す。"""
     shown = beads.to_task_id(beads.to_bd_id(task_id)) if layout.read_store(toplevel) == layout.STORE_BEADS else task_id
     if shown not in _claimed_here(toplevel):
         print(f"NOT_OWNER\t{shown}")
@@ -1153,10 +1158,35 @@ def cmd_step(toplevel: str, task_id: str, step: str) -> None:
     if int(step) == len(steps):
         print(f"LAST_STEP\t{shown}\t{step}/{len(steps)}\t最後の段は tw verify を通してから返す")
         raise SystemExit(4)
-    key = ledger.content_key(ship.read_stamp_command(toplevel) or "", cwd=toplevel)
+    key = _current_key(toplevel)
     ledger.write_step_stamp(ledger.StepStamp(key, shown, int(step)), cwd=toplevel)
+    for tree in _task_trees(toplevel, shown)[1:]:
+        ledger.write_step_stamp(ledger.StepStamp(_current_key(tree), shown, int(step)), cwd=tree)
     _record(toplevel, "step", shown, step=int(step), steps=len(steps))
     print(f"STEPPED\t{shown}\t{step}/{len(steps)}\t{key.tree}")
+
+
+def _task_trees(toplevel: str, task_id: str) -> list[str]:
+    """タスクの作業ツリー。先頭は着手した `toplevel`。
+
+    `## やること` の `### 作業先` が別のリポジトリなら、そのリポジトリの作業ツリーのうち、
+    枝の名前がタスクIDを小文字にしたものを続ける。
+    """
+    work_repo, _ = taskfile.plan_work_repo(_claimed_plan_body(toplevel, task_id))
+    if work_repo is None or not os.path.isdir(work_repo):
+        return [toplevel]
+    try:
+        if ledger.git_common_dir(work_repo) == ledger.git_common_dir(toplevel):
+            return [toplevel]
+        worktrees = ledger.list_worktrees(cwd=work_repo)
+    except ledger.GitCommandError:
+        return [toplevel]
+    return [toplevel, *(w.path for w in worktrees if w.branch == task_id.lower())]
+
+
+def _current_key(tree: str) -> ledger.ContentKey:
+    """`tree` のいまの中身の鍵（検証コマンドは `tree` の設定ファイルのもの）。"""
+    return ledger.content_key(ship.read_stamp_command(tree) or "", cwd=tree)
 
 
 def _claimed_plan_body(toplevel: str, task_id: str) -> str:
@@ -1171,9 +1201,11 @@ def _claimed_plan_body(toplevel: str, task_id: str) -> str:
 def _handback_refusal(where: str) -> str | None:
     """`where` の作業ツリーから委譲先が返すのを拒む理由。通すなら `None`。
 
-    通すのは、着手の控えが無いとき、控えのどのタスクも作業が無い（`claim` 時の `HEAD` より後の
-    コミットも、タスク自身のファイル以外の変更も無い）か、`plan-check` が通ったうえで `verify-check` が
-    通っているか `tw step` の印が最後でない段をいまの中身で指しているか、`tw pause` の控えがいまの中身と同じとき。
+    控えのタスクごとに、その作業ツリー（`_task_trees`）を1つずつ見る。作業ツリーを通すのは、作業が無い
+    （着手した作業ツリーでは `claim` 時の `HEAD` より後のコミットも、タスク自身のファイル以外の変更も無い。
+    作業先の作業ツリーでは主ブランチとの分かれ目より後のコミットも、変更も無い）か、`plan-check` が通ったうえで
+    その作業ツリーの `verify-check` が通っているか `tw step` の印が最後でない段をいまの中身で指しているか、
+    その作業ツリーの `tw pause` の控えがいまの中身と同じとき。
     """
     if not os.path.isdir(where):
         return None
@@ -1183,19 +1215,23 @@ def _handback_refusal(where: str) -> str | None:
     toplevel = ledger.git_toplevel(where)
     store = layout.read_store(toplevel)
     gaps = [line for task_id in claims for line in _handback_gaps(toplevel, task_id, store)]
-    if not gaps or _paused_on_current_content(toplevel):
+    if not gaps:
         return None
     shown = ",".join(claims)
     return (
-        f"着手の印（{shown}）がある作業ツリー（{toplevel}）に作業があるのに、計画か検証が欠けたまま返そうとした"
+        f"着手の印（{shown}）がある作業ツリー（{toplevel}）のタスクに作業があるのに、計画か検証が欠けたまま返そうとした"
         f"（{' / '.join(gaps)}）。## やること が無ければ tw edit <ID> --section 'やること' --body-file - で書き、"
-        f"tw verify を通してから返す。最後でない段を済ませて返すときは tw step <ID> <段の番号> を打ってから返す。目視待ちで返すとき・判断が要って止めて返すとき・計画を作業の後に書いたときは、"
-        f"tw pause を打ってから返す（打ったあとに中身を変えたら打ち直す）"
+        f"tw verify を通してから返す（作業先が別のリポジトリなら、コミットのあとに作業先の作業ツリーで打つ）。"
+        f"最後でない段を済ませて返すときは tw step <ID> <段の番号> を打ってから返す。目視待ちで返すとき・判断が要って止めて返すとき・計画を作業の後に書いたときは、"
+        f"tw pause を打ってから返す（tw step・tw pause は着手した作業ツリーで打つ。打ったあとに中身を変えたら打ち直す）"
     )
 
 
 def _handback_gaps(toplevel: str, task_id: str, store: str) -> list[str]:
-    """作業があるのに通っていない `plan-check`・`verify-check` の行。作業が無ければ空。"""
+    """作業がある作業ツリーの、通っていない `plan-check`・`verify-check` の行。作業が無ければ空。
+
+    作業先の作業ツリーの `verify-check` の行には、その作業ツリーのパスを添える。
+    """
     if store == layout.STORE_BEADS:
         issue = beads.show(toplevel, beads.to_bd_id(task_id))
         metadata = issue.raw.get("metadata") if issue is not None else None
@@ -1207,31 +1243,41 @@ def _handback_gaps(toplevel: str, task_id: str, store: str) -> list[str]:
         head = owner.get("head")
         own_path = f"{layout.TASK_DIR}/{task_id}.md"
         plan_line = _first_output_line(lambda: cmd_plan_check(toplevel, task_id))
-    if _plan_state(toplevel, head, "-", own_path) == PLAN_FIRST:
-        return []
     plan_ok = plan_line.split("\t")[0] in HANDBACK_PLAN_OK
-    gaps = [] if plan_ok else [plan_line]
-    if plan_ok and _stepped_on_current_content(toplevel, task_id):
-        return gaps
-    verify_line = _first_output_line(lambda: cmd_verify_check(toplevel))
-    if verify_line.split("\t")[0] not in HANDBACK_VERIFY_OK:
-        gaps.append(verify_line)
+    gaps: list[str] = []
+    for tree in _task_trees(toplevel, task_id):
+        work_head, work_own_path = (head, own_path) if tree == toplevel else (_fork_point(tree), None)
+        if _plan_state(tree, work_head, "-", work_own_path) == PLAN_FIRST or _paused_on_current_content(tree):
+            continue
+        if not plan_ok and plan_line not in gaps:
+            gaps.append(plan_line)
+        if plan_ok and _stepped_on_current_content(toplevel, tree, task_id):
+            continue
+        verify_line = _first_output_line(lambda: cmd_verify_check(tree))
+        if verify_line.split("\t")[0] not in HANDBACK_VERIFY_OK:
+            gaps.append(verify_line if tree == toplevel else f"{verify_line}（{tree}）")
     return gaps
 
 
-def _stepped_on_current_content(toplevel: str, task_id: str) -> bool:
-    """`tw step` の印がこのタスクのもので、いまの中身と同じで、段がいまの計画の最後より前か。"""
-    stamp = ledger.read_step_stamp(cwd=toplevel)
+def _fork_point(tree: str) -> str | None:
+    """`tree` の `HEAD` と主ブランチの分かれ目。引けなければ `None`。"""
+    r = _run_git(tree, ["merge-base", "HEAD", ledger.base_branch(tree)])
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def _stepped_on_current_content(toplevel: str, tree: str, task_id: str) -> bool:
+    """`tree` の `tw step` の印がこのタスクのもので、`tree` のいまの中身と同じで、段がいまの計画の最後より前か。"""
+    stamp = ledger.read_step_stamp(cwd=tree)
     if stamp is None or stamp.task_id != task_id:
         return False
-    if stamp.key != ledger.content_key(ship.read_stamp_command(toplevel) or "", cwd=toplevel):
+    if stamp.key != _current_key(tree):
         return False
     return stamp.step < len(taskfile.plan_steps(_claimed_plan_body(toplevel, task_id))[0])
 
 
-def _paused_on_current_content(toplevel: str) -> bool:
-    stamp = ledger.read_pause_stamp(cwd=toplevel)
-    return stamp is not None and stamp == ledger.content_key(ship.read_stamp_command(toplevel) or "", cwd=toplevel)
+def _paused_on_current_content(tree: str) -> bool:
+    stamp = ledger.read_pause_stamp(cwd=tree)
+    return stamp is not None and stamp == _current_key(tree)
 
 
 def _first_output_line(command: Callable[[], None]) -> str:

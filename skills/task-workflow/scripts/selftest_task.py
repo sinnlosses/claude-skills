@@ -1178,6 +1178,47 @@ def test_handback_guard_step() -> None:
               and "PLAN_NOT_FIRST\tT-101\tafter-work" in _block_reason(run_handback_guard(tmp, wt2)), r.stdout + r.stderr)
 
 
+def test_handback_guard_other_repo() -> None:
+    print("task.py step・pause・handback-guard: 作業先が別のリポジトリなら、枝の名前がタスクIDの作業ツリーも見る")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _ = make_repo(os.path.join(tmp, "own"), verify="`true`")
+        work_repo, _, _ = make_repo(os.path.join(tmp, "work"), verify="`true`")
+        commit_task(main_path, taskfile.Task("T-100", "作業先で直す", "todo", "sonnet", "Y", (), BODY))
+        run_task(wt1, "claim", "T-100")
+        plan = f"### 1. 書く\n\n### 2. 試す\n\n### 作業先\n- `{work_repo}`\n"
+        r = run_task(wt1, "edit", "T-100", "--section", "やること", "--body-file", "-", stdin=plan)
+        check("作業先の作業ツリーがまだ無ければ通す（計画だけの回）",
+              r.returncode == 0 and run_handback_guard(tmp, wt1) is None, r.stdout + r.stderr)
+
+        work_tree = os.path.join(tmp, "work-t-100")
+        git(work_repo, "worktree", "add", "-q", "-b", "t-100", work_tree, "main")
+        write(os.path.join(work_tree, "work.txt"), "x\n")
+        git(work_tree, "add", "work.txt")
+        git(work_tree, "commit", "-q", "-m", "作業先で直す")
+        reason = _block_reason(run_handback_guard(tmp, wt1))
+        check("作業先の作業ツリーにコミットがあり検証が無ければ、最後の段の返却を block し、理由に作業ツリーのパス",
+              "NOT_VERIFIED\tnone" in reason and work_tree in reason, reason)
+
+        r = run_task(wt1, "step", "T-100", "1")
+        check("着手した作業ツリーで tw step を打てば、途中の段の返却を通す",
+              r.returncode == 0 and r.stdout.startswith("STEPPED\tT-100\t1/2\t") and run_handback_guard(tmp, wt1) is None,
+              r.stdout + r.stderr)
+        write(os.path.join(work_tree, "work.txt"), "y\n")
+        check("段の印のあとに作業先の中身を変えると block",
+              "NOT_VERIFIED" in _block_reason(run_handback_guard(tmp, wt1)))
+
+        r = run_task(wt1, "pause")
+        check("着手した作業ツリーで tw pause を打てば、作業先の中身が同じあいだ通す",
+              r.returncode == 0 and run_handback_guard(tmp, wt1) is None, r.stdout + r.stderr)
+        write(os.path.join(work_tree, "work.txt"), "z\n")
+        git(work_tree, "commit", "-q", "-am", "直し直す")
+        check("pause のあとに作業先の中身を変えると block", _block_reason(run_handback_guard(tmp, wt1)) != "")
+
+        r = run_task(work_tree, "verify")
+        check("作業先の作業ツリーで tw verify が通れば（VERIFIED_SAME）最後の段の返却を通す",
+              r.returncode == 0 and run_handback_guard(tmp, wt1) is None, r.stdout + r.stderr)
+
+
 def test_worktree_state_dir() -> None:
     print("ledger.py .tw/: 作業ツリーごとの控えとログを作業ツリーの根に置き、古い置き場の控えも読む")
     with tempfile.TemporaryDirectory() as tmp:
@@ -3279,6 +3320,7 @@ def main() -> None:
         test_agent_scoped_guard,
         test_handback_guard,
         test_handback_guard_step,
+        test_handback_guard_other_repo,
         test_worktree_state_dir,
         test_state_dir,
         test_readonly_git,
