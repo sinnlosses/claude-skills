@@ -67,6 +67,18 @@ def detect_format(toplevel: str) -> tuple[str, str | None]:
     return "MISSING", None
 
 
+def _format_refusal(toplevel: str) -> tuple[str, int] | None:
+    """形式（`detect_format`）のために、サブコマンド（`migrate`・`config-doctor` を除く）を打たずに出す行と終了コード。打てるなら `None`。"""
+    kind, detail = detect_format(toplevel)
+    if kind == "INVALID":
+        return f"INVALID\t{detail}", 3
+    if kind == "LEGACY":
+        return "LEGACY\ttw migrate --dry-run", 5
+    if kind == "MISSING":
+        return "MISSING", 6
+    return None
+
+
 # --- git の薄いラッパ（非0を「失敗」として使う呼び出しは例外を投げない） -------
 
 
@@ -1253,10 +1265,17 @@ def _handback_gaps(toplevel: str, task_id: str, store: str) -> list[str]:
             gaps.append(plan_line)
         if plan_ok and _stepped_on_current_content(toplevel, tree, task_id):
             continue
-        verify_line = _first_output_line(lambda: cmd_verify_check(tree))
+        verify_line = _tree_verify_line(tree)
         if verify_line.split("\t")[0] not in HANDBACK_VERIFY_OK:
             gaps.append(verify_line if tree == toplevel else f"{verify_line}（{tree}）")
     return gaps
+
+
+def _tree_verify_line(tree: str) -> str:
+    """`tree` の `verify-check` の行。`tw verify` がそこで形式のために打てない（`_format_refusal`）なら、控えを書けないので `NOTHING`。"""
+    if _format_refusal(tree) is not None:
+        return "NOTHING\t(tw verify が打てない形式)"
+    return _first_output_line(lambda: cmd_verify_check(tree))
 
 
 def _fork_point(tree: str) -> str | None:
@@ -2422,16 +2441,10 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(1)
 
     if args.command not in ("migrate", "config-doctor"):
-        kind, detail = detect_format(toplevel)
-        if kind == "INVALID":
-            print(f"INVALID\t{detail}")
-            raise SystemExit(3)
-        if kind == "LEGACY":
-            print("LEGACY\ttw migrate --dry-run")
-            raise SystemExit(5)
-        if kind == "MISSING":
-            print("MISSING")
-            raise SystemExit(6)
+        refusal = _format_refusal(toplevel)
+        if refusal is not None:
+            print(refusal[0])
+            raise SystemExit(refusal[1])
 
     # 主ブランチは要る道でだけ問い合わせる（`ledger.base_branch`。決まらなければ INVALID）。
     try:

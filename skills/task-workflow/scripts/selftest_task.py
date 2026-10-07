@@ -1181,7 +1181,7 @@ def test_handback_guard_step() -> None:
 def test_handback_guard_other_repo() -> None:
     print("task.py step・pause・handback-guard: 作業先が別のリポジトリなら、枝の名前がタスクIDの作業ツリーも見る")
     with tempfile.TemporaryDirectory() as tmp:
-        main_path, wt1, _ = make_repo(os.path.join(tmp, "own"), verify="`true`")
+        main_path, wt1, wt2 = make_repo(os.path.join(tmp, "own"), verify="`true`")
         work_repo, _, _ = make_repo(os.path.join(tmp, "work"), verify="`true`")
         commit_task(main_path, taskfile.Task("T-100", "作業先で直す", "todo", "sonnet", "Y", (), BODY))
         run_task(wt1, "claim", "T-100")
@@ -1217,6 +1217,28 @@ def test_handback_guard_other_repo() -> None:
         r = run_task(work_tree, "verify")
         check("作業先の作業ツリーで tw verify が通れば（VERIFIED_SAME）最後の段の返却を通す",
               r.returncode == 0 and run_handback_guard(tmp, wt1) is None, r.stdout + r.stderr)
+
+        bare_repo = os.path.join(tmp, "bare")
+        os.makedirs(bare_repo)
+        git(bare_repo, "init", "-q", "-b", "main")
+        git(bare_repo, "config", "user.email", "test@example.com")
+        git(bare_repo, "config", "user.name", "test")
+        write(os.path.join(bare_repo, "CLAUDE.md"), "# x\n\n## タスク運用\n\n- 検証コマンド: `true`\n")
+        git(bare_repo, "add", "-A")
+        git(bare_repo, "commit", "-q", "-m", "init")
+        bare_tree = os.path.join(tmp, "bare-t-101")
+        git(bare_repo, "worktree", "add", "-q", "-b", "t-101", bare_tree, "main")
+        write(os.path.join(bare_tree, "work.txt"), "x\n")
+        git(bare_tree, "add", "work.txt")
+        git(bare_tree, "commit", "-q", "-m", "作業先で直す")
+        commit_task(main_path, taskfile.Task("T-101", "台帳の無い作業先", "todo", "sonnet", "Y", (), BODY))
+        run_task(wt2, "claim", "T-101")
+        run_task(wt2, "edit", "T-101", "--section", "やること", "--body-file", "-",
+                 stdin=f"### 1. 書く\n\n### 作業先\n- `{bare_repo}`\n")
+        r = run_task(bare_tree, "verify")
+        check("develop/direction.md が無く検証コマンドの行だけがある作業先では、tw verify が MISSING でも最後の段の返却を通す",
+              r.returncode == 6 and r.stdout.strip() == "MISSING" and run_handback_guard(tmp, wt2) is None,
+              r.stdout + r.stderr)
 
 
 def test_worktree_state_dir() -> None:
