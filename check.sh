@@ -15,8 +15,9 @@
 # 4. retrospect のスクリプトの自己テスト
 # 5. comment-audit のスクリプトの自己テスト
 # 6. test-audit のスクリプトの自己テスト
-# 7. next-task のスクリプトの自己テスト
-# 8. リポジトリ全体の整合（frontmatter・README の索引・参照先の実在）（いつも）
+# 7. plan-tasks のスクリプトの自己テスト
+# 8. next-task のスクリプトの自己テスト
+# 9. リポジトリ全体の整合（frontmatter・README の索引・参照先の実在）（いつも）
 #
 # 当たる段は `./check.sh --plan` で見る。
 set -e
@@ -100,6 +101,10 @@ fi
 
 if stage "test-audit scripts の自己テスト" 'skills/test-audit/*'; then
   python3 "$here/skills/test-audit/scripts/selftest_list_test_declarations.py"
+fi
+
+if stage "plan-tasks scripts の自己テスト" 'skills/plan-tasks/*'; then
+  python3 "$here/skills/plan-tasks/scripts/selftest_removed_lines.py"
 fi
 
 if stage "next-task scripts の自己テスト" 'skills/next-task/*'; then
