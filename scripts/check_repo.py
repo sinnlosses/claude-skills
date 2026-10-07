@@ -409,6 +409,24 @@ def check_task_workflow_layout() -> None:
                     fail(f"{rel}:{node.lineno}: os.path.join が {hit!r} を直書きしている")
 
 
+def check_selftest_body_literal() -> None:
+    """自己テストが `### 名指すファイル` を直書きして本文を組んでいないか（`selftest_body.task_body` で組む）。"""
+    for fname in sorted(os.listdir(_TASK_WORKFLOW_SCRIPTS)):
+        if not (fname.startswith("selftest") and fname.endswith(".py")) or fname == "selftest_body.py":
+            continue
+        path = os.path.join(_TASK_WORKFLOW_SCRIPTS, fname)
+        tree = ast.parse(read(path))
+        docstring_ids = _docstring_constant_ids(tree)
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and id(node) not in docstring_ids
+                and "### 名指すファイル" in node.value
+            ):
+                fail(f"{os.path.relpath(path, ROOT)}:{node.lineno}: `### 名指すファイル` を直書きしている（selftest_body.task_body で組む）")
+
+
 def _sys_path_call(node: ast.AST) -> ast.expr | None:
     """`sys.path.insert(i, x)` / `sys.path.append(x)` なら、足す先のパスの引数ノードを返す。"""
     if not (
@@ -519,6 +537,7 @@ def main() -> None:
     check_docs_index(names)
     check_python_syntax(names)
     check_task_workflow_layout()
+    check_selftest_body_literal()
     check_agent_frontmatter(agent_names())
 
     if problems:
