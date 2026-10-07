@@ -141,26 +141,18 @@ frontmatter の `hooks` は無視されるので、`no-delegate` の hook（`tw 
 ```
 
 自己テストの段は、main との merge-base からの差分と未コミット・未追跡のファイルに当たるものだけを流す
-（下の1の構文と4の整合はいつも流す）。当たるパスは、2 が `install.sh`・`uninstall.sh`・`scripts/links.sh`・`scripts/selftest_links.sh`・`agents/`・`bin/`・
-`skills/*/SKILL.md`・`skills/*/REQUIRES`、3 が `skills/task-workflow/`・`agents/`・`hooks/`・`bin/`・
-`skills/retrospect/scripts/`、retrospect が `skills/retrospect/`・`skills/task-workflow/scripts/`、
-comment-audit・next-task が自分のスキルの下。`check.sh` が変わったとき、`--full`、main の上、
+（構文と整合はいつも流す）。当たる段は `./check.sh --plan` で見る。`check.sh` が変わったとき、`--full`、main の上、
 detached HEAD、差分が取れないときは全段を流す。
 
-1. `install.sh`・`uninstall.sh`・`scripts/links.sh` の構文、2. 一時ディレクトリを張る先にした
-`install.sh`・`uninstall.sh` の自己テスト（`scripts/selftest_links.sh`。全件で張って外すとこのリポジトリを
-指すリンクだけが消えること、名前を渡した外し方と依存の警告を確かめる）、3. `skills/task-workflow/scripts/` の自己テスト
-（`selftest.py` が旧形式の読み取りと `init.py`、`selftest_task.py` が `tw` コマンドを一時リポジトリと
-作業ツリー2本で通す。`selftest_beads.py` は Beads 方式を本物の `bd` と偽の `gh`・トラッカー同期で通し、
-`bd` が無ければ飛ばす）、4. リポジトリの整合
-（`scripts/check_repo.py`。frontmatter の `name` とディレクトリ名の一致、この README の
-由来一覧と `skills/` の一致、`${CLAUDE_SKILL_DIR}` で書かれた参照先の実在、スキル名の
-相互参照の実在、`docs/` に書くスキル（`architecture-proposal` `domain-modeling` `research`。
-`check_repo.py` の `DOCS_WRITING_SKILLS`）が索引 `docs/README.md` に1行足す指示を
-持っていること、`agents/*.md` の frontmatter の `name` とファイル名の一致・`description` の有無、`tw` の張り先の
-`task.py` が実行できることとスキルに `task.py` の長い呼び方・`` `task …` `` の略記が残っていないこと）。
-**由来の一覧が索引なので、スキルを足したり消したりしたらここも直す**
-（直し忘れは `./check.sh` が落として教える）。標準ライブラリだけで動く。
+1. `install.sh`・`uninstall.sh`・`scripts/links.sh` の構文
+2. `install.sh`・`uninstall.sh` の自己テスト（`scripts/selftest_links.sh`。全件で張って外すとこのリポジトリを指すリンクだけが消えること、名前を渡した外し方と依存の警告を確かめる）
+3. `task-workflow` のスクリプトの自己テスト（`selftest.py` が旧形式の読み取りと `init.py`、`selftest_task.py` が `tw` コマンドを一時リポジトリと作業ツリー2本で通す。`selftest_beads.py` は Beads 方式を本物の `bd` と偽の `gh`・トラッカー同期で通し、`bd` が無ければ飛ばす）
+4. `retrospect` の自己テスト
+5. `comment-audit` の自己テスト
+6. `next-task` の自己テスト
+7. リポジトリの整合（`scripts/check_repo.py`。frontmatter の `name` とディレクトリ名の一致、この README の由来一覧と `skills/` の一致、`${CLAUDE_SKILL_DIR}` で書かれた参照先の実在、スキル名の相互参照の実在、`docs/` に書くスキル（`architecture-proposal` `domain-modeling` `research`。`check_repo.py` の `DOCS_WRITING_SKILLS`）が索引 `docs/README.md` に1行足す指示を持っていること、`agents/*.md` の frontmatter の `name` とファイル名の一致・`description` の有無、`tw` の張り先の`task.py` が実行できることとスキルに `task.py` の長い呼び方・`` `task …` `` の略記が残っていないこと）。
+
+**由来の一覧が索引なので、スキルを足したり消したりしたらここも直す**（直し忘れは `./check.sh` が落として教える）。標準ライブラリだけで動く。
 
 ## 制約
 
