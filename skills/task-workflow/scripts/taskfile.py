@@ -363,18 +363,13 @@ def section_heading(name: str) -> str | None:
     """`やること`・`## やること` を枠の見出しの行にそろえる。枠に無い名前は `None`。"""
     heading = name.strip()
     heading = heading if heading.startswith("## ") else f"## {heading}"
-
-    # 完全一致を試す
     if heading in SECTION_HEADINGS:
         return heading
-
-    # 全角括弧より前の部分で当てる
     for candidate in SECTION_HEADINGS:
         if "（" in candidate:
             base = candidate.split("（")[0]
             if heading == base:
                 return candidate
-
     return None
 
 

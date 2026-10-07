@@ -1586,6 +1586,9 @@ def test_edit_section() -> None:
             r = run_task(wt1, "edit", "T-110", "--section", name, "--body-file", "-", stdin="x\n")
             check(f"枠に無い見出し {name} は書き込まずに拒む（終了コード2）",
                   r.returncode == 2 and "usage:" in r.stderr and read("T-110") == mid, r.stdout + r.stderr)
+        r = run_task(wt1, "edit", "T-110", "--section", "決まっていること", "--body-file", "-", stdin="- 括弧なし\n")
+        check("全角括弧を省いた見出し「決まっていること」は「決まっていること（蒸し返さない）」に当たり、書き込む",
+              r.returncode == 0 and "- 括弧なし" in read("T-110"), r.stdout + r.stderr)
         r = run_task(wt1, "edit", "T-110", "--section", "やること", "--body-file", "-", stdin="a\n## 完了条件\nb\n")
         check("中身に `## ` で始まる行があれば書き込まずに拒む（終了コード2）",
               r.returncode == 2 and "usage:" in r.stderr and read("T-110") == mid, r.stdout + r.stderr)
