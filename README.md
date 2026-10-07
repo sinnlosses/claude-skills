@@ -58,7 +58,7 @@ frontmatter の `hooks` は無視されるので、`no-delegate` の hook（`tw 
   `code-review` `codebase-design` `diagnosing-bugs` `domain-modeling` `grilling`
   `grill-with-docs` `implement` `improve-codebase-architecture` `prototype` `research`
   `resolving-merge-conflicts` `retro` `tdd` `wizard` `writing-for-agents`
-  （`retro` は札・色・ドラフトの形を `retrospect` に合わせ、選ばれた改善案を `develop/draft/` に積む）
+  （`retro` は改善の7観点の一覧を `retrospect` へ移してそこを指し、色・ドラフトの形も `retrospect` に合わせ、選ばれた改善案を `develop/draft/` に積む）
 - [anthropics/skills](https://github.com/anthropics/skills) を日本語化したもの（3件。Apache-2.0。
   各スキルの `LICENSE.txt` を同梱）: `frontend-design` `webapp-testing` `skill-creator`
 - [openclaw/openclaw](https://github.com/openclaw/openclaw/tree/main/.agents/skills/test-audit) を
@@ -69,8 +69,8 @@ frontmatter の `hooks` は無視されるので、`no-delegate` の hook（`tw 
   `verifying-before-completion`（完了と言う前に、主張ごとの証拠のコマンドを打って出力を読む関門）、
   `comment-audit`（コメントを種類で判定して消す・縮める・正典へ移す）、
   `maintenance-docs`（`docs/` と CLAUDE.md がスキルの記載とズレていないか点検して直す）、
-  `retrospect`（`/next-task` の中で1件ごとに振り返り、兆候に当たったときと、コード・文書の変更量を
-  減らせる形が見つかったときだけ次に効く改善を取り出して指示メモのドラフトに積む。正典・参照専用）と、
+  `retrospect`（`/next-task` の中で1件ごとに振り返り、改善の7観点でエージェントの環境の改善候補を探して、
+  物差しを通ったもの〔利用者がいるときは選ばれたもの〕だけを指示メモのドラフトに積む。正典・参照専用）と、
   `develop/` 配下でタスクを管理する運用の `task-workflow`（正典・参照専用）
   `setup-tasks` `next-task` `plan-tasks` `list-tasks`
 
