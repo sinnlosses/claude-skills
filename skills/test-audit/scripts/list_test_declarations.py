@@ -23,7 +23,7 @@ from dataclasses import dataclass
 
 TEST_FILE = re.compile(r"\.(test|spec)\.[cm]?[jt]sx?$")
 HEAD = re.compile(
-    r"(?<![\w$.])(describe|it|test)((?:\.(?:describe|each|skip|only|todo|concurrent|sequential|fails|runIf|skipIf|for))*)(?![\w$])"
+    r"(?<![\w$.])(describe|it|test)((?:\.(?:describe|each|skip|only|todo|concurrent|sequential|fails|fixme|parallel|serial|runIf|skipIf|for))*)(?![\w$])"
 )
 TWO_STAGE = re.compile(r"\.(?:each|for|runIf|skipIf)(?![\w$])")
 REGEX_KEYWORDS = {"return", "typeof", "case", "in", "of", "yield", "await", "void", "delete", "else", "do", "throw"}

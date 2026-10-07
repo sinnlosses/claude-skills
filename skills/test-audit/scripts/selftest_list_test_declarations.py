@@ -83,6 +83,14 @@ describe("別の外側", () => {
   })
 })
 
+test.describe.parallel("並列の群", () => {
+  it.runIf(process.env.CI)("runIf の名前", () => {})
+
+  describe.skipIf(process.env.CI)("skipIf の群", () => {
+    it("skipIf の群の中身", () => {})
+  })
+})
+
 it("describe の外", () => {})
 '''
 
@@ -100,8 +108,16 @@ def main() -> int:
         result = run(tmp)
         out = result.stdout
         check("終了コードが 0", result.returncode == 0, result.stderr)
-        check("ファイルの件数は 13", "sample.test.ts (13 件)" in out, out)
-        check("合計は 1 ファイル、13 件", "合計: 1 ファイル、13 件" in out, out)
+        check("ファイルの件数は 15", "sample.test.ts (15 件)" in out, out)
+        check("合計は 1 ファイル、15 件", "合計: 1 ファイル、15 件" in out, out)
+        check(
+            "test.describe.parallel と describe.skipIf(c)(…) を入れ子にする",
+            "- 並列の群: 1 / 2" in out
+            and "  - skipIf の群: 1 / 1" in out
+            and "並列の群 > runIf の名前 |" in out
+            and "並列の群 > skipIf の群 > skipIf の群の中身" in out,
+            out,
+        )
         check("テストでないファイルは拾わない", "not-a-test" not in out)
         check("it.each<…>( を1件として数える", "| it.each<" not in out and "| it.each | 外側 > 表駆動 %s |" in out, out)
         check("テンプレート表の .each も数える", "外側 > 内側 > さらに内側 > テンプレート表 $a" in out, out)
@@ -117,7 +133,7 @@ def main() -> int:
         check("test.describe を入れ子にして数える", "  - test.describe の群: 1 / 1" in out and "別の外側 > test.describe の群 > 群の中身" in out, out)
 
         direct = run(sample)
-        check("ファイルを直接渡せる", "合計: 1 ファイル、13 件" in direct.stdout, direct.stdout)
+        check("ファイルを直接渡せる", "合計: 1 ファイル、15 件" in direct.stdout, direct.stdout)
 
         empty = run(sub + "/missing-dir-without-tests")
         check("読めない入力は非0で終わる", empty.returncode != 0)
