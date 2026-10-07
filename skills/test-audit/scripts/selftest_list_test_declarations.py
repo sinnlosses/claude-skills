@@ -75,6 +75,12 @@ describe("外側", () => {
 
 describe("別の外側", () => {
   it.todo("未実装")
+  it.for([1, 2])("for の名前", () => {})
+  it.skipIf(process.env.CI)("skipIf の名前", () => {})
+
+  test.describe.skip("test.describe の群", () => {
+    test("群の中身", () => {})
+  })
 })
 
 it("describe の外", () => {})
@@ -94,8 +100,8 @@ def main() -> int:
         result = run(tmp)
         out = result.stdout
         check("終了コードが 0", result.returncode == 0, result.stderr)
-        check("ファイルの件数は 10", "sample.test.ts (10 件)" in out, out)
-        check("合計は 1 ファイル、10 件", "合計: 1 ファイル、10 件" in out, out)
+        check("ファイルの件数は 13", "sample.test.ts (13 件)" in out, out)
+        check("合計は 1 ファイル、13 件", "合計: 1 ファイル、13 件" in out, out)
         check("テストでないファイルは拾わない", "not-a-test" not in out)
         check("it.each<…>( を1件として数える", "| it.each<" not in out and "| it.each | 外側 > 表駆動 %s |" in out, out)
         check("テンプレート表の .each も数える", "外側 > 内側 > さらに内側 > テンプレート表 $a" in out, out)
@@ -106,10 +112,12 @@ def main() -> int:
         check("外側の件数は直下 3 / 配下 8", "- 外側: 3 / 8" in out, out)
         check("内側の件数は直下 3 / 配下 5", "  - 内側: 3 / 5" in out, out)
         check("さらに内側の件数は直下 2 / 配下 2", "    - さらに内側: 2 / 2" in out, out)
-        check("別の外側の件数は 1 / 1", "- 別の外側: 1 / 1" in out, out)
+        check("別の外側の件数は直下 3 / 配下 4", "- 別の外側: 3 / 4" in out, out)
+        check("2段呼びの名前は2段目の最初の引数", "別の外側 > for の名前 |" in out and "別の外側 > skipIf の名前 |" in out, out)
+        check("test.describe を入れ子にして数える", "  - test.describe の群: 1 / 1" in out and "別の外側 > test.describe の群 > 群の中身" in out, out)
 
         direct = run(sample)
-        check("ファイルを直接渡せる", "合計: 1 ファイル、10 件" in direct.stdout, direct.stdout)
+        check("ファイルを直接渡せる", "合計: 1 ファイル、13 件" in direct.stdout, direct.stdout)
 
         empty = run(sub + "/missing-dir-without-tests")
         check("読めない入力は非0で終わる", empty.returncode != 0)

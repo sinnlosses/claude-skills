@@ -7,9 +7,11 @@
 
 出力は Markdown。ファイルごとの見出しに件数、`describe` の入れ子ごとの件数、
 1宣言1行の表（印と証拠の欄は空）を出す。最後に全体の合計を出す。
-表駆動（`.each`）は1宣言として数える。`.skip`・`.only`・`.todo` と型引数 `<…>` 付きも数える。
+表駆動（`.each`・`.for`）は1宣言として数える。`.skip`・`.only`・`.todo` と型引数 `<…>` 付き、
+`.skipIf(条件)(名前, …)` のような2段呼びも数え、名前は2段目の最初の引数にする。
+`test.describe` は `describe` として入れ子にする。
 宣言名が文字列リテラルでないときは、引数の元の文字列を出す。
-JavaScript・TypeScript の字句を正規表現リテラルまでは解釈しない。
+正規表現リテラルは、直前の字から推定して読み飛ばす。
 """
 
 from __future__ import annotations
@@ -21,8 +23,9 @@ from dataclasses import dataclass
 
 TEST_FILE = re.compile(r"\.(test|spec)\.[cm]?[jt]sx?$")
 HEAD = re.compile(
-    r"(?<![\w$.])(describe|it|test)((?:\.(?:each|skip|only|todo|concurrent|sequential|fails|runIf|skipIf|for))*)(?![\w$])"
+    r"(?<![\w$.])(describe|it|test)((?:\.(?:describe|each|skip|only|todo|concurrent|sequential|fails|runIf|skipIf|for))*)(?![\w$])"
 )
+TWO_STAGE = re.compile(r"\.(?:each|for|runIf|skipIf)(?![\w$])")
 REGEX_KEYWORDS = {"return", "typeof", "case", "in", "of", "yield", "await", "void", "delete", "else", "do", "throw"}
 CLOSERS = {"(": ")", "[": "]", "{": "}"}
 
@@ -199,7 +202,7 @@ def parse_declarations(src: str) -> list[Decl]:
     for m in HEAD.finditer(masked):
         kind = m.group(1) + m.group(2)
         j = skip_space(masked, m.end())
-        if ".each" in m.group(2):
+        if TWO_STAGE.search(m.group(2)):
             if masked[j : j + 1] == "<":
                 j = skip_type_args(masked, j)
                 if j < 0:
@@ -235,7 +238,7 @@ def parse_declarations(src: str) -> list[Decl]:
 
 
 def is_describe(d: Decl) -> bool:
-    return d.kind.startswith("describe")
+    return d.kind.startswith(("describe", "test.describe"))
 
 
 def render_file(path: str, src: str) -> tuple[list[str], int]:
