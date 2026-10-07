@@ -2190,11 +2190,20 @@ def test_readonly_commands_stay_out_of_git() -> None:
     names = readonly_subcommands()
     check("WORKFLOW.md の読むだけの行が、テストの引数表と同じ", sorted(names) == sorted(args_of), str(names))
 
-    def probe(main_path: str, wt1: str, state: str) -> None:
+    def probe(main_path: str, wt1: str, state: str, base_ahead: bool, verify_check: str) -> None:
+        r = subprocess.run(["git", "merge-base", "--is-ancestor", "main", "HEAD"], cwd=wt1)
+        check(f"{state}: 主ブランチが {'HEAD より先にいる' if base_ahead else 'HEAD の祖先のまま'}",
+              (r.returncode != 0) == base_ahead)
+        r = run_task(wt1, "verify-check")
+        check(f"{state}: 書ける .git で verify-check が {verify_check}",
+              r.stdout.startswith(verify_check), r.stdout + r.stderr)
         before = _object_files(main_path)
         with readonly_git(main_path):
             for name in [*names, "pause"]:
                 r = run_task(wt1, *args_of.get(name, [name]))
+                if name == "verify-check":
+                    check(f"{state}: 読み取り専用の .git でも verify-check が {verify_check}",
+                          r.stdout.startswith(verify_check), r.stdout + r.stderr)
                 check(f"{state}: {name} が GIT_READ_ONLY でも書き込みの失敗でもない",
                       r.returncode != 11 and "GIT_READ_ONLY" not in r.stdout + r.stderr
                       and "Traceback" not in r.stderr and r.stdout != "", r.stdout + r.stderr)
@@ -2210,13 +2219,14 @@ def test_readonly_commands_stay_out_of_git() -> None:
         check("verify が通る", r.stdout.startswith("VERIFIED\t"), r.stdout + r.stderr)
 
         write(os.path.join(wt1, "work.txt"), "y\n")
-        probe(main_path, wt1, "未コミットの変更")
+        probe(main_path, wt1, "未コミットの変更", False, "NOT_VERIFIED\tcontent")
 
+        write(os.path.join(wt1, "work.txt"), "x\n")
         _advance_main(main_path, NOTES, extra="other.txt")
-        probe(main_path, wt1, "主ブランチが進んだ")
+        probe(main_path, wt1, "主ブランチが進んだ", True, "VERIFIED_SAME\t")
 
         _advance_main(main_path, "a\nM\nc\nd\ne\n")
-        probe(main_path, wt1, "衝突する")
+        probe(main_path, wt1, "衝突する", True, "NOT_VERIFIED\tbase")
 
 
 def test_verify_uses_preship_command_for_stamp() -> None:
