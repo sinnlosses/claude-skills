@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""`weekly.py`（横断の振り返りの材料）の自己テスト。
+"""`weekly.py`（横断の振り返りの材料）と `material.py --signals` の `長く待った呼び出し` の自己テスト。
 
 使い方: python3 selftest.py
 
@@ -147,8 +147,54 @@ def test_weekly() -> None:
         )
 
 
+def test_slow_calls() -> None:
+    print("material.py --signals の長く待った呼び出し")
+
+    def use(at: str, call_id: str, name: str, **inp: object) -> dict:
+        block = {"type": "tool_use", "id": call_id, "name": name, "input": inp}
+        return {"type": "assistant", "timestamp": at, "message": {"content": [block]}}
+
+    def result(at: str, call_id: str) -> dict:
+        block = {"type": "tool_result", "tool_use_id": call_id}
+        return {"type": "user", "timestamp": at, "message": {"content": [block]}}
+
+    rows = [
+        {"type": "user", "timestamp": "2026-10-01T00:00:00Z", "message": {"content": "GH-1 の作り物"}},
+        use("2026-10-01T00:00:01Z", "a", "Bash", command="SECRET-COMMAND-BODY", description="検証を流す"),
+        result("2026-10-01T00:05:01Z", "a"),
+        use("2026-10-01T00:05:02Z", "b", "Read"),
+        result("2026-10-01T00:05:04Z", "b"),
+        use("2026-10-01T00:05:05Z", "c", "Bash", command="x", description="送る"),
+        result("2026-10-01T00:06:05Z", "c"),
+        use("2026-10-01T00:06:06Z", "d", "Edit", file_path="/x"),
+        result("2026-10-01T00:06:26Z", "d"),
+        use("2026-10-01T00:06:27Z", "e", "Grep"),
+    ]
+    with tempfile.TemporaryDirectory() as d:
+        root = os.path.join(d, "repo")
+        slug = "".join(c if c.isalnum() else "-" for c in os.path.abspath(root))
+        sub = os.path.join(d, "cfg", "projects", slug, "s1", "subagents")
+        os.makedirs(sub)
+        os.makedirs(root)
+        write(os.path.join(sub, "a.jsonl"), "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
+        r = subprocess.run(
+            [sys.executable, os.path.join(HERE, "material.py"), root, "GH-1", "--signals"],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "CLAUDE_CONFIG_DIR": os.path.join(d, "cfg")},
+        )
+        line = [l for l in r.stdout.splitlines() if l.startswith("長く待った呼び出し\t")]
+        check(
+            "長い順に3件まで、道具名・Bash の説明・秒数で並べ、結果の来ない呼び出しは数えない",
+            line == ["長く待った呼び出し\tBash 検証を流す 300秒, Bash 送る 60秒, Edit 20秒"],
+            r.stdout + r.stderr,
+        )
+        check("コマンドの本文を出さない", "SECRET-COMMAND-BODY" not in r.stdout, r.stdout)
+
+
 def main() -> None:
     test_weekly()
+    test_slow_calls()
     print()
     if failures:
         print(f"FAILED {len(failures)}件: " + ", ".join(failures))
