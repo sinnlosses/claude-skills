@@ -326,7 +326,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    | `SHIPPED` | 完了。`kept=feature/T-xxx` が付いていたら、枝を消せなかったことを報告して人に預ける（消さない）。Beads 方式で続く行に `NOT_CLOSED`・`TRACKER\tFAILED`・`BACKUP\tFAILED` があれば、行を添えて報告する（送れてはいる。`TRACKER` は `tw sync` で打ち直せる） |
    | `SHIPPED` 以外 | `${CLAUDE_SKILL_DIR}/ship-stopped.md` の表に従う |
 
-   どれで止まっても `/loop` は「続行不要」と扱う。push はしない。
+   Beads 方式の `NOTHING` 以外のどれで止まっても `/loop` は「続行不要」と扱う。push はしない。
 
 ## 完了報告のフォーマット
 
@@ -353,8 +353,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 `tw status` の件数、`develop/direction.md` の行数、`stale`・`legacy_progress` の行
 （これらは `tw status` を打てば人も見られる）。
 
-**`/loop` の続行判断**（報告ではなく、会話に残ったツールの結果で決める）: `tw ship` が `SHIPPED`
-以外、または手順8より前で終了したなら続行しない。`SHIPPED` なら送ったあとに `tw status` を
+**`/loop` の続行判断**（報告ではなく、会話に残ったツールの結果で決める）: `tw ship` が `SHIPPED` か Beads 方式の `NOTHING` 以外、または手順8より前で終了したなら続行しない。`SHIPPED` か Beads 方式の `NOTHING` なら送ったあとに `tw status` を
 取り直し、`着手可否` が `READY` かつ `loopable` が `Y` の行があるか、`## ユーザーから` に中身があれば
 続行し、どちらも無ければ続行しない。
 
