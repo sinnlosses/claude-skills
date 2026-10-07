@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 import os
 import shutil
 import stat
@@ -2157,6 +2158,67 @@ def test_verify_folds_base_before_check() -> None:
         check("送る前の検証コマンドの行が無ければ preship は出ない", "preship=" not in r.stdout, r.stdout)
 
 
+def readonly_subcommands() -> list[str]:
+    """WORKFLOW.md の「`tw` コマンドの参照」の表で、すること欄に「読むだけ」と書かれた行のサブコマンド名。"""
+    with open(os.path.join(HERE, "..", "WORKFLOW.md"), encoding="utf-8") as f:
+        text = f.read()
+    section = text.split("\n## `tw` コマンドの参照\n", 1)[1].split("\n## ", 1)[0]
+    names = []
+    for row in section.splitlines():
+        cells = re.split(r" (?<!\\)\| ", row)
+        m = re.match(r"\| `([a-z-]+)", cells[0])
+        if m and len(cells) > 1 and "読むだけ" in cells[1]:
+            names.append(m.group(1))
+    return names
+
+
+def _object_files(main_path: str) -> list[str]:
+    top = os.path.join(main_path, ".git", "objects")
+    return sorted(os.path.join(d, f) for d, _dirs, files in os.walk(top) for f in files)
+
+
+def test_readonly_commands_stay_out_of_git() -> None:
+    print("task.py: 読むだけのサブコマンドは、未コミット・主ブランチが進んだ・衝突の各状態で、読み取り専用の .git でも落ちず object を足さない")
+    args_of = {
+        "status": ["status"],
+        "show": ["show", "T-120"],
+        "plan-check": ["plan-check", "T-120"],
+        "verify-check": ["verify-check"],
+        "metrics": ["metrics"],
+        "config-doctor": ["config-doctor"],
+    }
+    names = readonly_subcommands()
+    check("WORKFLOW.md の読むだけの行が、テストの引数表と同じ", sorted(names) == sorted(args_of), str(names))
+
+    def probe(main_path: str, wt1: str, state: str) -> None:
+        before = _object_files(main_path)
+        with readonly_git(main_path):
+            for name in [*names, "pause"]:
+                r = run_task(wt1, *args_of.get(name, [name]))
+                check(f"{state}: {name} が GIT_READ_ONLY でも書き込みの失敗でもない",
+                      r.returncode != 11 and "GIT_READ_ONLY" not in r.stdout + r.stderr
+                      and "Traceback" not in r.stderr and r.stdout != "", r.stdout + r.stderr)
+        check(f"{state}: .git/objects が増えない", _object_files(main_path) == before)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1 = _fold_repo(tmp, preship="`true`", planned=False)
+        r = run_task(wt1, "edit", "T-120", "--section", "やること", "--body-file", "-", stdin="### 1. 書く\n")
+        check("計画を書く", r.returncode == 0, r.stdout + r.stderr)
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        write(os.path.join(wt1, "notes.txt"), "a\nB\nc\nd\ne\n")
+        r = run_task(wt1, "verify")
+        check("verify が通る", r.stdout.startswith("VERIFIED\t"), r.stdout + r.stderr)
+
+        write(os.path.join(wt1, "work.txt"), "y\n")
+        probe(main_path, wt1, "未コミットの変更")
+
+        _advance_main(main_path, NOTES, extra="other.txt")
+        probe(main_path, wt1, "主ブランチが進んだ")
+
+        _advance_main(main_path, "a\nM\nc\nd\ne\n")
+        probe(main_path, wt1, "衝突する")
+
+
 def test_verify_uses_preship_command_for_stamp() -> None:
     print("task.py verify: 送る前の検証コマンドの行があれば、検証コマンドではなくそれを打ち、その控えで verify-check が判定する")
     with tempfile.TemporaryDirectory() as tmp:
@@ -3186,6 +3248,7 @@ def main() -> None:
         test_verify_conflict_before_check,
         test_verify_check_reports_base,
         test_verify_check_passes_base_with_preship,
+        test_readonly_commands_stay_out_of_git,
         test_verify_uses_preship_command_for_stamp,
         test_ship_skips_preship_verify_when_stamp_matches,
         test_ship_runs_preship_verify_when_done_changes_tree,
