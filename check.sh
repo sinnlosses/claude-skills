@@ -9,17 +9,15 @@
 # `--full` のとき、main の上にいるとき、detached HEAD のとき、差分が取れないときも全段を流す。
 # `--plan` は段を流さず、流す段（== 見出し ==）と飛ばす段だけを出す。
 #
-# 1. install.sh・uninstall.sh・scripts/links.sh の構文（いつも）
+# 1. 構文: install.sh・uninstall.sh・scripts/links.sh（いつも）
 # 2. install.sh・uninstall.sh の自己テスト
-#    install.sh・uninstall.sh・scripts/links.sh・scripts/selftest_links.sh・agents/・bin/・
-#    skills/*/SKILL.md・skills/*/REQUIRES が変わったとき
-# 3. task-workflow のスクリプトの自己テスト（3段）
-#    skills/task-workflow/・agents/・hooks/・bin/・skills/retrospect/scripts/ が変わったとき
+# 3. task-workflow のスクリプトの自己テスト
 # 4. retrospect のスクリプトの自己テスト
-#    skills/retrospect/・skills/task-workflow/scripts/ が変わったとき
-# 5. comment-audit のスクリプトの自己テスト（skills/comment-audit/ が変わったとき）
-# 6. next-task のスクリプトの自己テスト（skills/next-task/ が変わったとき）
+# 5. comment-audit のスクリプトの自己テスト
+# 6. next-task のスクリプトの自己テスト
 # 7. リポジトリ全体の整合（frontmatter・README の索引・参照先の実在）（いつも）
+#
+# 当たる段は `./check.sh --plan` で見る。
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 
