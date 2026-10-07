@@ -2785,6 +2785,47 @@ def test_flow_records_and_metrics() -> None:
         check("done も変わらない", r.returncode == 0 and r.stdout.startswith("DONE\tT-100\t"), r.stdout + r.stderr)
 
 
+def test_metrics_stages() -> None:
+    print("task.py metrics --stages: lap を含む flow から段×difficulty の件数・中央値・最大が出る")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp, branch="切らない")
+        d = ledger.flow_dir(ledger.ledger_root(cwd=wt1))
+        r = run_task(wt1, "metrics", "--stages")
+        check("記録が無ければ EMPTY", r.returncode == 0 and r.stdout.strip() == "EMPTY", r.stdout + r.stderr)
+        base = datetime.now(timezone.utc) - timedelta(hours=2)
+        row = lambda task, sec, ev, **kw: json.dumps(
+            {"t": (base + timedelta(seconds=sec)).isoformat(timespec="seconds"), "event": ev, "task": task, "difficulty": "sonnet", **kw}
+        )
+        lines = [
+            row("T-060", 0, "claim"), row("T-060", 100, "lap", stage="delegate"), row("T-060", 400, "verify", result="VERIFIED", seconds=50),
+            row("T-060", 500, "lap", stage="accept"), row("T-060", 560, "lap", stage="review"), row("T-060", 700, "lap", stage="retro"),
+            row("T-060", 760, "done"), row("T-060", 790, "ship", result="VERIFY_FAILED"), row("T-060", 800, "ship", result="SHIPPED"),
+            row("T-061", 0, "claim"), row("T-061", 300, "step", step=1, steps=2), row("T-061", 900, "done"), row("T-061", 930, "ship", result="SHIPPED"),
+            row("T-062", 0, "claim"), row("T-062", 10, "done"),
+        ]
+        write(os.path.join(d, "2000-01.jsonl"), "\n".join(lines) + "\n")
+        r = run_task(wt1, "metrics", "--stages")
+        got = [tuple(l.split("\t")) for l in r.stdout.splitlines()]
+        check(
+            "段×difficulty ごとに件数・中央値・最大の STAGE の行が段の順に出る（送り出していないタスクは入らない）",
+            r.returncode == 0
+            and got
+            == [
+                ("STAGE", "計画", "sonnet", "2", "200", "300"),
+                ("STAGE", "委譲", "sonnet", "2", "450", "600"),
+                ("STAGE", "検証", "sonnet", "1", "50", "50"),
+                ("STAGE", "受け入れ", "sonnet", "1", "60", "60"),
+                ("STAGE", "レビュー", "sonnet", "1", "140", "140"),
+                ("STAGE", "振り返り", "sonnet", "1", "60", "60"),
+                ("STAGE", "送り出し", "sonnet", "2", "35", "40"),
+            ],
+            r.stdout + r.stderr,
+        )
+        print("  --- tw metrics --stages の出力 ---")
+        for line in r.stdout.splitlines():
+            print(f"  | {line}")
+
+
 def test_retrospect_due() -> None:
     print("task.py status: 横断の振り返りの時期に retrospect_due の行を出す")
     due_line = lambda out: next((l for l in out.splitlines() if l.startswith("retrospect_due\t")), None)
@@ -3391,6 +3432,7 @@ def main() -> None:
         test_ship_forces_verify_after_verify_failed_without_new_rebase,
         test_ship_verify_failed_keeps_full_log_in_order,
         test_flow_records_and_metrics,
+        test_metrics_stages,
         test_retrospect_due,
         test_ship_stale_verify_owed_does_not_block_nothing_or_main_worktree,
         test_ship_conflict_aborts_rebase,

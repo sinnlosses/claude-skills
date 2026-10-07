@@ -25,6 +25,9 @@ HIGHER_IS_WORSE = (
     "reclaim",
 )
 LOWER_IS_WORSE = ("shipped", "reflection_none_ratio")
+STAGE_ORDER = ("計画", "委譲", "検証", "受け入れ", "レビュー", "振り返り", "送り出し")
+LAP_STAGE_NAMES = {"delegate": "委譲", "accept": "受け入れ", "review": "レビュー", "retro": "振り返り"}
+KIND_STAGE_NAMES = {"claim": "計画", "step": "委譲", "verify": "検証", "done": "送り出し"}
 
 
 @dataclass(frozen=True, eq=False)
@@ -108,6 +111,51 @@ def _column(events: list[Event], start: datetime, end: datetime) -> dict[str, st
     }
 
 
+def _stage_of(event: Event) -> str | None:
+    if event.kind == "lap":
+        return LAP_STAGE_NAMES.get(str(event.fields.get("stage")))
+    return KIND_STAGE_NAMES.get(event.kind)
+
+
+def stage_durations(events: list[Event], days: int) -> dict[tuple[str, str], list[float]]:
+    """直近 days 日に送り出したタスクごとに、`(段, difficulty)` → 所要秒の並び。
+
+    段の所要時間は、その出来事から同じタスクの次の出来事までの差。`verify` は記録された所要秒。
+    """
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(days=days)
+    durations: dict[tuple[str, str], list[float]] = {}
+    shipped = [e for e in events if e.kind == "ship" and e.fields.get("result") == "SHIPPED" and start <= e.at <= now]
+    for ship in shipped:
+        own = [e for e in events if e.task == ship.task and e.at <= ship.at]
+        claims = [i for i, e in enumerate(own) if e.kind == "claim"]
+        if not claims:
+            continue
+        run = [e for e in own[claims[-1] :] if e.kind != "ship" or e is ship]
+        for i, e in enumerate(run[:-1]):
+            stage = _stage_of(e)
+            if stage is None:
+                continue
+            if e.kind == "verify":
+                seconds = e.fields.get("seconds")
+                if not isinstance(seconds, (int, float)):
+                    continue
+            else:
+                seconds = (run[i + 1].at - e.at).total_seconds()
+            durations.setdefault((stage, str(e.fields.get("difficulty", "?"))), []).append(float(seconds))
+    return durations
+
+
+def stage_lines(events: list[Event], days: int) -> list[str]:
+    durations = stage_durations(events, days)
+    return [
+        f"STAGE\t{stage}\t{difficulty}\t{len(values)}\t{round(statistics.median(values))}\t{round(max(values))}"
+        for (stage, difficulty), values in sorted(
+            durations.items(), key=lambda kv: (STAGE_ORDER.index(kv[0][0]), kv[0][1])
+        )
+    ]
+
+
 def columns(events: list[Event], days: int) -> tuple[dict[str, str], dict[str, str]]:
     """`(直近 days 日の数, その前の同じ長さの期間の数)`。"""
     now = datetime.now(timezone.utc)
@@ -125,11 +173,15 @@ def worse(name: str, current: str, previous: str) -> bool:
     return name in HIGHER_IS_WORSE and now > before
 
 
-def cmd_metrics(toplevel: str, days: int) -> None:
+def _read_for_days(toplevel: str, days: int) -> tuple[list[Event], int]:
     if days < 1:
         print("usage: --days は1以上", file=sys.stderr)
         raise SystemExit(2)
-    events, skipped = read_events(ledger.ledger_root(cwd=toplevel))
+    return read_events(ledger.ledger_root(cwd=toplevel))
+
+
+def cmd_metrics(toplevel: str, days: int) -> None:
+    events, skipped = _read_for_days(toplevel, days)
     if not events:
         print("EMPTY")
         if skipped:
@@ -139,5 +191,12 @@ def cmd_metrics(toplevel: str, days: int) -> None:
     print(f"PERIOD\t{days}d\tcurrent\tprevious")
     for name, value in current.items():
         print(f"{name}\t{value}\t{previous[name]}")
+    if skipped:
+        print(f"SKIPPED\t{skipped}")
+
+
+def cmd_metrics_stages(toplevel: str, days: int) -> None:
+    events, skipped = _read_for_days(toplevel, days)
+    print("\n".join(stage_lines(events, days)) or "EMPTY")
     if skipped:
         print(f"SKIPPED\t{skipped}")

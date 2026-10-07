@@ -2400,6 +2400,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_lap.add_argument("stage")
     p_metrics = sub.add_parser("metrics")
     p_metrics.add_argument("--days", type=int, default=metrics.DAYS_DEFAULT)
+    p_metrics.add_argument("--stages", action="store_true")
     sub.add_parser("commit-guard").add_argument("--agent-scoped", dest="agent_scoped", action="store_true")
     sub.add_parser("pause")
     p_step = sub.add_parser("step")
@@ -2508,7 +2509,7 @@ def main(argv: list[str] | None = None) -> None:
         elif args.command == "lap":
             cmd_lap(toplevel, args.task_id, args.stage)
         elif args.command == "metrics":
-            metrics.cmd_metrics(toplevel, args.days)
+            (metrics.cmd_metrics_stages if args.stages else metrics.cmd_metrics)(toplevel, args.days)
     except (ledger.NoBaseBranch, layout.ConfigConflict, layout.StoreSettingError, tracker.TrackerSettingError) as e:
         print(f"INVALID\t{e}")
         raise SystemExit(3)
@@ -2563,7 +2564,7 @@ def _main_beads(toplevel: str, args: argparse.Namespace) -> None:
         elif args.command == "lap":
             cmd_lap(toplevel, args.task_id, args.stage)
         elif args.command == "metrics":
-            metrics.cmd_metrics(toplevel, args.days)
+            (metrics.cmd_metrics_stages if args.stages else metrics.cmd_metrics)(toplevel, args.days)
         elif args.command == "adopt":
             cmd_beads_adopt(toplevel, args)
         elif args.command == "sync":

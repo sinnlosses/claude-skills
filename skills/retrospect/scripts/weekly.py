@@ -11,6 +11,7 @@
   `WORSE\t<名前>\t<今>\t<前>`。`WORSE` があれば、期間内に主ブランチへ入ったやり方の変更
   `CHANGE\t<project|skills>\t<短い SHA>\t<件名>`（プロジェクトは設定ファイル・`.claude/`・`docs/`
   （`docs/history/` を除く）を触ったコミット、skills はこのスクリプトのあるリポジトリ。各20件まで）
+- **段の所要時間**: `STAGE\t<段>\t<difficulty>\t<件数>\t<中央値秒>\t<最大秒>`（`tw metrics --stages --days N` と同じ行）
 - **規則の棚卸し**: 設定ファイルの「## タスク運用」の `- 規則の発火の集計:` の最初の `` `…` `` を
   リポジトリの根で `sh -c` で打った標準出力をそのまま。行が無い・`なし`・落ちた・60秒で終わらない
   ときは `-\t<理由>`
@@ -62,6 +63,9 @@ def main() -> None:
     if print_flow(root, days):
         print_changes(root, start)
 
+    section("段の所要時間")
+    print_stages(root, days)
+
     section("規則の棚卸し")
     print_hook_tally(root)
 
@@ -102,6 +106,15 @@ def print_flow(root: str, days: int) -> bool:
     for name in worse:
         print(f"WORSE\t{name}\t{current[name]}\t{previous[name]}")
     return bool(worse)
+
+
+def print_stages(root: str, days: int) -> None:
+    try:
+        events, _ = metrics.read_events(ledger.ledger_root(cwd=root))
+    except (ledger.GitCommandError, OSError):
+        print("-\t台帳が読めない（git のリポジトリでない）")
+        return
+    print("\n".join(metrics.stage_lines(events, days)) or "EMPTY")
 
 
 def print_changes(root: str, start: datetime) -> None:

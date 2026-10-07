@@ -82,6 +82,8 @@ def test_weekly() -> None:
         write(
             os.path.join(d, ".git", "task-workflow", "flow", "2026-10.jsonl"),
             flow_row(ago(20), "done", "GH-10", dropped=False, reflection="some")
+            + flow_row(ago(16), "claim", "GH-20")
+            + flow_row(ago(15.5), "lap", "GH-20", stage="delegate")
             + flow_row(ago(15), "done", "GH-20", dropped=False, reflection="none")
             + flow_row(ago(10), "ship", "GH-20", result="SHIPPED")
             + flow_row(ago(9), "ship", "GH-21", result="SHIPPED")
@@ -97,8 +99,8 @@ def test_weekly() -> None:
         check("記録が無ければ期間は7日で last=-", lines_of("期間", out) == [f"PERIOD\t7d\t{(today - timedelta(days=7)).isoformat()}\t{today.isoformat()}\tlast=-"], out)
         headings = [l for l in out.splitlines() if l.startswith("===== ")]
         check(
-            "節は期間・流れの数・規則の棚卸しの3つだけ",
-            headings == ["===== 期間 =====", "===== 流れの数 =====", "===== 規則の棚卸し ====="],
+            "節は期間・流れの数・段の所要時間・規則の棚卸しの4つだけ",
+            headings == ["===== 期間 =====", "===== 流れの数 =====", "===== 段の所要時間 =====", "===== 規則の棚卸し ====="],
             "\n".join(headings),
         )
         flow = lines_of("流れの数", out)
@@ -106,8 +108,15 @@ def test_weekly() -> None:
         check("WORSE があれば期間内のやり方の変更を CHANGE で並べる", any(l.startswith("CHANGE\tproject\t") and l.endswith("\tやり方を変える") for l in flow), "\n".join(flow))
         check("規則の発火の集計のコマンドの出力をそのまま出す", lines_of("規則の棚卸し", out) == ["直近 30 日の拒否の回数", "deny-a: 0", "deny-b: 12"], out)
 
+        check("期間内に送り出した段が無ければ段の所要時間は EMPTY", lines_of("段の所要時間", out) == ["EMPTY"], out)
         r = weekly(d, "--days", "30")
         check("--days で期間を変えられる", lines_of("期間", r.stdout)[0].startswith("PERIOD\t30d\t"), r.stdout)
+        check(
+            "段の所要時間に STAGE の行が出る",
+            lines_of("段の所要時間", r.stdout)
+            == ["STAGE\t計画\topus\t1\t43200\t43200", "STAGE\t委譲\topus\t1\t43200\t43200", "STAGE\t送り出し\topus\t1\t432000\t432000"],
+            r.stdout,
+        )
         r = weekly(d, "--days", "0")
         check("--days が1未満なら終了コード2", r.returncode == 2, r.stdout + r.stderr)
 
@@ -142,6 +151,7 @@ def test_weekly() -> None:
         check(
             "どの節も欠席の理由を出す",
             lines_of("流れの数", r.stdout) == ["-\t台帳が読めない（git のリポジトリでない）"]
+            and lines_of("段の所要時間", r.stdout) == ["-\t台帳が読めない（git のリポジトリでない）"]
             and lines_of("規則の棚卸し", r.stdout)[0].startswith("-\t"),
             r.stdout,
         )
