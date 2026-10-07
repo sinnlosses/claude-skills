@@ -1,6 +1,6 @@
 ---
 name: plan-tasks
-description: "develop/direction.md に書かれたユーザーからの指示（と、develop/draft/ のエージェントのドラフトのうち承認を得たもの）を tw new で develop/task/ のタスクに分解して登録し、指示メモを docs/history/direction.md へ移して main へ送る。ユーザーが「指示をタスクにして」「direction.md を処理して」と言ったとき、またはセッション開始時に develop/direction.md に未対応の指示があったときに使う。旧形式（develop/tasks.json）のプロジェクトでは移行の案内を出して止まる。"
+description: "develop/direction.md に書かれたユーザーからの指示（と、develop/draft/ のエージェントのドラフトのうち承認を得たもの）を tw new で develop/task/ のタスクに分解して登録し、main へ送る。ユーザーが「指示をタスクにして」「direction.md を処理して」と言ったとき、またはセッション開始時に develop/direction.md に未対応の指示があったときに使う。旧形式（develop/tasks.json）のプロジェクトでは移行の案内を出して止まる。"
 ---
 
 `develop/direction.md` と `develop/draft/` に溜まった指示をタスクにする。ルールは `task-workflow` スキルの
@@ -129,18 +129,12 @@ description: "develop/direction.md に書かれたユーザーからの指示（
    `tw adopt <ID> --difficulty … --loopable … --body-file -`（`ADOPTED` の3列目が振られた ID）。
    本文は `tw new` と同じく手順4のとおり書く（`## やること` も要る。終了コード2の理由も同じ）。
 
-6. **指示メモを移す**: `docs/history/direction.md` の先頭に日付見出し（`## YYYY-MM-DD`）で、
-   正典「指示メモ」の3点だけを書く（無ければ `# 指示の履歴` の1行で作る）。`## ユーザーから` は
-   **当時の記述のまま**移して節を見出しだけに戻し、ドラフトは承認を得たファイルの中身だけを
-   出典1行つきで移してそのファイルを `git rm` する（未承認のファイルは残す）。会話入口は発言を生の言い回しのまま書く。
-   ドラフトは見出しの「（振り返り: …）」と `- 札:`・`- 根:` の行を形を変えずに移し、見出しの直後に
-   作ったタスクを `（<ID> にした）` の1行で書く（複数なら `GH-n・GH-m` か `GH-n〜GH-m`。
-   `retrospect` の `tally.py --effect` がこの行で根に打った手を読む）。
+6. **置き場から取り除く**: `## ユーザーから` はタスクにした行を消して節を見出しだけに戻し、
+   承認を得たドラフトはそのファイルを `git rm` する（未承認のファイルは残す）。
 
 7. **コミットして送る**: `git add` する前に整形コマンドを打つ（`タスク運用`節が `なし` なら不要。
-   手順6で書き換えた `develop/direction.md` と `docs/history/direction.md` はそのままだと
-   整形コマンドの検査に引っかかりうる）。打ったら、登録したタスクファイル・`develop/direction.md`・
-   `docs/history/direction.md`（と直した既存タスク、移したドラフトのファイル）を**個別に** `git add`
+   手順6で書き換えた `develop/direction.md` はそのままだと整形コマンドの検査に引っかかりうる）。
+   打ったら、登録したタスクファイル・`develop/direction.md`（と直した既存タスク）を**個別に** `git add`
    し、手順6の `git rm` と合わせて1コミット（Beads 方式ではタスクファイルが無いので、それ以外だけ）（件名に
    タスクIDを付けない。例「指示をタスクにする（T-531〜T-533）」）→ `tw ship`。`SHIPPED` 以外の
    扱いは `next-task` スキルの `ship-stopped.md` の表と同じ（止まって預ける）。push はしない。
@@ -159,5 +153,5 @@ description: "develop/direction.md に書かれたユーザーからの指示（
    決めてもらったこと、`loopable: N` と `hold` の理由（`/loop` では進まないため）
 
 書かないもの: `SHIPPED` の範囲・コミットのハッシュ、`tw status` の件数、
-`develop/direction.md` のどの節を空にしたか・どのドラフトを消したか、移した先の日付見出し（どれも決まった手順の
+`develop/direction.md` のどの節を空にしたか・どのドラフトを消したか（どれも決まった手順の
 とおりで、見たければ `git log` と `tw status` で見られる）。
