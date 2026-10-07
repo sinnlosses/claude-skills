@@ -4,7 +4,7 @@
 使い方: material.py <リポジトリの根> <T-XXX> [--diff] [--diff-bytes N] [--signals]
 
 出すのは4つ（`--signals` のときは「手数」だけ。`/next-task` の中の1件ごとの振り返りが、
-兆候に当たったかを数だけで見るのに使う。本文と diff はメインが受け入れで読み終えている）。
+材料を観点に当てるときに、当たりの目安を数だけで見るのに使う。本文と diff はメインが受け入れで読み終えている）。
 
 - **タスク**: `develop/task/T-XXX.md`（`HEAD` の版。front matter と本文、`## 結果`）。
   無ければ旧形式の `develop/tasks.json`、それも無ければ `docs/history/tasks.md` から本文と evidence。
