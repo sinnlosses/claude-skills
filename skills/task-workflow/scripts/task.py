@@ -1475,7 +1475,7 @@ def cmd_ship(toplevel: str, hooks: "ShipHooks | None" = None) -> None:
         preship_command is not None
         and stamp is not None
         and stamp.verify_command == preship_command
-        and stamp.tree == ledger.worktree_tree(toplevel, objects_in_repo=False)
+        and stamp.tree == ledger.content_tree(toplevel)
     )
     outcome = ship.attempt(
         toplevel,

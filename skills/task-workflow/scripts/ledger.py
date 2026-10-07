@@ -655,7 +655,12 @@ def content_key(verify_command: str, cwd: str | None = None) -> ContentKey:
     """いまの作業ツリーの中身の鍵。"""
     toplevel = git_toplevel(cwd)
     head = head_sha_or_none(toplevel) or "-"
-    return ContentKey(head, worktree_tree(toplevel, objects_in_repo=False), verify_command)
+    return ContentKey(head, content_tree(toplevel), verify_command)
+
+
+def content_tree(toplevel: str) -> str:
+    """鍵に取る木の SHA。`worktree_tree` の木から `develop/task/`・`develop/draft/` を外す。`.git` に書かない。"""
+    return worktree_tree(toplevel, objects_in_repo=False, excluded=(layout.TASK_DIR, layout.DRAFT_DIR))
 
 
 def scratch_object_env(toplevel: str, scratch_dir: str) -> dict[str, str]:
@@ -667,14 +672,19 @@ def scratch_object_env(toplevel: str, scratch_dir: str) -> dict[str, str]:
     return {"GIT_OBJECT_DIRECTORY": temp_objects, "GIT_ALTERNATE_OBJECT_DIRECTORIES": os.pathsep.join(alternates)}
 
 
-def worktree_tree(toplevel: str, objects_in_repo: bool = True, object_env: dict[str, str] | None = None) -> str:
+def worktree_tree(
+    toplevel: str,
+    objects_in_repo: bool = True,
+    object_env: dict[str, str] | None = None,
+    excluded: tuple[str, ...] = (),
+) -> str:
     """いまの作業ツリーの中身の木の SHA。
 
     index を一時ファイルに写して `git add -A` → `git write-tree` するので、`.gitignore` の対象でない
     未追跡のファイルまで入り、本物の index は変わらない。`objects_in_repo` が偽なら、新しい object は
     一時ディレクトリに書き、元の object は `GIT_ALTERNATE_OBJECT_DIRECTORIES` で読むので、
     `.git` に書かずに済む（木の SHA は同じ。その木は `.git` には残らない）。`object_env` があれば
-    その環境変数で書き、呼ぶ側が書いた木をそのあとも読める。
+    その環境変数で書き、呼ぶ側が書いた木をそのあとも読める。`excluded` のパスは木から外す。
     """
     real_index = _git(["rev-parse", "--path-format=absolute", "--git-path", "index"], toplevel)
     with tempfile.TemporaryDirectory() as tmp:
@@ -687,7 +697,10 @@ def worktree_tree(toplevel: str, objects_in_repo: bool = True, object_env: dict[
             env.update(object_env)
         elif not objects_in_repo:
             env.update(scratch_object_env(toplevel, tmp))
-        for args in (["add", "-A"], ["write-tree"]):
+        steps = [["add", "-A"], ["write-tree"]]
+        if excluded:
+            steps.insert(1, ["rm", "-r", "--cached", "-q", "--ignore-unmatch", "--", *excluded])
+        for args in steps:
             r = subprocess.run(["git", *args], cwd=toplevel, env=env, capture_output=True, text=True)
             if r.returncode != 0:
                 raise GitCommandError(f"git {' '.join(args)} が失敗（{r.returncode}）: {r.stderr.strip()}")

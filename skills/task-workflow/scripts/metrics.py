@@ -126,10 +126,31 @@ def _route(run: list[Event]) -> str:
     return "direct" if "direct" in stages and "delegate" not in stages else "normal"
 
 
+def _verify_spans(run: list[Event]) -> list[tuple[datetime, datetime]]:
+    """`verify` の区間を、重なりを繋いだ和集合にして時刻順に。"""
+    spans = sorted(
+        (e.at - timedelta(seconds=e.fields["seconds"]), e.at)
+        for e in run
+        if e.kind == "verify" and isinstance(e.fields.get("seconds"), (int, float))
+    )
+    merged: list[tuple[datetime, datetime]] = []
+    for start, end in spans:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _overlap_seconds(spans: list[tuple[datetime, datetime]], start: datetime, end: datetime) -> float:
+    return sum(max(0.0, (min(end, e) - max(start, s)).total_seconds()) for s, e in spans)
+
+
 def stage_durations(events: list[Event], days: int) -> dict[tuple[str, str, str], list[float]]:
     """直近 days 日に送り出したタスクごとに、`(段, difficulty, 道)` → 所要秒の並び。
 
-    段の所要時間は、その出来事から同じタスクの次の出来事までの差。`verify` は記録された所要秒。
+    `verify` は記録された所要秒で、区間は `[記録の時刻 − 所要秒, 記録の時刻]`。ほかの段の所要時間は、
+    その出来事から同じタスクの次の `verify` でない出来事までの差から、`verify` の区間と重なった秒を引いたもの。
     """
     now = datetime.now(timezone.utc)
     start = now - timedelta(days=days)
@@ -142,6 +163,7 @@ def stage_durations(events: list[Event], days: int) -> dict[tuple[str, str, str]
             continue
         run = [e for e in own[claims[-1] :] if e.kind != "ship" or e is ship]
         route = _route(run)
+        verifying = _verify_spans(run)
         for i, e in enumerate(run[:-1]):
             stage = _stage_of(e)
             if stage is None:
@@ -151,7 +173,8 @@ def stage_durations(events: list[Event], days: int) -> dict[tuple[str, str, str]
                 if not isinstance(seconds, (int, float)):
                     continue
             else:
-                seconds = (run[i + 1].at - e.at).total_seconds()
+                end = next(n.at for n in run[i + 1 :] if n.kind != "verify")
+                seconds = (end - e.at).total_seconds() - _overlap_seconds(verifying, e.at, end)
             durations.setdefault((stage, str(e.fields.get("difficulty", "?")), route), []).append(float(seconds))
     return durations
 

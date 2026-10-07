@@ -1394,7 +1394,7 @@ def test_readonly_git() -> None:
             check("verify-check が VERIFIED_SAME", r.stdout.startswith("VERIFIED_SAME\t"), r.stdout + r.stderr)
         tree = verified.split("\t")[1] if verified.count("\t") >= 1 else ""
         check("読み取り専用で取った鍵の木の SHA が、書ける .git で取った木と同じ",
-              tree != "" and tree == ledger.worktree_tree(wt1), tree)
+              tree != "" and tree == ledger.content_tree(wt1), tree)
 
         write(os.path.join(main_path, "shared.txt"), "line2\n")
         git(main_path, "commit", "-q", "-am", "主ブランチを進める")
@@ -2117,6 +2117,9 @@ def test_verify_stamp() -> None:
 
         write(os.path.join(wt1, "ignored", "cache.bin"), "x\n")
         check("gitignore の対象を足しても鍵は変わらない", verify_check() == f"VERIFIED_SAME\t{tree}")
+        draft = write(os.path.join(wt1, "develop", "draft", "x.md"), "- **x**\n")
+        check("develop/draft/ のファイルを足しても鍵は変わらない", verify_check() == f"VERIFIED_SAME\t{tree}")
+        os.remove(draft)
 
         cases = (
             ("追跡中のファイルの変更", "shared.txt", "line1\nline2\nline3\n"),
@@ -2464,6 +2467,18 @@ def test_ship_skips_preship_verify_when_stamp_matches() -> None:
         _main, wt1 = prepare(tmp)
         write(os.path.join(wt1, "work.txt"), "x\n")
         run_task(wt1, "verify")
+        write(os.path.join(wt1, "develop", "draft", "x.md"), "- **x**\n")
+        r = run_task(wt1, "done", "T-120", "--result-file", "-", stdin="- 振り返り: 兆候なし\n")
+        check("done が通る", r.returncode == 0 and r.stdout.startswith("DONE\t"), r.stdout + r.stderr)
+        r = _commit_work_and_ship(wt1, "work.txt", "develop/draft/x.md", "develop/task/T-120.md")
+        check("verify のあとのドラフトと done のタスクファイルも一緒にコミットしても preship=skipped",
+              r.returncode == 0 and r.stdout.startswith("SHIPPED\t") and "preship=skipped" in r.stdout, r.stdout + r.stderr)
+        check("ドラフトと done の回も送る前の検証コマンドは verify の1回だけ", _preship_count(tmp) == 1, str(_preship_count(tmp)))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        _main, wt1 = prepare(tmp)
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        run_task(wt1, "verify")
         write(os.path.join(wt1, "work.txt"), "y\n")
         r = _commit_work_and_ship(wt1, "work.txt")
         check("控えのあとに中身を変えたら preship=ran", "preship=ran" in r.stdout, r.stdout + r.stderr)
@@ -2498,8 +2513,8 @@ def test_ship_skips_preship_verify_when_stamp_matches() -> None:
         check("借りの印は消える", not ledger.is_verify_owed(cwd=wt1))
 
 
-def test_ship_runs_preship_verify_when_done_changes_tree() -> None:
-    print("task.py ship: 送る前の検証コマンドの行があり、done が控えのあとに木を変えたなら、主ブランチへ入れる直前に打つ")
+def test_ship_runs_preship_verify_when_work_changes_tree() -> None:
+    print("task.py ship: 送る前の検証コマンドの行があり、控えのあとに作業の木が変わったなら、主ブランチへ入れる直前に打つ")
     for passes in (True, False):
         with tempfile.TemporaryDirectory() as tmp:
             write(os.path.join(tmp, "preship.sh"), "echo x >> ../preship-count.log\n[ ! -f ../preship-fail ]\n")
@@ -2511,6 +2526,7 @@ def test_ship_runs_preship_verify_when_done_changes_tree() -> None:
             r = run_task(wt1, "verify-check")
             check("控えは VERIFIED_SAME", r.stdout.startswith("VERIFIED_SAME\t"), r.stdout)
 
+            write(os.path.join(wt1, "work.txt"), "y\n")
             if not passes:
                 write(os.path.join(tmp, "preship-fail"), "")
             head_before = git(main_path, "rev-parse", "HEAD").stdout.strip()
@@ -2918,29 +2934,43 @@ def test_metrics_stages() -> None:
             haiku("T-064", 0, "claim"), haiku("T-064", 10, "lap", stage="direct"), haiku("T-064", 50, "lap", stage="delegate"),
             haiku("T-064", 300, "done"), haiku("T-064", 310, "ship", result="SHIPPED"),
         ]
+        opus = lambda task, sec, ev, **kw: json.dumps(
+            {"t": (base + timedelta(seconds=sec)).isoformat(timespec="seconds"), "event": ev, "task": task, "difficulty": "opus", **kw}
+        )
+        lines += [
+            opus("T-065", 0, "claim"), opus("T-065", 10, "lap", stage="delegate"), opus("T-065", 100, "lap", stage="review"),
+            opus("T-065", 200, "lap", stage="retro"), opus("T-065", 340, "verify", result="VERIFIED", seconds=120),
+            opus("T-065", 400, "done"), opus("T-065", 410, "ship", result="SHIPPED"),
+        ]
         write(os.path.join(d, "2000-01.jsonl"), "\n".join(lines) + "\n")
         r = run_task(wt1, "metrics", "--stages")
         got = [tuple(l.split("\t")) for l in r.stdout.splitlines()]
         check(
             "段×difficulty×道ごとに件数・中央値・最大の STAGE の行が段の順に出る（送り出していないタスクは入らない。"
-            "lap direct のあとに lap delegate があれば normal）",
+            "lap direct のあとに lap delegate があれば normal。検証でない段は次の検証でない出来事までから検証と重なった秒を引く）",
             r.returncode == 0
             and got
             == [
                 ("STAGE", "計画", "haiku", "direct", "1", "20", "20"),
                 ("STAGE", "計画", "haiku", "normal", "1", "10", "10"),
+                ("STAGE", "計画", "opus", "normal", "1", "10", "10"),
                 ("STAGE", "計画", "sonnet", "normal", "2", "200", "300"),
-                ("STAGE", "直し", "haiku", "direct", "1", "80", "80"),
+                ("STAGE", "直し", "haiku", "direct", "1", "150", "150"),
                 ("STAGE", "直し", "haiku", "normal", "1", "40", "40"),
                 ("STAGE", "委譲", "haiku", "normal", "1", "250", "250"),
-                ("STAGE", "委譲", "sonnet", "normal", "2", "450", "600"),
+                ("STAGE", "委譲", "opus", "normal", "1", "90", "90"),
+                ("STAGE", "委譲", "sonnet", "normal", "2", "475", "600"),
                 ("STAGE", "検証", "haiku", "direct", "1", "30", "30"),
+                ("STAGE", "検証", "opus", "normal", "1", "120", "120"),
                 ("STAGE", "検証", "sonnet", "normal", "1", "50", "50"),
                 ("STAGE", "受け入れ", "sonnet", "normal", "1", "60", "60"),
+                ("STAGE", "レビュー", "opus", "normal", "1", "100", "100"),
                 ("STAGE", "レビュー", "sonnet", "normal", "1", "140", "140"),
+                ("STAGE", "振り返り", "opus", "normal", "1", "80", "80"),
                 ("STAGE", "振り返り", "sonnet", "normal", "1", "60", "60"),
                 ("STAGE", "送り出し", "haiku", "direct", "1", "20", "20"),
                 ("STAGE", "送り出し", "haiku", "normal", "1", "10", "10"),
+                ("STAGE", "送り出し", "opus", "normal", "1", "10", "10"),
                 ("STAGE", "送り出し", "sonnet", "normal", "2", "35", "40"),
             ],
             r.stdout + r.stderr,
@@ -3551,7 +3581,7 @@ def main() -> None:
         test_readonly_commands_stay_out_of_git,
         test_verify_uses_preship_command_for_stamp,
         test_ship_skips_preship_verify_when_stamp_matches,
-        test_ship_runs_preship_verify_when_done_changes_tree,
+        test_ship_runs_preship_verify_when_work_changes_tree,
         test_ship_fast_forward,
         test_ship_rebases_when_main_advances,
         test_ship_forces_verify_after_verify_failed_without_new_rebase,

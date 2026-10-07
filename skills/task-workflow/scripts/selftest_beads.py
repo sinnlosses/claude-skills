@@ -434,6 +434,29 @@ def test_verify_stamp() -> None:
               and "\nVERIFIED\t" in r.stdout and os.path.exists(os.path.join(wt1, "other.txt")), r.stdout + r.stderr)
 
 
+def test_ship_skips_preship_with_draft() -> None:
+    say("ship: verify のあとに足したドラフトと done があっても、控えで送る前の検証を飛ばす")
+    with tempfile.TemporaryDirectory() as tmp:
+        count = os.path.join(tmp, "preship-count.log")
+        main_path, wt1, _wt2 = make_repo(tmp, extra=f"- 送る前の検証コマンド: `echo x >> {count}`\n")
+        a = new(main_path, "作業")
+        r = run_task(wt1, "claim", a)
+        check("claim が通る", r.stdout.startswith("CLAIMED\t"), r.stdout + r.stderr)
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        r = run_task(wt1, "verify")
+        check("verify が通る", r.returncode == 0 and r.stdout.startswith("VERIFIED\t"), r.stdout + r.stderr)
+        write(os.path.join(wt1, "develop", "draft", "x.md"), "- **x**\n")
+        r = run_task(wt1, "done", a, "--result-file", "-", stdin="- 振り返り: 兆候なし\n")
+        check("done が通る", r.returncode == 0 and r.stdout.startswith("DONE\t"), r.stdout + r.stderr)
+        git(wt1, "add", "work.txt", "develop/draft/x.md")
+        git(wt1, "commit", "-q", "-m", f"{a}: 作業")
+        r = run_task(wt1, "ship")
+        check("preship=skipped で送る", r.returncode == 0 and r.stdout.startswith("SHIPPED\t")
+              and "preship=skipped" in r.stdout, r.stdout + r.stderr)
+        with open(count, encoding="utf-8") as f:
+            check("送る前の検証コマンドは verify の1回だけ", len(f.read().splitlines()) == 1)
+
+
 def test_cycle_done_ship_and_dropped() -> None:
     say("1サイクル（claim → edit → done → ship）と見送り")
     with tempfile.TemporaryDirectory() as tmp:
@@ -848,6 +871,7 @@ def main() -> None:
             test_backup,
             test_branch_line_missing_does_not_ship,
             test_verify_stamp,
+            test_ship_skips_preship_with_draft,
             test_direct_mark,
             test_file_mode_untouched_by_beads_dir,
             test_id_forms,
