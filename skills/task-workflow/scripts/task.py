@@ -194,11 +194,15 @@ def classify_claim(
 
 
 BRANCH_WORDS = ("既定", "作業ブランチを切る", "切らない")
+BRANCH_UNSET_NO_SECTION = "<no section>"
+BRANCH_UNSET_NO_LINE = "<no line>"
+BRANCH_UNSET = (BRANCH_UNSET_NO_SECTION, BRANCH_UNSET_NO_LINE)
 
 
 def read_branch_setting(toplevel: str) -> str:
     """設定ファイル（`layout.find_config_file`。`AGENTS.md` → `CLAUDE.md` の順）の
-    `- ブランチ:` 行の先頭語だけを読む（6.1）。無ければ `既定`。
+    `- ブランチ:` 行の先頭語だけを読む（6.1）。「## タスク運用」節が無ければ
+    `BRANCH_UNSET_NO_SECTION`、節に行が無ければ `BRANCH_UNSET_NO_LINE` を返す（どちらも送らない）。
 
     後ろは人向けの説明で自由なので、`切らない。主ブランチに積む` のように句読点で続いても
     先頭語で決める。語彙のどれでも始まらなければ、その値の最初の語をそのまま返す
@@ -207,11 +211,11 @@ def read_branch_setting(toplevel: str) -> str:
     """
     found = layout.find_config_file(toplevel)
     if found is None:
-        return "既定"
+        return BRANCH_UNSET_NO_SECTION
     _path, text = found
     m = re.search(r"^- ブランチ:[ \t]*(.*)$", text, flags=re.MULTILINE)
     if m is None:
-        return "既定"
+        return BRANCH_UNSET_NO_LINE
     value = m.group(1).strip()
     word = next((w for w in BRANCH_WORDS if value.startswith(w)), None)
     return word if word is not None else (value.split() or [""])[0]
@@ -618,7 +622,7 @@ def _claim_preflight(toplevel: str) -> tuple[str, str]:
     ファイル方式と Beads 方式の `claim` が同じものを通る。
     """
     branch_setting = read_branch_setting(toplevel)
-    if branch_setting not in BRANCH_WORDS:
+    if branch_setting not in BRANCH_WORDS + BRANCH_UNSET:
         print(f"INVALID\t- ブランチ: の値 {branch_setting!r} を機械が読めない")
         raise SystemExit(3)
 
@@ -1295,6 +1299,18 @@ def cmd_ship(toplevel: str, hooks: "ShipHooks | None" = None) -> None:
         """ファイル方式の hooks は台帳の置き場を作るので、送る道では `require_git_writable` のあとに作る。"""
         return hooks if hooks is not None else _file_ship_hooks(toplevel)
 
+    branch_setting = read_branch_setting(toplevel)
+    if branch_setting in BRANCH_UNSET:
+        local_hooks = resolved_hooks()
+        ledger.clear_verify_owed(cwd=toplevel)
+        released = local_hooks.release_shipped()
+        for task_id in released:
+            _record(toplevel, "ship", task_id, result="NO_BRANCH_SETTING")
+        reason = "no-section" if branch_setting == BRANCH_UNSET_NO_SECTION else "no-line"
+        print(f"NO_BRANCH_SETTING\t{reason}\treleased={','.join(released) or '-'}")
+        _print_lines(local_hooks.after_send())
+        raise SystemExit(4)
+
     base = ledger.base_branch(toplevel)
     branch = ledger.current_branch(cwd=toplevel)
 
@@ -1368,7 +1384,7 @@ def cmd_ship(toplevel: str, hooks: "ShipHooks | None" = None) -> None:
     ledger.clear_verify_owed(cwd=toplevel)
 
     branch_note = f"branch={branch}"
-    if read_branch_setting(toplevel) in ("既定", "作業ブランチを切る") and FEATURE_BRANCH.fullmatch(branch):
+    if branch_setting in ("既定", "作業ブランチを切る") and FEATURE_BRANCH.fullmatch(branch):
         # 印を消す前に読む（戻り先は印にある）。
         branch_note = _leave_feature_branch(toplevel, branch, hooks.claimed_branch)
 

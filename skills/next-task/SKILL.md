@@ -340,7 +340,9 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    | `SHIPPED` | 完了。`kept=feature/T-xxx` が付いていたら、枝を消せなかったことを報告して人に預ける（消さない）。Beads 方式で続く行に `NOT_CLOSED`・`TRACKER\tFAILED`・`BACKUP\tFAILED` があれば、行を添えて報告する（送れてはいる。`TRACKER` は `tw sync` で打ち直せる） |
    | `SHIPPED` 以外 | `${CLAUDE_SKILL_DIR}/ship-stopped.md` の表に従う |
 
-   Beads 方式の `NOTHING` 以外のどれで止まっても `/loop` は「続行不要」と扱う。push はしない。
+   設定に「## タスク運用」節か `- ブランチ:` 行が無ければ `NO_BRANCH_SETTING` で止まる。コミットまでで
+   止め、main へは送っていない（`ship-stopped.md`）。
+   Beads 方式の `NOTHING` 以外のどれで止まっても（`NO_BRANCH_SETTING` も）`/loop` は「続行不要」と扱う。push はしない。
 
 ## 完了報告のフォーマット
 
@@ -349,7 +351,8 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 
 1. **結論を1文目に置く**: 送れたときは「`T-xxx <summary>` を完了して main へ送りました。」
    （`dropped` なら「`T-xxx <summary>` を見送って（dropped）main へ送りました。」と理由を1文）。
-   `SHIPPED` の範囲・`branch=`・コミットのハッシュは書かない。手順8より前で止まったとき
+   `SHIPPED` の範囲・`branch=`・コミットのハッシュは書かない。`NO_BRANCH_SETTING` なら「`T-xxx <summary>` を
+   完了してコミットしました。main へは送っていません。」。手順8より前で止まったとき
    （`VERIFY_FAILED`・`CONFLICT`・`DIRTY`・取り残し・進められるタスクが無い、など）は、止まった
    ことと先頭語を結論にし、各手順の表が「添える」としたもの（パス・衝突したファイル・出力の末尾）を続ける
 2. **何をしたか**を3項目程度の箇条書きで。変えたものと、それで何ができるようになったか・何が
@@ -367,7 +370,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 `tw status` の件数、`develop/direction.md` の行数、`stale`・`legacy_progress` の行
 （これらは `tw status` を打てば人も見られる）。
 
-**`/loop` の続行判断**（報告ではなく、会話に残ったツールの結果で決める）: `tw ship` が `SHIPPED` か Beads 方式の `NOTHING` 以外、または手順8より前で終了したなら続行しない。`SHIPPED` か Beads 方式の `NOTHING` なら送ったあとに `tw status` を
+**`/loop` の続行判断**（報告ではなく、会話に残ったツールの結果で決める）: `tw ship` が `SHIPPED` か Beads 方式の `NOTHING` 以外（`NO_BRANCH_SETTING` を含む）、または手順8より前で終了したなら続行しない。`SHIPPED` か Beads 方式の `NOTHING` なら送ったあとに `tw status` を
 取り直し、`着手可否` が `READY` かつ `loopable` が `Y` の行があるか、`## ユーザーから` に中身があれば
 続行し、どちらも無ければ続行しない。
 

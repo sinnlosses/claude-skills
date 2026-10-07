@@ -84,12 +84,13 @@ def start_task(cwd: str, *args: str) -> subprocess.Popen:
 
 def make_repo(
     tmp: str,
-    branch: str = "既定",
+    branch: str | None = "既定",
     verify: str | None = None,
     base: str = "main",
     config_filename: str = "CLAUDE.md",
     format_command: str | None = None,
     preship: str | None = None,
+    section: bool = True,
 ) -> tuple[str, str, str]:
     """`(本体, 作業ツリー1, 作業ツリー2)`。本体だけが主ブランチを出す。
 
@@ -98,6 +99,7 @@ def make_repo(
     `None` を返す＝打たない）。`base` は主ブランチの名前——リモートを持たない足場なので
     `ledger.base_branch` の順3（`main`・`master`・`trunk` のうち実在するもの）で決まる。
     `config_filename` は設定ファイルの置き場（既定 `CLAUDE.md`。T-020: `AGENTS.md` も同じ形で読める）。
+    `branch` が `None` なら `- ブランチ:` 行を書かず、`section` が偽なら「## タスク運用」節ごと書かない。
     """
     main_path = os.path.join(tmp, "base")
     os.makedirs(main_path)
@@ -116,8 +118,9 @@ def make_repo(
         config_md += f"- 整形コマンド: {format_command}\n"
     if preship is not None:
         config_md += f"- 送る前の検証コマンド: {preship}\n"
-    config_md += f"- ブランチ: {branch}\n"
-    write(os.path.join(main_path, config_filename), config_md)
+    if branch is not None:
+        config_md += f"- ブランチ: {branch}\n"
+    write(os.path.join(main_path, config_filename), config_md if section else "# x\n")
     write(os.path.join(main_path, "shared.txt"), "line1\n")
     git(main_path, "add", "-A")
     git(main_path, "commit", "-q", "-m", "init")
@@ -2926,6 +2929,41 @@ def test_branch_setting_reads_leading_word() -> None:
         check("語彙に無い先頭語は INVALID（終了コード3）", r.returncode == 3 and r.stdout.startswith("INVALID\t"), r.stdout + r.stderr)
 
 
+def test_branch_setting_missing_does_not_ship() -> None:
+    print("task.py claim・ship: 節か - ブランチ: 行が無ければ枝を切らず、ship は NO_BRANCH_SETTING で送らない")
+    for reason, kwargs in (("no-section", {"section": False}), ("no-line", {"branch": None})):
+        with tempfile.TemporaryDirectory() as tmp:
+            main_path, wt1, _wt2 = make_repo(tmp, **kwargs)
+            commit_task(main_path, taskfile.Task("T-100", "作業ツリーで", "todo", "sonnet", "Y", (), BODY))
+            commit_task(main_path, taskfile.Task("T-101", "本体で", "todo", "sonnet", "Y", (), BODY))
+            git(wt1, "merge", "-q", "--ff-only", "main")
+
+            r = run_task(wt1, "claim", "T-100")
+            check(f"{reason}: claim は枝を切らずに印を立てる",
+                  r.returncode == 0 and r.stdout.startswith("CLAIMED\tT-100\t") and "branch=wt1-branch" in r.stdout
+                  and os.path.isdir(ledger.claim_dir(ledger.ledger_root(cwd=wt1), "T-100")), r.stdout + r.stderr)
+            check(f"{reason}: feature/ の枝は無い", git(main_path, "branch", "--list", "feature/*").stdout.strip() == "")
+            _claim_work_and_done(wt1, "T-100")
+            main_sha = git(main_path, "rev-parse", "main").stdout
+            r = run_task(wt1, "ship")
+            check(f"{reason}: 作業ツリーの ship は NO_BRANCH_SETTING（終了コード4）",
+                  r.returncode == 4 and r.stdout.startswith(f"NO_BRANCH_SETTING\t{reason}\treleased=-"),
+                  r.stdout + r.stderr)
+            check(f"{reason}: 主ブランチは進まない", git(main_path, "rev-parse", "main").stdout == main_sha)
+
+            r = run_task(main_path, "claim", "T-101")
+            check(f"{reason}: 本体でも claim は main のまま", r.returncode == 0 and "branch=main" in r.stdout,
+                  r.stdout + r.stderr)
+            _claim_work_and_done(main_path, "T-101", note="2")
+            main_sha = git(main_path, "rev-parse", "main").stdout
+            r = run_task(main_path, "ship")
+            check(f"{reason}: 本体の ship も NO_BRANCH_SETTING で、main で done の印を消す",
+                  r.returncode == 4 and r.stdout.startswith(f"NO_BRANCH_SETTING\t{reason}\treleased=T-101")
+                  and not os.path.isdir(ledger.claim_dir(ledger.ledger_root(cwd=main_path), "T-101")),
+                  r.stdout + r.stderr)
+            check(f"{reason}: ship は main を動かさない", git(main_path, "rev-parse", "main").stdout == main_sha)
+
+
 def test_prune() -> None:
     print("task.py prune: 振り返り済みの done/dropped だけを git rm して stage する")
     with tempfile.TemporaryDirectory() as tmp:
@@ -3275,6 +3313,7 @@ def main() -> None:
         test_ship_race_gives_up_after_three_tries,
         test_ship_default_branch_leaves_feature_branch,
         test_branch_setting_reads_leading_word,
+        test_branch_setting_missing_does_not_ship,
         test_prune,
         test_base_branch_resolution,
         test_config_file_agents_md_and_conflict,

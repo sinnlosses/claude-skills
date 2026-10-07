@@ -126,10 +126,10 @@ def tail_line(out: str, key: str) -> str:
     return next((l for l in out.splitlines() if l.startswith(key + "\t")), "")
 
 
-def make_repo(tmp: str, branch: str = "切らない", extra: str = "", verify: str | None = None,
+def make_repo(tmp: str, branch: str | None = "切らない", extra: str = "", verify: str | None = None,
               prefix: str | None = beads.PREFIX_LOCAL) -> tuple[str, str, str]:
     """`(本体, 作業ツリー1, 作業ツリー2)`。`.beads` は `prefix` の作り置きを写してから `init.py` を打つ。
-    `prefix` が `None` なら `init.py` が `bd init` で作る。"""
+    `prefix` が `None` なら `init.py` が `bd init` で作る。`branch` が `None` なら `- ブランチ:` 行を書かない。"""
     main_path = os.path.join(tmp, "base")
     os.makedirs(main_path)
     git(main_path, "init", "-q", "-b", "main")
@@ -138,7 +138,8 @@ def make_repo(tmp: str, branch: str = "切らない", extra: str = "", verify: s
     git(main_path, "config", "beads.role", "maintainer")
     config = "# x\n\n## タスク運用\n\n"
     config += f"- 検証コマンド: {verify}\n" if verify else "- 検証コマンド: なし\n"
-    config += f"- 整形コマンド: なし\n- ブランチ: {branch}\n- タスクの置き場: beads\n{extra}"
+    config += "- 整形コマンド: なし\n" + (f"- ブランチ: {branch}\n" if branch is not None else "")
+    config += f"- タスクの置き場: beads\n{extra}"
     write(os.path.join(main_path, "CLAUDE.md"), config)
     write(os.path.join(main_path, "shared.txt"), "line1\n")
     if prefix is not None:
@@ -682,6 +683,26 @@ def test_tracker_github_bidirectional() -> None:
               and fake.issues[n]["title"] == "Beads で直した題", r.stdout + repr(fake.issues[n]))
 
 
+def test_branch_line_missing_does_not_ship() -> None:
+    say("- ブランチ: 行が無ければ claim は枝を切らず、ship は NO_BRANCH_SETTING で送らずに後始末だけする")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _ = make_repo(tmp, branch=None)
+        a = new(main_path, "送らない")
+        r = run_task(wt1, "claim", a)
+        check("claim は枝を切らずに印を立てる", r.returncode == 0 and r.stdout.strip().endswith("branch=wt1")
+              and git(main_path, "branch", "--list", "feature/*").stdout.strip() == "", r.stdout + r.stderr)
+        work_and_done(wt1, a)
+        main_sha = git(main_path, "rev-parse", "main").stdout
+        r = run_task(wt1, "ship")
+        first = r.stdout.splitlines()[0] if r.stdout else ""
+        check("ship は NO_BRANCH_SETTING（終了コード4）で、done の印を閉じる",
+              r.returncode == 4 and first == f"NO_BRANCH_SETTING\tno-line\treleased={a}", r.stdout + r.stderr)
+        check("主ブランチは進まない", git(main_path, "rev-parse", "main").stdout == main_sha)
+        check("後始末にバックアップを取る", any(l.startswith("BACKUP\tOK") for l in r.stdout.splitlines()), r.stdout)
+        t = rows(run_task(wt1, "status", "--all").stdout)
+        check("閉じたものは done", t.get(a, [""] * 8)[1] == "done", repr(t.get(a)))
+
+
 def test_backup() -> None:
     say("バックアップ（git の外の決まった場所）")
     with tempfile.TemporaryDirectory() as tmp:
@@ -788,6 +809,7 @@ def main() -> None:
             test_handback_guard,
             test_setup_and_config_doctor,
             test_backup,
+            test_branch_line_missing_does_not_ship,
             test_verify_stamp,
             test_file_mode_untouched_by_beads_dir,
             test_id_forms,
