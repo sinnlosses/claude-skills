@@ -2073,6 +2073,45 @@ def _count_lines(path: str) -> int:
         return len(f.read().splitlines())
 
 
+def test_verify_keeps_failed_logs() -> None:
+    print("task.py verify: 落ちた回のログが時刻つきで直近3本残り、整形と検証の出力が task-verify.log に並ぶ")
+    with tempfile.TemporaryDirectory() as tmp:
+        _main, wt1, _wt2 = make_repo(
+            tmp, branch="切らない", verify="`sh verify.sh`", format_command="`sh format.sh`"
+        )
+        write(os.path.join(wt1, "format.sh"), "echo fmt-out\n")
+        git(wt1, "add", "-A")
+        git(wt1, "commit", "-q", "-m", "足場")
+
+        def verify_with(script: str) -> tuple[subprocess.CompletedProcess, str]:
+            write(os.path.join(wt1, "verify.sh"), script)
+            r = run_task(wt1, "verify")
+            return r, r.stdout.splitlines()[-1].split("\t")[-1]
+
+        def read(path: str) -> str:
+            with open(path, encoding="utf-8") as f:
+                return f.read()
+
+        r1, p1 = verify_with("echo fail-1\nexit 1\n")
+        r2, p2 = verify_with("echo fail-2\nexit 1\n")
+        r3, p3 = verify_with("echo pass-3\n")
+        tw = ledger.worktree_state_dir(wt1)
+        failed = lambda: sorted(n for n in os.listdir(tw) if n.startswith("task-verify.failed-"))
+        check("落ちた2回は終了コード10で、別々の失敗ログのパスが判定行に出る",
+              r1.returncode == 10 and r2.returncode == 10 and p1 != p2
+              and r1.stdout.splitlines()[-1].startswith("VERIFY_NOT_PASSED\t"), r1.stdout + r2.stdout)
+        check("失敗ログが2本残り中身は各回の出力", len(failed()) == 2
+              and "fail-1" in read(p1) and "fail-2" in read(p2) and "fail-2" not in read(p1), str(failed()))
+        check("通った回は task-verify.log を上書きし、整形の出力と検証の出力が並ぶ",
+              r3.returncode == 0 and p3 == ledger.verify_log_path(cwd=wt1)
+              and read(p3).split() == ["fmt-out", "pass-3"], read(p3))
+        check("通った回は失敗ログを増やさない", len(failed()) == 2)
+        _r4, p4 = verify_with("echo fail-4\nexit 1\n")
+        _r5, _p5 = verify_with("echo fail-5\nexit 1\n")
+        check("4本目で最古が消えて3本になる", len(failed()) == 3 and not os.path.exists(p1)
+              and os.path.exists(p2) and os.path.exists(p4), str(failed()))
+
+
 def _verify_count(tmp: str) -> int:
     return _count_lines(os.path.join(tmp, "verify-count.log"))
 
@@ -2453,7 +2492,9 @@ def test_ship_verify_failed_keeps_full_log_in_order() -> None:
         first = r.stdout.splitlines()[0] if r.stdout else ""
         check("VERIFY_FAILED で終了コード8", r.returncode == 8 and first.startswith("VERIFY_FAILED\t"), r.stdout + r.stderr)
         log_path = first.split("\t")[-1]
-        check("行の末尾がログのパス", log_path == ledger.ship_verify_log_path(cwd=wt1), first)
+        check("行の末尾が落ちた回を残したログのパス",
+              os.path.dirname(log_path) == os.path.dirname(ledger.ship_verify_log_path(cwd=wt1))
+              and os.path.basename(log_path).startswith("task-ship-verify.failed-"), first)
         with open(log_path, encoding="utf-8") as f:
             log = f.read()
         check("stdout と stderr が出た順に残る", log.split() == ["out-1", "err-1", "out-2", "err-2"], log)
@@ -3139,6 +3180,7 @@ def main() -> None:
         test_verify_refuses_unplanned_work,
         test_verify_stamp,
         test_verify_runs_format_first,
+        test_verify_keeps_failed_logs,
         test_verify_folds_base_before_check,
         test_worktree_tree_sees_same_size_edit_after_second_boundary,
         test_verify_conflict_before_check,
