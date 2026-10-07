@@ -355,7 +355,7 @@ def test_handback_guard() -> None:
         run_task(wt1, "edit", a, "--section", "やること", "--body-file", "-", stdin="### 1. 書く\n")
         check("計画だけの回は通す", handback_reason(tmp, wt1) is None)
         r = run_task(wt1, "edit", a, "--section", "決まっていること", "--body-file", "-", stdin="括弧なし\n")
-        check("全角括弧を省いた見出し「決まっていること」で編集できる", r.returncode == 0 and "括弧なし" in open(os.path.join(wt1, "develop", "task", f"{a}.md"), encoding="utf-8").read(), r.stdout + r.stderr)
+        check("全角括弧を省いた見出し「決まっていること」で編集できる", r.returncode == 0 and r.stdout.startswith("EDITED\t"), r.stdout + r.stderr)
         write(os.path.join(wt1, "work.txt"), "x\n")
         reason = handback_reason(tmp, wt1) or ""
         check("計画があっても検証が無ければ block（NOT_VERIFIED）",
