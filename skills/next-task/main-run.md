@@ -7,3 +7,4 @@
    `tw edit T-xxx --loopable N` と `tw release T-xxx` だけで、コミットは要らない）。判断が重いと分かったら
    `difficulty` を上げてから委譲し直す。委譲し直すときは、前の担当を `TaskStop` で止めてから
    新しい担当を立てる（`SendMessage` で呼び戻さない）。
+   委譲しないので `tw lap T-xxx delegate` は打たない（`accept`・`review`・`retro` は手順6・6aのとおり打つ）。

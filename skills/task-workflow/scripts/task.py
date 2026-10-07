@@ -1178,6 +1178,21 @@ def cmd_step(toplevel: str, task_id: str, step: str) -> None:
     print(f"STEPPED\t{shown}\t{step}/{len(steps)}\t{key.tree}")
 
 
+LAP_STAGES = ("delegate", "accept", "review", "retro")
+
+
+def cmd_lap(toplevel: str, task_id: str, stage: str) -> None:
+    if stage not in LAP_STAGES:
+        print(f"usage: 段 {stage!r} が {'・'.join(LAP_STAGES)} のどれでもない", file=sys.stderr)
+        raise SystemExit(2)
+    shown = beads.to_task_id(beads.to_bd_id(task_id)) if layout.read_store(toplevel) == layout.STORE_BEADS else task_id
+    if shown not in _claimed_here(toplevel):
+        print(f"NOT_CLAIMED\t{shown}")
+        return
+    _record(toplevel, "lap", shown, stage=stage)
+    print(f"LAPPED\t{shown}\t{stage}")
+
+
 def _task_trees(toplevel: str, task_id: str) -> list[str]:
     """タスクの作業ツリー。先頭は着手した `toplevel`。
 
@@ -2380,6 +2395,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("verify")
     sub.add_parser("verify-check")
+    p_lap = sub.add_parser("lap")
+    p_lap.add_argument("task_id")
+    p_lap.add_argument("stage")
     p_metrics = sub.add_parser("metrics")
     p_metrics.add_argument("--days", type=int, default=metrics.DAYS_DEFAULT)
     sub.add_parser("commit-guard").add_argument("--agent-scoped", dest="agent_scoped", action="store_true")
@@ -2487,6 +2505,8 @@ def main(argv: list[str] | None = None) -> None:
             cmd_pause(toplevel)
         elif args.command == "step":
             cmd_step(toplevel, args.task_id, args.step)
+        elif args.command == "lap":
+            cmd_lap(toplevel, args.task_id, args.stage)
         elif args.command == "metrics":
             metrics.cmd_metrics(toplevel, args.days)
     except (ledger.NoBaseBranch, layout.ConfigConflict, layout.StoreSettingError, tracker.TrackerSettingError) as e:
@@ -2540,6 +2560,8 @@ def _main_beads(toplevel: str, args: argparse.Namespace) -> None:
             cmd_pause(toplevel)
         elif args.command == "step":
             cmd_step(toplevel, args.task_id, args.step)
+        elif args.command == "lap":
+            cmd_lap(toplevel, args.task_id, args.stage)
         elif args.command == "metrics":
             metrics.cmd_metrics(toplevel, args.days)
         elif args.command == "adopt":

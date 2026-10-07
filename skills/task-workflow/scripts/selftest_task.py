@@ -1138,6 +1138,27 @@ def test_handback_guard() -> None:
         check("読めない入力は何も出さずに通す", r.returncode == 0 and r.stdout == "", r.stdout + r.stderr)
 
 
+def test_lap() -> None:
+    print("task.py lap: 4つの段が flow に1行ずつ書かれ、知らない段は拒み、印が無ければ記録しない")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, wt2 = make_repo(tmp, verify="`true`")
+        commit_task(main_path, taskfile.Task("T-100", "段", "todo", "sonnet", "Y", (), BODY))
+        r = run_task(wt1, "lap", "T-100", "delegate")
+        check("印が無ければ NOT_CLAIMED で記録しない", r.stdout.startswith("NOT_CLAIMED\tT-100") and not flow_rows(wt1),
+              r.stdout + r.stderr)
+        run_task(wt1, "claim", "T-100")
+        for stage in ("delegate", "accept", "review", "retro"):
+            r = run_task(wt1, "lap", "T-100", stage)
+            check(f"{stage} は LAPPED", r.returncode == 0 and r.stdout.strip() == f"LAPPED\tT-100\t{stage}",
+                  r.stdout + r.stderr)
+        laps = [(e["task"], e["stage"]) for e in flow_rows(wt1) if e["event"] == "lap"]
+        check("flow に lap が4行、段の順で並ぶ",
+              laps == [("T-100", s) for s in ("delegate", "accept", "review", "retro")], repr(laps))
+        r = run_task(wt1, "lap", "T-100", "bogus")
+        check("知らない段は終了コード2で記録しない", r.returncode == 2
+              and len([e for e in flow_rows(wt1) if e["event"] == "lap"]) == 4, r.stdout + r.stderr)
+
+
 def test_handback_guard_step() -> None:
     print("task.py step・handback-guard: 途中の段の返却は tw step で通し、最後の段は検証を求める")
     with tempfile.TemporaryDirectory() as tmp:
@@ -3342,6 +3363,7 @@ def main() -> None:
         test_agent_scoped_guard,
         test_handback_guard,
         test_handback_guard_step,
+        test_lap,
         test_handback_guard_other_repo,
         test_worktree_state_dir,
         test_state_dir,

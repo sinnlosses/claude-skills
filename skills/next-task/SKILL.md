@@ -68,6 +68,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 5. **委譲する**: 委譲は `## やること` の段（`### <n>. <名前>`）を1段ずつ頼む。最初の委譲で段1を渡し、
    委譲先は段を1つ済ませるたびに返す。次の段は手順5bで、**同じ委譲先を `SendMessage` で再開して**渡す
    （新しい委譲先は起こさない。例外は `difficulty` を上げるときと手順5aの引き継ぎだけ）。
+   最初の委譲を投げる直前に `tw lap T-xxx delegate` を打つ。
    先に、手順4のあとに打った `tw plan-check T-xxx` で形を決める
    （`## やること` は登録時に書く。正典「タスクファイル」）:
 
@@ -206,6 +207,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
 
 6. **受け入れる**: 作業ツリーを直し始める前に、委譲先の最後の段（`段 N/N`）の hand-back が届いていることを
    確かめる（文書の担当を並べて起こしたときは、実装の担当と文書の担当の両方について確かめる）。
+   確かめた直後に `tw lap T-xxx accept` を打つ。
    届いていなければ `TaskStop` か `SendMessage` で止めてから触る。報告をそのまま信用しない。
 
    **目視待ちの報告が来たとき**（描画を変えるタスクで、委譲先が組み立てた直後に返したもの。完了の
@@ -225,6 +227,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    | `REVIEW\topus`・`REVIEW\tcode\t<数>` | 下のレビュアーを起こす |
    | `SKIP\tdocs-only`・`NOTHING` | レビューせずに次へ |
 
+   レビュアーを起こす直前（1〜3回目とも）に `tw lap T-xxx review` を打つ。
    レビュアーは Agent ツールで、`difficulty` と同じモデル（`haiku` のときだけ `sonnet`）の新しいサブエージェント（`subagent_type` は、
    Agent ツールの説明に並ぶエージェント末尾が `reviewer` の行（`reviewer` か
    `sinnlos-skills:reviewer`。読むだけの定義で claude-skills の `agents/reviewer.md`。返却を拒む hook を持たない）が
@@ -301,7 +304,7 @@ description: "develop/task/（Beads 方式なら Beads）の未着手タスク�
    手順7で `tw done` を打ったときの出力に `COMMITS_SINCE_CLAIM` の行が続いたら、
    `${CLAUDE_SKILL_DIR}/commits-since-claim.md` を読んで扱ってから先へ進む。
 
-6a. **振り返る**（`/loop` から回っているときも。委譲せずメインで行う）: `retrospect` スキルの
+6a. **振り返る**（`/loop` から回っているときも。委譲せずメインで行う）: 頭に `tw lap T-xxx retro` を打ち、`retrospect` スキルの
    `SKILL.md`（`${CLAUDE_SKILL_DIR}/../retrospect/SKILL.md`）の節「1件だけ振り返る」と、そこが指す
    節「改善の7観点」「色と1行の書式」**だけ**を読んで従う。材料を7観点に当てて物差しを通った候補が
    残ったら、利用者が直接呼んだときは重い順に示して選ばれたものだけを、`/loop` から回っているときは
