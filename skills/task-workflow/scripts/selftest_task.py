@@ -38,6 +38,9 @@ TASK_PY = os.path.join(HERE, "task.py")
 BODY = task_body()
 # 登録の既定の本文。`make_repo` が主ブランチに置く `shared.txt` を名指す。
 PLANNED_BODY = task_body([("書く", "x")], ["shared.txt"])
+# `make_repo` の既定（`.tw/config.toml`）のときの置き場。
+TASK_REL = ".tw/task"
+DRAFT_REL = ".tw/draft"
 
 failures: list[str] = []
 
@@ -106,6 +109,7 @@ def make_repo(
     名前——リモートを持たない足場なので `ledger.base_branch` の順3で決まる。
     `config_filename`（`CLAUDE.md`・`AGENTS.md`）を渡すと、代わりに旧い「## タスク運用」節をそのファイルに書く
     （互換の読み。値はそのまま行に書き、`verify` を省略すると行を書かない）。`section` が偽なら設定をどこにも書かない。
+    `direction.md` は `.tw/config.toml` を書くときは `.tw/` に、そうでなければ `develop/` に置く。
     """
     main_path = os.path.join(tmp, "base")
     os.makedirs(main_path)
@@ -113,7 +117,7 @@ def make_repo(
     git(main_path, "config", "user.email", "test@example.com")
     git(main_path, "config", "user.name", "test")
     write(
-        os.path.join(main_path, "develop", "direction.md"),
+        os.path.join(main_path, ".tw" if config_filename is None and section else "develop", "direction.md"),
         "# 未対応の指示メモ\n\n## ユーザーから\n\n## エージェントのドラフト\n",
     )
     write(os.path.join(main_path, "docs", "history", "tasks.md"), "# 完了タスクのアーカイブ\n")
@@ -152,8 +156,13 @@ def body_file(dirpath: str, name: str = "body.md") -> str:
     return write(os.path.join(dirpath, name), PLANNED_BODY)
 
 
+def task_rel(repo: str) -> str:
+    """`repo` の置き場（`.tw/config.toml` があれば `TASK_REL`、無ければ互換の `develop/task`）。"""
+    return TASK_REL if os.path.exists(os.path.join(repo, ".tw", "config.toml")) else "develop/task"
+
+
 def commit_task(main_path: str, task: taskfile.Task) -> None:
-    write(os.path.join(main_path, "develop", "task", f"{task.id}.md"), taskfile.render(task))
+    write(os.path.join(main_path, task_rel(main_path), f"{task.id}.md"), taskfile.render(task))
     git(main_path, "add", "-A")
     git(main_path, "commit", "-q", "-m", f"{task.id}を足す")
 
@@ -380,10 +389,10 @@ def test_new_and_status_single_worktree() -> None:
         check("CREATEDで返る", r.returncode == 0 and r.stdout.startswith("CREATED\t"), r.stdout + r.stderr)
         task_id = r.stdout.split("\t")[1]
         check(
-            "develop/task/T-xxx.md ができる",
-            os.path.exists(os.path.join(wt1, "develop", "task", f"{task_id}.md")),
+            ".tw/task/T-xxx.md ができる",
+            os.path.exists(os.path.join(wt1, task_rel(wt1), f"{task_id}.md")),
         )
-        with open(os.path.join(wt1, "develop", "task", f"{task_id}.md"), encoding="utf-8") as f:
+        with open(os.path.join(wt1, task_rel(wt1), f"{task_id}.md"), encoding="utf-8") as f:
             written = f.read()
         check(
             "閉じる --- の次は空行1行で、末尾は改行1つ（整形ツールの検査に合う）",
@@ -824,8 +833,8 @@ def test_new_parallel_no_collision() -> None:
         check("番号が重ならない", id1 != id2, f"{id1} {id2}")
         check(
             "2本ともそれぞれの作業ツリーにファイルができる",
-            os.path.exists(os.path.join(wt1, "develop", "task", f"{id1}.md"))
-            and os.path.exists(os.path.join(wt2, "develop", "task", f"{id2}.md")),
+            os.path.exists(os.path.join(wt1, task_rel(wt1), f"{id1}.md"))
+            and os.path.exists(os.path.join(wt2, task_rel(wt2), f"{id2}.md")),
         )
 
 
@@ -910,14 +919,14 @@ def test_done_single_worktree() -> None:
         r = run_task(wt1, "done", "T-100", "--result-file", result_path)
         check(
             "DONEで返りstaged",
-            r.returncode == 0 and r.stdout.strip() == "DONE\tT-100\tdevelop/task/T-100.md\tstaged",
+            r.returncode == 0 and r.stdout.strip() == f"DONE\tT-100\t{TASK_REL}/T-100.md\tstaged",
             r.stdout,
         )
 
         staged = git(wt1, "diff", "--cached", "--name-only").stdout
-        check("develop/task/T-100.mdがstageされる", "develop/task/T-100.md" in staged, staged)
+        check(".tw/task/T-100.mdがstageされる", f"{TASK_REL}/T-100.md" in staged, staged)
 
-        task_path = os.path.join(wt1, "develop", "task", "T-100.md")
+        task_path = os.path.join(wt1, task_rel(wt1), "T-100.md")
         task, err = taskfile.read_task_file(task_path)
         check("statusがdoneになる", err is None and task is not None and task.status == "done", str(err))
         check(
@@ -948,7 +957,7 @@ def test_body_frame_check() -> None:
 
         run_task(wt1, "claim", "T-100")
         result_path = write(os.path.join(tmp, "result.md"), "結果\n")
-        task_path = os.path.join(wt1, "develop", "task", "T-100.md")
+        task_path = os.path.join(wt1, task_rel(wt1), "T-100.md")
         with open(task_path, encoding="utf-8") as f:
             before = f.read()
         r = run_task(wt1, "done", "T-100", "--result-file", result_path)
@@ -976,7 +985,7 @@ def test_done_commits_since_claim() -> None:
         check(
             "claim 後のコミットは COMMITS_SINCE_CLAIM で続けて知らせる",
             r.returncode == 0
-            and lines[0] == "DONE\tT-100\tdevelop/task/T-100.md\tstaged"
+            and lines[0] == f"DONE\tT-100\t{TASK_REL}/T-100.md\tstaged"
             and lines[1:] == [f"COMMITS_SINCE_CLAIM\tT-100\t{sha}"],
             r.stdout,
         )
@@ -994,7 +1003,7 @@ def test_done_commits_since_claim() -> None:
         r2 = run_task(wt2, "done", "T-101", "--result-file", result_path2)
         check(
             "控え（head=）の無い印はコミットがあっても落ちず、知らせない",
-            r2.returncode == 0 and r2.stdout.strip() == "DONE\tT-101\tdevelop/task/T-101.md\tstaged",
+            r2.returncode == 0 and r2.stdout.strip() == f"DONE\tT-101\t{TASK_REL}/T-101.md\tstaged",
             r2.stdout,
         )
 
@@ -1044,7 +1053,7 @@ def test_commit_guard() -> None:
             (f"cd {wt1} && git add -A && git commit -m z", tmp),
             (f"git -C {wt1} commit -m z", tmp),
             ("git cherry-pick HEAD", wt1),
-            ("FOO=1 git commit -m z", os.path.join(wt1, "develop")),
+            ("FOO=1 git commit -m z", os.path.join(wt1, ".tw")),
         ):
             check(f"拒む: {command}", run_guard(tmp, where, command) is not None)
         for command, where in (
@@ -1417,27 +1426,28 @@ def test_handback_guard_other_repo() -> None:
 
 
 def test_worktree_state_dir() -> None:
-    print("ledger.py .tw/: 作業ツリーごとの控えとログを作業ツリーの根に置き、古い置き場の控えも読む")
+    print("ledger.py .tw/local/: 作業ツリーごとの控えとログを .tw/local/ に置き、旧い置き場の控えも読んで移す")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp, verify="`true`", config_filename="CLAUDE.md")
         commit_task(main_path, taskfile.Task("T-100", "新しい置き場", "todo", "sonnet", "Y", (), BODY))
         commit_task(main_path, taskfile.Task("T-101", "古い置き場", "todo", "sonnet", "Y", (), BODY))
 
-        tw1 = os.path.join(wt1, ".tw")
+        local1 = os.path.join(wt1, ".tw", "local")
         run_task(wt1, "claim", "T-100")
-        with open(os.path.join(tw1, ".gitignore"), encoding="utf-8") as f:
+        with open(os.path.join(local1, ".gitignore"), encoding="utf-8") as f:
             ignore = f.read()
-        check("claim が .tw/task-open-claims/ に控えを置き、.tw/.gitignore は config.toml のほかを外す",
-              os.path.isfile(os.path.join(tw1, "task-open-claims", "T-100")) and ignore == ledger.WORKTREE_STATE_IGNORE
+        check("claim が .tw/local/task-open-claims/ に控えを置き、.tw/local/.gitignore は * で .tw/.gitignore は作らない",
+              os.path.isfile(os.path.join(local1, "task-open-claims", "T-100")) and ignore == "*\n"
+              and not os.path.exists(os.path.join(wt1, ".tw", ".gitignore"))
               and not os.path.exists(os.path.join(ledger.git_dir(wt1), "task-open-claims")), ignore)
         run_task(wt1, "edit", "T-100", "--section", "やること", "--body-file", "-", stdin="### 1. 書く\n")
         write(os.path.join(wt1, "work.txt"), "x\n")
         git(wt1, "add", "-A")
         git(wt1, "commit", "-q", "-m", "作業")
         r = run_task(wt1, "verify")
-        check("verify の控えとログが .tw/ にあり、git status に .tw/ が出ない",
-              r.returncode == 0 and os.path.isfile(os.path.join(tw1, "task-verify-stamp"))
-              and os.path.isfile(os.path.join(tw1, "task-verify.log"))
+        check("verify の控えとログが .tw/local/ にあり、git status に出ない",
+              r.returncode == 0 and os.path.isfile(os.path.join(local1, "task-verify-stamp"))
+              and os.path.isfile(os.path.join(local1, "task-verify.log"))
               and git(wt1, "status", "--porcelain").stdout == "", r.stdout + git(wt1, "status", "--porcelain").stdout)
 
         run_task(wt2, "claim", "T-101")
@@ -1445,34 +1455,55 @@ def test_worktree_state_dir() -> None:
         write(os.path.join(wt2, "work.txt"), "x\n")
         run_task(wt2, "verify")
         tw2 = os.path.join(wt2, ".tw")
+        local2 = os.path.join(tw2, "local")
         old = ledger.git_dir(wt2)
-        shutil.copy2(os.path.join(tw2, "task-verify-stamp"), os.path.join(old, "task-verify-stamp"))
-        shutil.copytree(os.path.join(tw2, "task-open-claims"), os.path.join(old, "task-open-claims"))
+        shutil.copy2(os.path.join(local2, "task-verify-stamp"), os.path.join(old, "task-verify-stamp"))
+        shutil.copytree(os.path.join(local2, "task-open-claims"), os.path.join(old, "task-open-claims"))
         shutil.rmtree(tw2)
         r = run_task(wt2, "verify-check")
-        check(".tw/ が無ければ古い置き場の控えを verify-check が読む", r.stdout.startswith("VERIFIED_SAME\t"), r.stdout)
-        check("古い置き場の控えのまま、検証した中身なら handback-guard は通す", run_handback_guard(tmp, wt2) is None)
+        check(".tw/ が無ければ git_dir の控えを verify-check が読む", r.stdout.startswith("VERIFIED_SAME\t"), r.stdout)
+        check("git_dir の控えのまま、検証した中身なら handback-guard は通す", run_handback_guard(tmp, wt2) is None)
         write(os.path.join(wt2, "work.txt"), "y\n")
-        check("古い置き場の着手の控えを handback-guard が読み、検証と違う中身なら block",
+        check("git_dir の着手の控えを handback-guard が読み、検証と違う中身なら block",
               "NOT_VERIFIED\tcontent" in _block_reason(run_handback_guard(tmp, wt2)))
         write(os.path.join(wt2, "work.txt"), "x\n")
         r = run_task(wt2, "pause")
-        check("初めて書くときに古い置き場の控えを .tw/ へ写して古いほうを消す",
-              r.returncode == 0 and os.path.isfile(os.path.join(tw2, "task-verify-stamp"))
-              and os.path.isfile(os.path.join(tw2, "task-open-claims", "T-101"))
+        check("初めて書くときに git_dir の控えを .tw/local/ へ写して古いほうを消す",
+              r.returncode == 0 and os.path.isfile(os.path.join(local2, "task-verify-stamp"))
+              and os.path.isfile(os.path.join(local2, "task-open-claims", "T-101"))
               and not os.path.exists(os.path.join(old, "task-verify-stamp"))
               and not os.path.exists(os.path.join(old, "task-open-claims"))
               and run_task(wt2, "verify-check").stdout.startswith("VERIFIED_SAME\t"), r.stdout + r.stderr)
 
+        for name in ("task-verify-stamp", "task-pause-stamp", "task-open-claims"):
+            shutil.move(os.path.join(local2, name), os.path.join(tw2, name))
+        shutil.rmtree(local2)
+        write(os.path.join(tw2, "task-verify.log"), "旧いログ\n")
+        write(os.path.join(tw2, ".gitignore"), "*\n")
+        r = run_task(wt2, "verify-check")
+        check(".tw/local/ が無ければ .tw/ 直下の旧い控えを verify-check が読む", r.stdout.startswith("VERIFIED_SAME\t"), r.stdout)
+        check(".tw/ 直下の旧い着手の控えを commit-guard が読んで拒む", run_guard(tmp, wt2, "git commit -m x") is not None)
+        r = run_task(wt2, "pause")
+        check("初めて書くときに .tw/ 直下の控えとログを .tw/local/ へ移し、直下から消す",
+              r.returncode == 0 and os.path.isfile(os.path.join(local2, "task-verify-stamp"))
+              and os.path.isfile(os.path.join(local2, "task-open-claims", "T-101"))
+              and os.path.isfile(os.path.join(local2, "task-verify.log"))
+              and ledger.legacy_state_entries(tw2) == []
+              and run_task(wt2, "verify-check").stdout.startswith("VERIFIED_SAME\t"), r.stdout + r.stderr)
+        with open(os.path.join(tw2, ".gitignore"), encoding="utf-8") as f:
+            check("旧い .tw/.gitignore は書き換えない", f.read() == "*\n")
+
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _wt2 = make_repo(tmp, verify="`true`")
-        commit_task(main_path, taskfile.Task("T-100", "config.toml の .tw/", "todo", "sonnet", "Y", (), BODY))
+        write(os.path.join(main_path, ".tw", ".gitignore"), "local/\n")
+        commit_task(main_path, taskfile.Task("T-100", "local/ だけを外す .tw/", "todo", "sonnet", "Y", (), BODY))
+        git(wt1, "merge", "-q", "--ff-only", "main")
         run_task(wt1, "claim", "T-100")
         r = run_task(wt1, "verify")
         with open(os.path.join(wt1, ".tw", ".gitignore"), encoding="utf-8") as f:
             ignore = f.read()
-        check("config.toml だけをコミットした .tw/ にも .gitignore を置き、控えとログが git status に出ない",
-              ignore == ledger.WORKTREE_STATE_IGNORE and git(wt1, "status", "--porcelain").stdout == "",
+        check(".tw/.gitignore が local/ の作業ツリーで、控えとログが git status に出ず .tw/.gitignore は変わらない",
+              ignore == "local/\n" and git(wt1, "status", "--porcelain").stdout == "",
               r.stdout + git(wt1, "status", "--porcelain").stdout)
 
 
@@ -1561,7 +1592,7 @@ def test_readonly_git() -> None:
         check("枝を切る claim は印を立てる前に GIT_READ_ONLY（終了コード11）で止まる",
               r.returncode == 11 and r.stdout.startswith("GIT_READ_ONLY\t")
               and not any(os.path.isdir(ledger.claim_dir(os.path.join(state, x), "T-100")) for x in roots)
-              and not os.path.exists(os.path.join(wt1, ".tw", "task-open-claims"))
+              and not os.path.exists(os.path.join(wt1, ".tw", "local", "task-open-claims"))
               and git(wt1, "rev-parse", "--abbrev-ref", "HEAD").stdout == branch, r.stdout + r.stderr)
 
 
@@ -1661,7 +1692,7 @@ def test_state_dir() -> None:
         check("台帳に書けなければ STATE_READ_ONLY（終了コード12）で足す置き場と TW_STATE_DIR を言い、何も立てない",
               r.returncode == 12 and r.stdout.startswith(f"STATE_READ_ONLY\t{root}\t") and "TW_STATE_DIR" in r.stdout
               and not os.path.isdir(ledger.claim_dir(root, "T-100"))
-              and not os.path.exists(os.path.join(wt1, ".tw", "task-open-claims", "T-100")), r.stdout + r.stderr)
+              and not os.path.exists(os.path.join(wt1, ".tw", "local", "task-open-claims", "T-100")), r.stdout + r.stderr)
 
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp, branch="切らない", verify="`true`")
@@ -1704,10 +1735,10 @@ def test_edit_and_plan_check() -> None:
         for tid in ("T-100", "T-101", "T-102", "T-103", "T-105", "T-106"):
             commit_task(main_path, taskfile.Task(tid, "やることの順", "todo", "sonnet", "Y", (), BODY))
         commit_task(main_path, taskfile.Task("T-104", "閉じたもの", "done", "sonnet", "Y", (), BODY + "\n## 結果\n\nx\n"))
-        task_file = lambda tid: os.path.join(wt1, "develop", "task", f"{tid}.md")  # noqa: E731
+        task_file = lambda tid: os.path.join(wt1, task_rel(wt1), f"{tid}.md")  # noqa: E731
 
         def reset(tid: str) -> None:
-            git(wt1, "checkout", "--", f"develop/task/{tid}.md")
+            git(wt1, "checkout", "--", f"{TASK_REL}/{tid}.md")
             git(wt1, "clean", "-fdq")
 
         run_task(wt1, "claim", "T-100")
@@ -1830,7 +1861,7 @@ def test_edit_section() -> None:
         main_path, wt1, _wt2 = make_repo(tmp)
         for tid in ("T-110", "T-111"):
             commit_task(main_path, taskfile.Task(tid, "節だけ", "todo", "sonnet", "Y", (), mentions))
-        path = lambda tid: os.path.join(wt1, "develop", "task", f"{tid}.md")  # noqa: E731
+        path = lambda tid: os.path.join(wt1, task_rel(wt1), f"{tid}.md")  # noqa: E731
 
         def read(tid: str) -> str:
             with open(path(tid), encoding="utf-8") as f:
@@ -1908,7 +1939,7 @@ def test_edit_deps() -> None:
             return r.stdout.split("\t")[1]
 
         def read(tid: str) -> str:
-            with open(os.path.join(wt1, "develop", "task", f"{tid}.md"), encoding="utf-8") as f:
+            with open(os.path.join(wt1, task_rel(wt1), f"{tid}.md"), encoding="utf-8") as f:
                 return f.read()
 
         def body_of(text: str) -> str:
@@ -2003,14 +2034,14 @@ def test_registered_plan() -> None:
 
         r = register("無いファイル", plan_body("nothing.txt"))
         check("木に無いパスを名指すと終了コード2で、ファイルも控えも作らない", r.returncode == 2
-              and "nothing.txt" in r.stderr and not os.path.isdir(os.path.join(main_path, "develop", "task"))
+              and "nothing.txt" in r.stderr and not os.path.isdir(os.path.join(main_path, task_rel(main_path)))
               and not os.path.isdir(os.path.join(root, ledger.PLAN_BASE_DIR_NAME)), r.stdout + r.stderr)
         r = register("空の計画", BODY)
         check("空の ## やること は終了コード2で、ファイルを作らない", r.returncode == 2 and "--hold" in r.stderr
-              and not os.path.isdir(os.path.join(main_path, "develop", "task")), r.stdout + r.stderr)
+              and not os.path.isdir(os.path.join(main_path, task_rel(main_path))), r.stdout + r.stderr)
         r = register("段に穴", plan_body("shared.txt").replace("### 1. 書く", "### 2. 書く"))
         check("段が `### 1.` から穴なく続かない ## やること は終了コード2と理由で、ファイルを作らない", r.returncode == 2
-              and "### 1." in r.stderr and not os.path.isdir(os.path.join(main_path, "develop", "task")), r.stdout + r.stderr)
+              and "### 1." in r.stderr and not os.path.isdir(os.path.join(main_path, task_rel(main_path))), r.stdout + r.stderr)
         r = register("名指すファイルが作業先に無い", plan_body("shared.txt", work_repo=work))
         check("作業先の木に無いパスを名指すと終了コード2", r.returncode == 2 and "shared.txt" in r.stderr
               and work in r.stderr, r.stdout + r.stderr)
@@ -2041,7 +2072,7 @@ def test_registered_plan() -> None:
               and ledger.read_plan_base(root, remote_same) == work_head
               and ledger.read_plan_base(root, remote_changed) == work_head,
               r4.stdout + r4.stderr + r5.stdout + r5.stderr)
-        unplanned_path = os.path.join(main_path, "develop", "task", f"{unplanned}.md")
+        unplanned_path = os.path.join(main_path, task_rel(main_path), f"{unplanned}.md")
         with open(unplanned_path, encoding="utf-8") as f:
             held = f.read()
         write(unplanned_path, held.replace("status: hold\n", "status: todo\n"))
@@ -2061,7 +2092,7 @@ def test_registered_plan() -> None:
         check("名指したファイルが変わっていなければ PLAN_REGISTERED（終了コード0）", r.returncode == 0
               and r.stdout.strip() == f"PLAN_REGISTERED\t{same}\t{head}", r.stdout + r.stderr)
         write(os.path.join(wt1, "work.txt"), "x\n")
-        with open(os.path.join(wt1, "develop", "task", f"{same}.md"), encoding="utf-8") as f:
+        with open(os.path.join(wt1, task_rel(wt1), f"{same}.md"), encoding="utf-8") as f:
             current = taskfile.parse(f.read())[0]
         r = run_task(wt1, "edit", same, "--body-file", "-",
                      stdin=current.body.replace("## 注意\n", "## 注意\n作業中の知見\n") if current else "")
@@ -2121,7 +2152,7 @@ def test_direct_mark() -> None:
                         "--body-file", "-", stdin=body)
 
     def front(task_id: str) -> str:
-        with open(os.path.join(main_path, "develop", "task", f"{task_id}.md"), encoding="utf-8") as f:
+        with open(os.path.join(main_path, task_rel(main_path), f"{task_id}.md"), encoding="utf-8") as f:
             return f.read().split("\n---\n", 1)[0]
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -2130,7 +2161,7 @@ def test_direct_mark() -> None:
         write(os.path.join(main_path, "src", "b.txt"), "b\n")
         git(main_path, "add", "-A")
         git(main_path, "commit", "-q", "-m", "src を足す")
-        task_dir = os.path.join(main_path, "develop", "task")
+        task_dir = os.path.join(main_path, task_rel(main_path))
 
         for label, body, difficulty in (
             ("difficulty が haiku でない", task_body([("書く", "x")], ["shared.txt"]), "sonnet"),
@@ -2275,8 +2306,8 @@ def test_verify_stamp() -> None:
 
         write(os.path.join(wt1, "ignored", "cache.bin"), "x\n")
         check("gitignore の対象を足しても鍵は変わらない", verify_check() == f"VERIFIED_SAME\t{tree}")
-        draft = write(os.path.join(wt1, "develop", "draft", "x.md"), "- **x**\n")
-        check("develop/draft/ のファイルを足しても鍵は変わらない", verify_check() == f"VERIFIED_SAME\t{tree}")
+        draft = write(os.path.join(wt1, DRAFT_REL, "x.md"), "- **x**\n")
+        check(".tw/draft/ のファイルを足しても鍵は変わらない", verify_check() == f"VERIFIED_SAME\t{tree}")
         os.remove(draft)
 
         cases = (
@@ -2468,7 +2499,7 @@ def _commit_and_ship(wt: str, tmp: str, *paths: str) -> subprocess.CompletedProc
     result_path = write(os.path.join(tmp, "result.md"), "検証OK\n")
     r = run_task(wt, "done", "T-120", "--result-file", result_path)
     check("done は COMMITS_SINCE_CLAIM に main のコミットを数えない",
-          r.stdout.strip() == "DONE\tT-120\tdevelop/task/T-120.md\tstaged", r.stdout + r.stderr)
+          r.stdout.strip() == f"DONE\tT-120\t{TASK_REL}/T-120.md\tstaged", r.stdout + r.stderr)
     git(wt, "add", *paths)
     git(wt, "commit", "-q", "-m", "T-120: 完了")
     return run_task(wt, "ship")
@@ -2498,7 +2529,7 @@ def test_verify_folds_base_before_check() -> None:
         r = run_task(wt1, "verify-check")
         check("取り込んだあとの中身の控えで VERIFIED_SAME", r.stdout.startswith("VERIFIED_SAME\t"), r.stdout)
 
-        r = _commit_and_ship(wt1, tmp, "notes.txt", "work.txt", "develop/task/T-120.md")
+        r = _commit_and_ship(wt1, tmp, "notes.txt", "work.txt", f"{TASK_REL}/T-120.md")
         check("ship は付け替えずに送る（verify=skipped）", r.returncode == 0 and r.stdout.startswith("SHIPPED\t")
               and "rebased=no" in r.stdout and "verify=skipped" in r.stdout, r.stdout + r.stderr)
         check("検証コマンドは1回だけ", _verify_count(tmp) == 1, str(_verify_count(tmp)))
@@ -2626,10 +2657,10 @@ def test_ship_skips_preship_verify_when_stamp_matches() -> None:
         _main, wt1 = prepare(tmp)
         write(os.path.join(wt1, "work.txt"), "x\n")
         run_task(wt1, "verify")
-        write(os.path.join(wt1, "develop", "draft", "x.md"), "- **x**\n")
+        write(os.path.join(wt1, DRAFT_REL, "x.md"), "- **x**\n")
         r = run_task(wt1, "done", "T-120", "--result-file", "-", stdin="- 振り返り: 兆候なし\n")
         check("done が通る", r.returncode == 0 and r.stdout.startswith("DONE\t"), r.stdout + r.stderr)
-        r = _commit_work_and_ship(wt1, "work.txt", "develop/draft/x.md", "develop/task/T-120.md")
+        r = _commit_work_and_ship(wt1, "work.txt", f"{DRAFT_REL}/x.md", f"{TASK_REL}/T-120.md")
         check("verify のあとのドラフトと done のタスクファイルも一緒にコミットしても preship=skipped",
               r.returncode == 0 and r.stdout.startswith("SHIPPED\t") and "preship=skipped" in r.stdout, r.stdout + r.stderr)
         check("ドラフトと done の回も送る前の検証コマンドは verify の1回だけ", _preship_count(tmp) == 1, str(_preship_count(tmp)))
@@ -2689,7 +2720,7 @@ def test_ship_runs_preship_verify_when_work_changes_tree() -> None:
             if not passes:
                 write(os.path.join(tmp, "preship-fail"), "")
             head_before = git(main_path, "rev-parse", "HEAD").stdout.strip()
-            r = _commit_and_ship(wt1, tmp, "work.txt", "develop/task/T-120.md")
+            r = _commit_and_ship(wt1, tmp, "work.txt", f"{TASK_REL}/T-120.md")
             preship_count = _count_lines(os.path.join(tmp, "preship-count.log"))
             check("送る前の検証コマンドは ship でもう1回打たれる", preship_count == 2, str(preship_count))
             check("通常の検証コマンドは打たれない", _verify_count(tmp) == 0, str(_verify_count(tmp)))
@@ -2760,7 +2791,7 @@ def test_verify_check_reports_base() -> None:
         r = run_task(wt1, "verify")
         check("取り込んでから打つ", r.stdout.startswith("FOLDED\t") and "\nVERIFIED\t" in r.stdout, r.stdout + r.stderr)
 
-        r = _commit_and_ship(wt1, tmp, "work.txt", "develop/task/T-120.md")
+        r = _commit_and_ship(wt1, tmp, "work.txt", f"{TASK_REL}/T-120.md")
         check("ship は verify=skipped", r.returncode == 0 and "verify=skipped" in r.stdout, r.stdout + r.stderr)
         check("検証コマンドは委譲先の1回と受け入れの1回", _verify_count(tmp) == 2, str(_verify_count(tmp)))
 
@@ -2802,6 +2833,200 @@ def test_verify_check_passes_base_with_preship() -> None:
 # --- task.py: ship（5.8・6章） -----------------------------------------------
 
 
+def test_root_setting() -> None:
+    print("task.py: config.toml の root に置き場が従い、置けない root は INVALID")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp)
+        config = os.path.join(main_path, ".tw", "config.toml")
+        write(config, 'verify = "true"\nroot = "work/tw/"\n')
+        write(os.path.join(main_path, "work", "tw", "task", "T-100.md"),
+              taskfile.render(taskfile.Task("T-100", "根の下", "todo", "sonnet", "Y", (), BODY)))
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "root")
+        git(wt1, "merge", "-q", "--ff-only", "main")
+
+        lines = run_task(wt1, "config").stdout.splitlines()
+        check("config が根の下の置き場を出す",
+              {"root\twork/tw\tconfig", "direction\twork/tw/direction.md", "draft\twork/tw/draft", "task\twork/tw/task"}
+              <= set(lines), "\n".join(lines))
+        r = run_task(wt1, "status")
+        check("status が根の下のタスクを読む", any(l.startswith("T-100\ttodo") for l in r.stdout.splitlines()),
+              r.stdout + r.stderr)
+        r = run_task(wt1, "new", "--summary", "根の下に足す", "--difficulty", "sonnet", "--loopable", "Y",
+                     "--body-file", body_file(wt1))
+        check("new が根の下に作る", r.returncode == 0 and r.stdout.strip() == "CREATED\tT-101\twork/tw/task/T-101.md"
+              and os.path.exists(os.path.join(wt1, "work", "tw", "task", "T-101.md")), r.stdout + r.stderr)
+        os.remove(os.path.join(wt1, "work", "tw", "task", "T-101.md"))
+        os.remove(os.path.join(wt1, "body.md"))
+
+        write(os.path.join(wt1, "work.txt"), "x\n")
+        run_task(wt1, "verify")
+        before = run_task(wt1, "verify-check").stdout.strip()
+        write(os.path.join(wt1, "work", "tw", "draft", "x.md"), "- **x**\n")
+        check("根の下の draft/ を足しても鍵は変わらない",
+              before.startswith("VERIFIED_SAME\t") and run_task(wt1, "verify-check").stdout.strip() == before, before)
+        os.remove(os.path.join(wt1, "work", "tw", "draft", "x.md"))
+        os.remove(os.path.join(wt1, "work.txt"))
+
+        r = run_task(wt1, "claim", "T-100")
+        check("claim が通る", r.returncode == 0, r.stdout + r.stderr)
+        r = run_task(wt1, "done", "T-100", "--result-file", "-", stdin="- 振り返り: 兆候なし\n")
+        check("done が根の下のタスクファイルを書く",
+              r.returncode == 0 and r.stdout.startswith("DONE\tT-100\twork/tw/task/T-100.md\tstaged"), r.stdout + r.stderr)
+        check(".tw/task/ は作られない", not os.path.exists(os.path.join(wt1, TASK_REL)))
+
+        for bad in ("../x", "a/../../x", "/x", ".", "./", ".git", ".git/hooks", ".tw/local", ".tw/local/x"):
+            write(config, f'verify = "なし"\nroot = "{bad}"\n')
+            r = run_task(main_path, "config")
+            check(f"root = {bad!r} は INVALID（終了コード3）",
+                  r.returncode == 3 and r.stdout.startswith("INVALID\t.tw/config.toml:2:"), r.stdout + r.stderr)
+
+
+MIGRATE_LAYOUT_SECTION = (
+    "# x\n\n## タスク運用\n\n前置きの文章。\n\n"
+    "- 検証コマンド: `./check.sh`（構文とテスト）\n  全段は --full\n"
+    "- 整形コマンド: なし\n- ブランチ: 既定\n- タスクの置き場: develop/task\n\nあとがき。\n"
+)
+
+
+def test_migrate_layout() -> None:
+    print("task.py migrate-layout: 旧配置を .tw/ へ移す（git add まで）")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _wt2 = make_repo(tmp, config_filename="CLAUDE.md")
+        write(os.path.join(main_path, "CLAUDE.md"), MIGRATE_LAYOUT_SECTION)
+        write(os.path.join(main_path, "develop", "draft", "x.md"), "- **x**\n")
+        write(os.path.join(main_path, "develop", "notes.txt"), "x\n")
+        commit_task(main_path, taskfile.Task("T-100", "移すもの", "todo", "sonnet", "Y", (), BODY))
+        tw = os.path.join(main_path, ".tw")
+        write(os.path.join(tw, ".gitignore"), "*\n")
+        write(os.path.join(tw, "task-verify-stamp"), "x\ny\nz\n")
+        write(os.path.join(tw, "task-open-claims", "T-999"), "")
+        write(os.path.join(tw, "task-step-stamp"), "old\n")
+        head = git(main_path, "rev-parse", "HEAD").stdout
+
+        write(os.path.join(main_path, "dirt.txt"), "x\n")
+        r = run_task(main_path, "migrate-layout", "--dry-run")
+        check("汚れていれば DIRTY（終了コード4）", r.returncode == 4 and r.stdout.strip() == "DIRTY", r.stdout + r.stderr)
+        os.remove(os.path.join(main_path, "dirt.txt"))
+
+        run_task(wt1, "claim", "T-100")
+        r = run_task(main_path, "migrate-layout", "--dry-run")
+        check("ほかの作業ツリーの着手の印があれば BUSY（終了コード4）",
+              r.returncode == 4 and r.stdout.startswith("BUSY\tT-100\t") and r.stdout.rstrip().endswith("wt1"),
+              r.stdout + r.stderr)
+        r = run_task(wt1, "migrate-layout", "--dry-run")
+        check("自分の作業ツリーの印は BUSY にしない", r.returncode == 0 and r.stdout.splitlines()[-1] == "PLAN",
+              r.stdout + r.stderr)
+        run_task(wt1, "release", "T-100")
+
+        r = run_task(main_path, "migrate-layout", "--dry-run")
+        lines = r.stdout.splitlines()
+        expected = {
+            "MOVE\t.tw/task-open-claims\t.tw/local/task-open-claims",
+            "MOVE\t.tw/task-verify-stamp\t.tw/local/task-verify-stamp",
+            "WRITE\t.tw/.gitignore",
+            "MOVE\tdevelop/direction.md\t.tw/direction.md",
+            "MOVE\tdevelop/draft\t.tw/draft",
+            "MOVE\tdevelop/task\t.tw/task",
+            "WRITE\t.tw/config.toml",
+            "KEPT_PROSE\tCLAUDE.md",
+            "LEFTOVER\tdevelop/notes.txt",
+            "LEFTOVER\t.tw/task-step-stamp",
+        }
+        check("dry-run は移すものを並べて PLAN", r.returncode == 0 and set(lines[:-1]) == expected and lines[-1] == "PLAN",
+              r.stdout + r.stderr)
+        check("dry-run は何も変えない",
+              os.path.exists(os.path.join(main_path, "develop", "direction.md"))
+              and not os.path.exists(os.path.join(tw, "config.toml")) and not os.path.exists(os.path.join(tw, "local"))
+              and open(os.path.join(main_path, "CLAUDE.md"), encoding="utf-8").read() == MIGRATE_LAYOUT_SECTION
+              and git(main_path, "status", "--porcelain").stdout == "")
+
+        r = run_task(main_path, "migrate-layout")
+        check("本番は MIGRATED", r.returncode == 0 and r.stdout.splitlines()[-1] == "MIGRATED", r.stdout + r.stderr)
+        config = open(os.path.join(tw, "config.toml"), encoding="utf-8").read()
+        check("config.toml に旧い節の値を写し、説明はコメント行、整形の なし と root は書かない",
+              config == '# タスク運用の設定（tw が読む）\n# （構文とテスト）\n# 全段は --full\nverify = "./check.sh"\n'
+              'branch = "既定"\nstore = "files"\n', config)
+        check("節からは値の行と続きの字下げ行だけを消し、見出しと文章を残す",
+              open(os.path.join(main_path, "CLAUDE.md"), encoding="utf-8").read()
+              == "# x\n\n## タスク運用\n\n前置きの文章。\n\n\nあとがき。\n")
+        staged = set(git(main_path, "diff", "--cached", "--name-only").stdout.split())
+        check("移したものと設定が stage され、コミットは増えない",
+              {".tw/config.toml", ".tw/.gitignore", "CLAUDE.md", ".tw/direction.md", ".tw/draft/x.md", ".tw/task/T-100.md"}
+              <= staged and git(main_path, "rev-parse", "HEAD").stdout == head, str(staged))
+        check("控えを .tw/local/ へ移し、.tw/.gitignore は local/",
+              os.path.isfile(os.path.join(tw, "local", "task-verify-stamp"))
+              and os.path.isfile(os.path.join(tw, "local", "task-open-claims", "T-999"))
+              and not os.path.exists(os.path.join(tw, "task-verify-stamp"))
+              and open(os.path.join(tw, ".gitignore"), encoding="utf-8").read() == "local/\n")
+        status = git(main_path, "status", "--porcelain").stdout.splitlines()
+        check("一覧に無い .tw/ 直下のファイルは移さず、git status に出る", "?? .tw/task-step-stamp" in status, str(status))
+        os.remove(os.path.join(tw, "task-step-stamp"))
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "移す")
+        lines = run_task(main_path, "config").stdout.splitlines()
+        check("移したあとは .tw/config.toml を読み、置き場は .tw/",
+              lines[:1] == ["CONFIG\t.tw/config.toml"] and "task\t.tw/task" in lines and "direction\t.tw/direction.md" in lines,
+              "\n".join(lines))
+        r = run_task(main_path, "status")
+        check("移したあとも status がタスクを読む", any(l.startswith("T-100\ttodo") for l in r.stdout.splitlines()),
+              r.stdout + r.stderr)
+        r = run_task(main_path, "migrate-layout")
+        check("移し終えていれば NOTHING", r.returncode == 0 and r.stdout.startswith("NOTHING\t"), r.stdout + r.stderr)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, _wt1, _wt2 = make_repo(tmp)
+        os.makedirs(os.path.join(main_path, "develop"), exist_ok=True)
+        git(main_path, "mv", ".tw/direction.md", "develop/direction.md")
+        write(os.path.join(main_path, "develop", "task", "T-100.md"),
+              taskfile.render(taskfile.Task("T-100", "develop に残った", "todo", "sonnet", "Y", (), BODY)))
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "T-055 の時代の配置")
+        r = run_task(main_path, "status")
+        check("config.toml があっても develop/ に置き場が残っていれば status は old_layout を出す",
+              "old_layout\tdevelop/\ttw migrate-layout --dry-run" in r.stdout.splitlines(), r.stdout + r.stderr)
+        r = run_task(main_path, "migrate-layout")
+        lines = r.stdout.splitlines()
+        check("config.toml があっても develop/ の置き場を根の下へ git mv し、config.toml は書かない",
+              r.returncode == 0 and lines[-1] == "MIGRATED"
+              and "MOVE\tdevelop/direction.md\t.tw/direction.md" in lines and "MOVE\tdevelop/task\t.tw/task" in lines
+              and "WRITE\t.tw/config.toml" not in lines
+              and os.path.isfile(os.path.join(main_path, TASK_REL, "T-100.md"))
+              and not os.path.exists(os.path.join(main_path, "develop", "task")), r.stdout + r.stderr)
+        git(main_path, "commit", "-q", "-m", "移す")
+        r = run_task(main_path, "status")
+        check("移したあとは old_layout を出さずにタスクを読む",
+              "old_layout" not in r.stdout and any(l.startswith("T-100\ttodo") for l in r.stdout.splitlines()),
+              r.stdout + r.stderr)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, _wt1, _wt2 = make_repo(tmp)
+        write(os.path.join(main_path, "develop", "direction.md"), "# 未対応の指示メモ\n\n## ユーザーから\n")
+        git(main_path, "add", "-A")
+        git(main_path, "commit", "-q", "-m", "両方にある")
+        r = run_task(main_path, "status")
+        check("根の下にも同じ名前があっても、develop/ に残った置き場を old_layout で知らせる",
+              "old_layout\tdevelop/\ttw migrate-layout --dry-run" in r.stdout.splitlines(), r.stdout + r.stderr)
+        r = run_task(main_path, "migrate-layout")
+        check("根の下にも同じ名前があれば INVALID（終了コード3）で何も変えない",
+              r.returncode == 3 and r.stdout.strip() == "INVALID\t.tw/direction.md が既にある（develop/direction.md を移せない）"
+              and git(main_path, "status", "--porcelain").stdout == "", r.stdout + r.stderr)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, _wt1, _wt2 = make_repo(tmp)
+        tw = os.path.join(main_path, ".tw")
+        write(os.path.join(tw, ".gitignore"), "*\n!config.toml\n")
+        write(os.path.join(tw, "task-verify-stamp"), "x\ny\nz\n")
+        r = run_task(main_path, "migrate-layout")
+        check("config.toml がある .tw/ でも、旧い .gitignore の書き換えと控えの移動だけを行う",
+              r.returncode == 0 and r.stdout.splitlines() == [
+                  "MOVE\t.tw/task-verify-stamp\t.tw/local/task-verify-stamp", "WRITE\t.tw/.gitignore", "MIGRATED"]
+              and open(os.path.join(tw, ".gitignore"), encoding="utf-8").read() == "local/\n"
+              and os.path.isfile(os.path.join(tw, "local", "task-verify-stamp"))
+              and git(main_path, "diff", "--cached", "--name-only").stdout.split() == [".tw/.gitignore"],
+              r.stdout + r.stderr)
+
+
 def _claim_work_and_done(wt: str, task_id: str, note: str = "") -> None:
     """`claim` 済みのタスクに1件コミットぶんの作業をして `done` にする（コミットはしない）。"""
     write(os.path.join(wt, f"work{note}.txt"), "x")
@@ -2833,7 +3058,7 @@ def test_ship_fast_forward() -> None:
         check("releasedにT-100を含む", "released=T-100" in r.stdout, r.stdout)
         check("main にmerge commitが無い", _no_merge_commits(main_path).strip() == "")
 
-        head_task = git(main_path, "show", "main:develop/task/T-100.md").stdout
+        head_task = git(main_path, "show", f"main:{TASK_REL}/T-100.md").stdout
         check("mainのタスクファイルがdoneになる", "status: done" in head_task, head_task)
         check(
             "着手の印は消える",
@@ -3437,7 +3662,7 @@ def test_prune() -> None:
 
         r = run_task(main_path, "prune")
         check("既定のしきい値（10件）に届かなければ NOTHING", r.returncode == 0 and r.stdout.startswith("NOTHING\t"), r.stdout + r.stderr)
-        check("しきい値未満では消さない", os.path.exists(os.path.join(main_path, "develop", "task", "T-101.md")))
+        check("しきい値未満では消さない", os.path.exists(os.path.join(main_path, task_rel(main_path), "T-101.md")))
         r = run_task(main_path, "prune", "--min", "2", "--dry-run")
         check("--min 2 でも1件なら --dry-run も NOTHING", r.returncode == 0 and r.stdout.startswith("NOTHING\t"), r.stdout + r.stderr)
 
@@ -3448,7 +3673,7 @@ def test_prune() -> None:
             r.stdout.splitlines()[:1] == ["PRUNE\tT-101\treviewed"],
             r.stdout,
         )
-        check("--dry-run は消さない", os.path.exists(os.path.join(main_path, "develop", "task", "T-101.md")))
+        check("--dry-run は消さない", os.path.exists(os.path.join(main_path, task_rel(main_path), "T-101.md")))
 
         write(os.path.join(main_path, "scratch.txt"), "x\n")
         r = run_task(main_path, "prune", "--min", "1")
@@ -3462,7 +3687,7 @@ def test_prune() -> None:
         staged = git(main_path, "diff", "--cached", "--name-status").stdout.split()
         check(
             "1件の削除だけが stage される（振り返りの印が無いものは残る）",
-            staged == ["D", "develop/task/T-101.md"],
+            staged == ["D", f"{TASK_REL}/T-101.md"],
             str(staged),
         )
         git(main_path, "commit", "-q", "-m", "振り返り済みのタスクファイルを消す（1件）")
@@ -3567,8 +3792,9 @@ def test_config_file_agents_md_and_conflict() -> None:
         )
         write(os.path.join(main_path, ".tw", "config.toml"), 'verify = "なし"\n')
         r = run_task(main_path, "status")
-        check(".tw/config.toml があれば旧い節を読まない（両方に節があっても通り、old_layout も出ない）",
-              r.returncode == 0 and "old_layout" not in r.stdout, r.stdout + r.stderr)
+        check(".tw/config.toml があれば旧い節を読まない（両方に節があっても通り、節の old_layout も出ない）",
+              r.returncode == 0 and not any(l.startswith("old_layout\t") and ".md" in l for l in r.stdout.splitlines()),
+              r.stdout + r.stderr)
 
 
 def _make_config_doctor_repo(tmp: str, name: str) -> str:
@@ -3717,7 +3943,9 @@ def test_config_command() -> None:
             r.stdout + r.stderr,
         )
         r = run_task(repo, "status")
-        check("status は old_layout の行を出さない", "old_layout" not in r.stdout, r.stdout + r.stderr)
+        check("status は節の old_layout を出さず、develop/ に残った置き場を old_layout で知らせる",
+              "old_layout\tCLAUDE.md\ttw migrate-layout --dry-run" not in r.stdout.splitlines()
+              and "old_layout\tdevelop/\ttw migrate-layout --dry-run" in r.stdout.splitlines(), r.stdout + r.stderr)
 
         write(os.path.join(repo, ".tw", "config.toml"), 'verify = "x"\nbranch = 1\n')
         r = run_task(repo, "config")
@@ -3740,7 +3968,7 @@ def test_full_cycle_on_master_repo() -> None:
 
         r = run_task(wt1, "new", "--summary", "master で採番", "--difficulty", "haiku", "--loopable", "Y", "--body-file", body_file(wt1))
         check("new が採番できる（master の履歴を読む）", r.returncode == 0 and r.stdout.startswith("CREATED\tT-101\t"), r.stdout + r.stderr)
-        os.remove(os.path.join(wt1, "develop", "task", "T-101.md"))
+        os.remove(os.path.join(wt1, task_rel(wt1), "T-101.md"))
         os.remove(os.path.join(wt1, "body.md"))
 
         r = run_task(wt1, "claim", "T-100")
@@ -3752,7 +3980,7 @@ def test_full_cycle_on_master_repo() -> None:
         check("ship が master へ送る", r.returncode == 0 and r.stdout.startswith("SHIPPED\t"), r.stdout + r.stderr)
         check("戻り先は claim 時点の枝", "branch=wt1-branch" in r.stdout, r.stdout)
         check("feature 枝は消える", git(base_path, "branch", "--list", "feature/T-100").stdout.strip() == "", r.stdout)
-        shipped = git(base_path, "show", "master:develop/task/T-100.md").stdout
+        shipped = git(base_path, "show", f"master:{TASK_REL}/T-100.md").stdout
         check("master のタスクファイルが done になる", "status: done" in shipped, shipped)
         check("master に merge commit が無い", _no_merge_commits(base_path, "master").strip() == "")
 
@@ -3870,6 +4098,8 @@ def main() -> None:
         test_config_file_agents_md_and_conflict,
         test_config_doctor,
         test_config_command,
+        test_root_setting,
+        test_migrate_layout,
         test_full_cycle_on_master_repo,
     ):
         t()

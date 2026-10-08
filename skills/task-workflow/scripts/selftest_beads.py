@@ -144,6 +144,7 @@ def make_repo(tmp: str, branch: str | None = "切らない", extra: str = "", ve
         config += "- 整形コマンド: なし\n" + (f"- ブランチ: {branch}\n" if branch is not None else "")
         config += f"- タスクの置き場: beads\n{extra}"
         write(os.path.join(main_path, "CLAUDE.md"), config)
+        write(os.path.join(main_path, "develop", "direction.md"), "# 未対応の指示メモ\n\n## ユーザーから\n")
     else:
         config = f'verify = "{verify or "なし"}"\n' + (f'branch = "{branch}"\n' if branch is not None else "")
         config += f'store = "beads"\n{extra}'
@@ -153,7 +154,7 @@ def make_repo(tmp: str, branch: str | None = "切らない", extra: str = "", ve
         template, exclude = _beads_templates[prefix]
         shutil.copytree(template, os.path.join(main_path, ".beads"))
         write(os.path.join(main_path, ".git", "info", "exclude"), exclude)
-    r = subprocess.run([sys.executable, INIT_PY, "develop"], cwd=main_path, capture_output=True, text=True, env=env())
+    r = subprocess.run([sys.executable, INIT_PY], cwd=main_path, capture_output=True, text=True, env=env())
     if r.returncode != 0:
         raise RuntimeError(f"init.py 失敗: {r.stdout}{r.stderr}")
     git(main_path, "add", "-A")
@@ -163,6 +164,34 @@ def make_repo(tmp: str, branch: str | None = "切らない", extra: str = "", ve
     git(main_path, "worktree", "add", "-q", "-b", "wt1", wt1, "main")
     git(main_path, "worktree", "add", "-q", "-b", "wt2", wt2, "main")
     return main_path, wt1, wt2
+
+
+def test_migrate_layout() -> None:
+    say("migrate-layout: Beads 方式では task/ を作らず .beads に触らず、ほかの作業ツリーの in_progress で BUSY")
+    with tempfile.TemporaryDirectory() as tmp:
+        main_path, wt1, _ = make_repo(tmp, legacy=True)
+        a = new(main_path, "移す前")
+        r = run_task(wt1, "claim", a)
+        check("claim が通る", r.stdout.startswith("CLAIMED\t"), r.stdout + r.stderr)
+        r = run_task(main_path, "migrate-layout", "--dry-run")
+        check("ほかの作業ツリーの in_progress があれば BUSY（終了コード4）",
+              r.returncode == 4 and r.stdout.strip() == f"BUSY\t{a}\twt1", r.stdout + r.stderr)
+        run_task(wt1, "release", a)
+        beads_dir = os.path.join(main_path, ".beads")
+        before = sorted(os.listdir(beads_dir))
+        r = run_task(main_path, "migrate-layout")
+        lines = r.stdout.splitlines()
+        check("Beads 方式は direction.md だけを移して MIGRATED",
+              r.returncode == 0 and lines[-1] == "MIGRATED" and "MOVE\tdevelop/direction.md\t.tw/direction.md" in lines
+              and not any(l.startswith("MOVE\tdevelop/task") for l in lines), r.stdout + r.stderr)
+        config = open(os.path.join(main_path, ".tw", "config.toml"), encoding="utf-8").read()
+        check(".tw/task/ を作らず、.beads は変わらず、config.toml は store = beads",
+              not os.path.exists(os.path.join(main_path, ".tw", "task")) and sorted(os.listdir(beads_dir)) == before
+              and 'store = "beads"\n' in config and "root" not in config, config)
+        git(main_path, "commit", "-q", "-m", "移す")
+        r = run_task(main_path, "status")
+        check("移したあとも Beads のタスクを読む", r.returncode == 0 and any(l.startswith(f"{a}\t") for l in r.stdout.splitlines()),
+              r.stdout + r.stderr)
 
 
 def new(cwd: str, summary: str, *extra: str, body: str = PLANNED_BODY) -> str:
@@ -274,6 +303,7 @@ def test_setup_and_config_doctor() -> None:
         r = run_task(wt1, "status")
         check("読めない置き場は INVALID（終了コード3）", r.returncode == 3 and r.stdout.startswith("INVALID"), r.stdout)
         os.remove(os.path.join(wt1, ".tw", "config.toml"))
+        write(os.path.join(wt1, "develop", "direction.md"), "# 未対応の指示メモ\n\n## ユーザーから\n")
         write(os.path.join(wt1, "CLAUDE.md"), "# x\n\n## タスク運用\n\n- ブランチ: 切らない\n- タスクの置き場: どこか\n")
         r = run_task(wt1, "status")
         check("旧い節の読めない置き場も INVALID（終了コード3）", r.returncode == 3 and r.stdout.startswith("INVALID"), r.stdout)
@@ -288,8 +318,8 @@ def test_file_mode_untouched_by_beads_dir() -> None:
         git(main_path, "commit", "-q", "-m", "ファイル方式へ")
         r = run_task(main_path, "new", "--summary", "f", "--difficulty", "haiku", "--loopable", "Y",
                      "--body-file", "-", stdin=PLANNED_BODY)
-        check("new がタスクファイルを作る", r.returncode == 0 and "develop/task/T-001.md" in r.stdout
-              and os.path.exists(os.path.join(main_path, "develop", "task", "T-001.md")), r.stdout)
+        check("new がタスクファイルを作る", r.returncode == 0 and ".tw/task/T-001.md" in r.stdout
+              and os.path.exists(os.path.join(main_path, ".tw", "task", "T-001.md")), r.stdout)
         r = run_task(main_path, "config-doctor")
         check("config-doctor は store の行を足さない（3行）", len(r.stdout.strip().splitlines()) == 3, r.stdout)
         r = run_task(main_path, "edit", "T-001", "--summary", "x")
@@ -490,10 +520,10 @@ def test_ship_skips_preship_with_draft() -> None:
         write(os.path.join(wt1, "work.txt"), "x\n")
         r = run_task(wt1, "verify")
         check("verify が通る", r.returncode == 0 and r.stdout.startswith("VERIFIED\t"), r.stdout + r.stderr)
-        write(os.path.join(wt1, "develop", "draft", "x.md"), "- **x**\n")
+        write(os.path.join(wt1, ".tw", "draft", "x.md"), "- **x**\n")
         r = run_task(wt1, "done", a, "--result-file", "-", stdin="- 振り返り: 兆候なし\n")
         check("done が通る", r.returncode == 0 and r.stdout.startswith("DONE\t"), r.stdout + r.stderr)
-        git(wt1, "add", "work.txt", "develop/draft/x.md")
+        git(wt1, "add", "work.txt", ".tw/draft/x.md")
         git(wt1, "commit", "-q", "-m", f"{a}: 作業")
         r = run_task(wt1, "ship")
         check("preship=skipped で送る", r.returncode == 0 and r.stdout.startswith("SHIPPED\t")
@@ -919,6 +949,7 @@ def main() -> None:
             test_ship_skips_preship_with_draft,
             test_direct_mark,
             test_file_mode_untouched_by_beads_dir,
+            test_migrate_layout,
             test_id_forms,
             test_bd_time_forms,
         )

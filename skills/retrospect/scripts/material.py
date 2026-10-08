@@ -17,10 +17,10 @@
 - `--human`: 人の差し戻しの回数
 - `--review`: レビューを省いた（`skip`）／指摘なし（`clean`）／指摘が返った（`found`）
 
-- **タスク**: `develop/task/T-XXX.md`（`HEAD` の版。front matter と本文、`## 結果`）。
+- **タスク**: `<根>/task/T-XXX.md`（`HEAD` の版。front matter と本文、`## 結果`）。
   無ければ旧形式の `develop/tasks.json`、それも無ければ `docs/history/tasks.md` から本文と evidence。
   Beads 方式（task-workflow の WORKFLOW.md「Beads 方式」）では Beads の課題（`task show` と同じ形）
-- **登録から完了までの差分**: `develop/task/T-XXX.md` を足したコミットの版と `HEAD` の版の差
+- **登録から完了までの差分**: `<根>/task/T-XXX.md` を足したコミットの版と `HEAD` の版の差
   （着手時に書き足した `## やること`・`## 注意` の量が出る）。旧タスクは代わりに
   `develop/progress.md`・`docs/history/progress.md` の該当の小節。Beads 方式では `bd history` の
   最初の版と最後の版の差
@@ -39,6 +39,7 @@ from __future__ import annotations
 import difflib
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -105,12 +106,12 @@ def main() -> None:
 
 
 def print_task(root: str, task_id: str) -> bool:
-    """タスクの本文を出す。新しい形（`develop/task/`）で見つかれば True。
+    """タスクの本文を出す。新しい形（`<根>/task/`）で見つかれば True。
 
     振り返り後にファイルを消したタスクは `HEAD` に無いので、最後に存在した版
     （`last_existing_ref`）を代わりに読む。
     """
-    rel = f"{layout.TASK_DIR}/{task_id}.md"
+    rel = f"{task_dir(root)}/{task_id}.md"
     text, _ = git_out(root, "show", f"HEAD:{rel}")
     if text is not None:
         print(f"出典\t{rel}（HEAD）")
@@ -148,7 +149,7 @@ def print_task(root: str, task_id: str) -> bool:
     archive = os.path.join(root, layout.HISTORY_TASKS_PATH)
     body = find_archived_task(archive, task_id)
     if body is None:
-        print(f"-\t{task_id} が {layout.TASK_DIR}/ にも tasks.json にもアーカイブにも無い")
+        print(f"-\t{task_id} が {task_dir(root)}/ にも tasks.json にもアーカイブにも無い")
         return False
     print(f"出典\t{archive}")
     print()
@@ -163,7 +164,7 @@ def print_task_file_diff(root: str, task_id: str) -> None:
     書く節なので、登録時の版には無い）。`HEAD` に無いタスクは、最後に存在した版
     （`last_existing_ref`）までの差にする。
     """
-    rel = f"{layout.TASK_DIR}/{task_id}.md"
+    rel = f"{task_dir(root)}/{task_id}.md"
     added, err = git_out(root, "log", "--diff-filter=A", "--format=%h", "--", rel)
     first = (added or "").split()
     if not first:
@@ -226,6 +227,13 @@ def find_archived_task(path: str, task_id: str) -> str | None:
 
 
 # ---- Beads 方式 ---------------------------------------------------------------
+
+
+def task_dir(root: str) -> str:
+    try:
+        return layout.task_dir(root)
+    except layout.ConfigError:
+        return posixpath.join(layout.DEFAULT_ROOT, "task")
 
 
 def is_beads(root: str) -> bool:

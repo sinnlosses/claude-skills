@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """タスク運用に要るファイルをプロジェクトに用意する（既にあるものは触らない）。
 
-使い方: init.py [develop-dir]   （既定: develop）
+使い方: init.py   （プロジェクトの根で打つ）
 
-作るのは `develop/direction.md` の骨組み（見出しと `## ユーザーから` の節）だけ（正典は
-task-workflow の WORKFLOW.md「ファイル配置と設定ファイル」）。
-`develop/task/` は最初の `task new` が、`develop/draft/` は最初のドラフトが作り、`direction.md` が
-新形式の目印になる（空のディレクトリは git に載らないため）。骨組みは決まりきっているのでモデルに書かせない
-（`direction.md` に見出し以外の行が混ざると `/plan-tasks` が「未対応の指示がある」と誤判定する）。
+作るのは `<根>/direction.md` の骨組み（見出しと `## ユーザーから` の節）と、`.tw/local/` を外す
+`.tw/.gitignore`（中身 `local/`。旧い形のものは `local/` に書き換える）だけ（正典は task-workflow の WORKFLOW.md「ファイル配置と設定ファイル」）。
+根は設定の `root`（既定 `.tw`。`.tw/config.toml` が無く `develop/direction.md` があれば `develop`）。
+`<根>/task/` は最初の `task new` が、`<根>/draft/` は最初のドラフトが作る。骨組みは決まりきっているので
+モデルに書かせない（`direction.md` に見出し以外の行が混ざると `/plan-tasks` が「未対応の指示がある」と誤判定する）。
 
 **旧形式（`develop/tasks.json` がある）なら何も作らず `LEGACY` で止まる**（終了コード5。
 `task.py` と同じ）。移すのは `task migrate` で、ここでは骨組みを混ぜない。
@@ -29,28 +29,57 @@ import layout
 SECTION_USER = layout.SECTION_USER
 LEGACY_SECTION_DRAFT = layout.LEGACY_SECTION_DRAFT
 # 見出しの行は数えないので、ドラフトの置き場は見出しの括弧に書く。
-DIRECTION = f"# 未対応の指示メモ（エージェントのドラフトは {layout.DRAFT_DIR}/ に1件1ファイル）\n\n{SECTION_USER}\n"
+def direction_skeleton(draft_dir: str) -> str:
+    return f"# 未対応の指示メモ（エージェントのドラフトは {draft_dir}/ に1件1ファイル）\n\n{SECTION_USER}\n"
 
 
 def main() -> None:
-    args = sys.argv[1:]
-    # ディレクトリ名として受け取る引数なので、`--help` のような打ち間違いをそのまま
-    # ディレクトリにして掘らない（実際に `--help/` を作ってしまった）。
-    if len(args) > 1 or (args and args[0].startswith("-")):
-        print("usage: init.py [develop-dir]   （既定: develop）", file=sys.stderr)
+    if sys.argv[1:]:
+        print("usage: init.py   （引数は取らない。プロジェクトの根で打つ）", file=sys.stderr)
         raise SystemExit(2)
-    root = args[0] if args else "develop"
 
-    if os.path.exists(os.path.join(root, "tasks.json")):
-        print(f"LEGACY\t{os.path.join(root, 'tasks.json')}\ttw migrate --dry-run")
+    tasks_json = os.path.join(layout.LEGACY_ROOT, "tasks.json")
+    if os.path.exists(tasks_json):
+        print(f"LEGACY\t{tasks_json}\ttw migrate --dry-run")
         raise SystemExit(5)
 
-    os.makedirs(root, exist_ok=True)
-    create(os.path.join(root, os.path.basename(layout.DIRECTION_PATH)), DIRECTION, check_direction)
+    direction, draft = places(".")
+    os.makedirs(os.path.dirname(direction), exist_ok=True)
+    create(direction, direction_skeleton(draft), lambda path: check_direction(path, draft))
+    os.makedirs(layout.TW_DIR, exist_ok=True)
+    prepare_gitignore(layout.TW_GITIGNORE_PATH)
     print(f"config\t{check_config()[0]}")
     code = prepare_beads(".")
     if code:
         raise SystemExit(code)
+
+
+def places(toplevel: str) -> tuple[str, str]:
+    """`(direction.md のパス, draft/ のパス)`。設定が読めなければ、互換のプロジェクトは `develop`、ほかは既定の `.tw` の下
+    （設定の不備は `check_config` が報告する）。"""
+    try:
+        return layout.direction_path(toplevel), layout.draft_dir(toplevel)
+    except layout.ConfigError:
+        legacy = not os.path.exists(os.path.join(toplevel, layout.CONFIG_PATH)) and os.path.exists(
+            os.path.join(toplevel, layout.LEGACY_DIRECTION_PATH)
+        )
+        root = layout.LEGACY_ROOT if legacy else layout.DEFAULT_ROOT
+        return os.path.join(root, "direction.md"), os.path.join(root, "draft")
+
+
+def prepare_gitignore(path: str) -> None:
+    """無ければ `local/` で作り、旧い形（`layout.OLD_TW_GITIGNORES`）なら `local/` に書き換え、ほかの中身は触らない。"""
+    if not os.path.exists(path):
+        create(path, layout.TW_GITIGNORE, lambda _path: "")
+        return
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    if text in layout.OLD_TW_GITIGNORES:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(layout.TW_GITIGNORE)
+        print(f"UPDATED\t{path}\t旧い形を local/ に書き換えた")
+    else:
+        print(f"KEPT\t{path}\t中身は書き換えない")
 
 
 def prepare_beads(root: str) -> int:
@@ -115,20 +144,20 @@ def check_config(root: str = ".") -> tuple[str, layout.Config | None]:
     return f"OK\t{config.source}\tverify={config.verify or layout.NO_COMMAND}", config
 
 
-def check_direction(path: str) -> str:
-    """`## ユーザーから` の本文行数と、隣の `draft/` のドラフトの件数を数える（正典「指示メモ」）。
+def check_direction(path: str, draft_dir: str) -> str:
+    """`## ユーザーから` の本文行数と、`draft_dir` のドラフトの件数を数える（正典「指示メモ」）。
 
     **節見出しが1つも無い（古い）ファイルは、全体を `## ユーザーから` とみなす**（後方互換）。
     ドラフトを積んでいた旧い節に行が残っていれば、それも数えて移すよう促す。
     """
     with open(path, encoding="utf-8") as f:
         lines = f.read().splitlines()
-    draft_n = _count_drafts(os.path.join(os.path.dirname(path), os.path.basename(layout.DRAFT_DIR)))
+    draft_n = _count_drafts(draft_dir)
 
     known = (SECTION_USER, LEGACY_SECTION_DRAFT)
     if not any(l.startswith(k) for l in lines for k in known):
         body = [l for l in lines if l.strip() and not l.startswith("#")]
-        return _direction_result(len(body), draft_n, 0)
+        return _direction_result(len(body), draft_n, 0, draft_dir)
 
     counts = {"user": 0, "legacy": 0}
     current: str | None = None
@@ -141,7 +170,7 @@ def check_direction(path: str) -> str:
             current = None
         elif l.strip() and current is not None:
             counts[current] += 1
-    return _direction_result(counts["user"], draft_n, counts["legacy"])
+    return _direction_result(counts["user"], draft_n, counts["legacy"], draft_dir)
 
 
 def _count_drafts(draft_dir: str) -> int:
@@ -150,10 +179,10 @@ def _count_drafts(draft_dir: str) -> int:
     return sum(1 for n in os.listdir(draft_dir) if n.endswith(".md"))
 
 
-def _direction_result(user_n: int, draft_n: int, legacy_n: int) -> str:
+def _direction_result(user_n: int, draft_n: int, legacy_n: int, draft_dir: str) -> str:
     if not (user_n or draft_n or legacy_n):
         return "OK: 未対応の指示は無い"
-    legacy = f"、旧ドラフト節{legacy_n}行（{layout.DRAFT_DIR}/ へ移す）" if legacy_n else ""
+    legacy = f"、旧ドラフト節{legacy_n}行（{draft_dir}/ へ移す）" if legacy_n else ""
     return f"PENDING: ユーザーから{user_n}行、エージェントのドラフト{draft_n}件{legacy}（/plan-tasks が先）"
 
 

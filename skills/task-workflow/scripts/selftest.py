@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -148,25 +149,43 @@ def test_init() -> None:
         cwd = os.getcwd()
         os.chdir(d)
         try:
-            r = run("init.py", "develop")
-            check("direction.md だけを作る", r.stdout.count("CREATED") == 1 and "direction.md" in r.stdout, r.stdout)
-            check("tasks.json・progress.md は作らない", not os.path.exists("develop/tasks.json") and not os.path.exists("develop/progress.md"))
+            r = run("init.py")
+            check(".tw/direction.md と .tw/.gitignore だけを作る",
+                  r.stdout.splitlines()[:2] == ["CREATED\t.tw/direction.md", "CREATED\t.tw/.gitignore"]
+                  and r.stdout.count("CREATED") == 2, r.stdout)
+            check("develop/ は作らない", not os.path.exists("develop"))
+            check(".tw/.gitignore は local/ だけを外す", open(".tw/.gitignore", encoding="utf-8").read() == "local/\n")
             check("設定が無ければ config MISSING", "config\tMISSING\t.tw/config.toml" in r.stdout, r.stdout)
 
-            created = open("develop/direction.md", encoding="utf-8").read()
+            created = open(".tw/direction.md", encoding="utf-8").read()
             check(
-                "作った direction.md は「ユーザーから」の節だけを持つ",
-                "## ユーザーから" in created and "## エージェントのドラフト" not in created,
+                "作った direction.md は「ユーザーから」の節だけを持ち、ドラフトの置き場を見出しに書く",
+                "## ユーザーから" in created and "## エージェントのドラフト" not in created and ".tw/draft/" in created,
                 created,
             )
-            check("draft/ は作らない", not os.path.exists("develop/draft"))
+            check("task/・draft/ は作らない", not os.path.exists(".tw/draft") and not os.path.exists(".tw/task"))
 
-            r = run("init.py", "develop")
-            check("2回目は上書きしない", "KEPT" in r.stdout and "CREATED" not in r.stdout, r.stdout)
+            write(".tw/.gitignore", "local/\nx\n")
+            r = run("init.py")
+            check("2回目は上書きしない", "KEPT" in r.stdout and "CREATED" not in r.stdout
+                  and open(".tw/.gitignore", encoding="utf-8").read() == "local/\nx\n", r.stdout)
             check("まっさらなら OK", "OK: 未対応の指示は無い" in r.stdout, r.stdout)
 
+            for old in ("*\n", "*\n!config.toml\n"):
+                write(".tw/.gitignore", old)
+                r = run("init.py")
+                check(f"旧い .tw/.gitignore（{old!r}）は local/ に書き換えて UPDATED",
+                      r.returncode == 0 and "UPDATED\t.tw/.gitignore\t" in r.stdout
+                      and open(".tw/.gitignore", encoding="utf-8").read() == "local/\n", r.stdout)
+
+            r = run("init.py", "develop-dir")
+            check("引数を渡すと終了コード2で何も作らない", r.returncode == 2 and not os.path.exists("develop-dir"), r.stdout + r.stderr)
+            shutil.rmtree(".tw")
+
             write("develop/direction.md", "# 未対応の指示メモ\n\nこれをやって\n")
-            r = run("init.py", "develop")
+            r = run("init.py")
+            check("develop/direction.md がある互換のプロジェクトではそれを点検し、.tw/direction.md を作らない",
+                  r.stdout.startswith("KEPT\tdevelop/direction.md\t") and not os.path.exists(".tw/direction.md"), r.stdout)
             check(
                 "節が無いファイルは全体を「ユーザーから」とみなして PENDING",
                 "PENDING:" in r.stdout and "ユーザーから1行" in r.stdout,
@@ -176,7 +195,7 @@ def test_init() -> None:
             write("develop/direction.md", "# 未対応の指示メモ\n\n## ユーザーから\nこれをやって\n")
             write("develop/draft/2026-09-27-fix-a.md", "# a\n\n- 根拠: x\n- 出し先: y\n")
             write("develop/draft/2026-09-27-fix-b.md", "# b\n")
-            r = run("init.py", "develop")
+            r = run("init.py")
             check(
                 "ユーザーからは行数、ドラフトは draft/ のファイルの件数で数える",
                 "ユーザーから1行" in r.stdout and "エージェントのドラフト2件" in r.stdout and "旧ドラフト節" not in r.stdout,
@@ -193,7 +212,7 @@ def test_init() -> None:
                 "開発フロー関連の改善についてのドラフト\n"
                 "複数行のドラフトです\n",
             )
-            r = run("init.py", "develop")
+            r = run("init.py")
             check(
                 "旧いドラフトの節に行が残っていれば、移すよう促して PENDING",
                 "PENDING:" in r.stdout and "旧ドラフト節3行" in r.stdout and "エージェントのドラフト0件" in r.stdout,
@@ -201,19 +220,19 @@ def test_init() -> None:
             )
 
             write("CLAUDE.md", "# x\n\n## タスク運用\n\n- 整形コマンド: `なし`\n- ブランチ: 既定\n")
-            r = run("init.py", "develop")
+            r = run("init.py")
             check("旧い節に検証コマンドの行が無ければ config MISSING", "config\tMISSING\tCLAUDE.md" in r.stdout, r.stdout)
 
             write("CLAUDE.md", "# x\n\n## タスク運用\n\n- 検証コマンド: `なし`\n- ブランチ: 自分で切らない\n")
-            r = run("init.py", "develop")
+            r = run("init.py")
             check("旧い節のブランチの先頭語が語彙に無ければ config INVALID", "config\tINVALID\tCLAUDE.md" in r.stdout, r.stdout)
 
             write("CLAUDE.md", "# x\n\n## タスク運用\n\n- 検証コマンド: `なし`\n")
-            r = run("init.py", "develop")
+            r = run("init.py")
             check("旧い節は検証コマンドだけで OK（ブランチは省略可）", "config\tOK\tCLAUDE.md" in r.stdout, r.stdout)
 
             write(".tw/config.toml", 'verify = "なし"\n')
-            r = run("init.py", "develop")
+            r = run("init.py")
             check(".tw/config.toml があればそれを読む", "config\tOK\t.tw/config.toml" in r.stdout, r.stdout)
             os.remove(".tw/config.toml")
 
@@ -227,9 +246,9 @@ def test_init() -> None:
         os.chdir(d)
         try:
             write("develop/tasks.json", "[]\n")
-            r = run("init.py", "develop")
+            r = run("init.py")
             check("旧形式なら LEGACY（終了コード5）", r.returncode == 5 and r.stdout.startswith("LEGACY\t"), r.stdout)
-            check("旧形式には骨組みを混ぜない", not os.path.exists("develop/direction.md"))
+            check("旧形式には骨組みを混ぜない", not os.path.exists("develop/direction.md") and not os.path.exists(".tw"))
         finally:
             os.chdir(cwd)
 

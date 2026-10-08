@@ -1,5 +1,5 @@
 """共有の `.git` の中に置く台帳（着手の印・採番の錠・最後の番号・登録時の計画の控え）と、
-作業ツリーの根の `.tw/` に置く作業ツリーごとの控え（検証・中断・段の鍵、着手の控え、ログ）。
+作業ツリーの根の `.tw/local/` に置く作業ツリーごとの控え（検証・中断・段の鍵、着手の控え、ログ）。
 
 正典は `docs/task-workflow-redesign.md` の4.2〜4.3。台帳はクローンに1つ
 （`git rev-parse --path-format=absolute --git-common-dir` の下）で、どちらもコミットしないので主ブランチを動かさない。取り合いの判定は `mkdir` の成否だけで決める
@@ -74,7 +74,7 @@ def git_common_dir(cwd: str | None = None) -> str:
 
 def git_dir(cwd: str | None = None) -> str:
     """この作業ツリー**だけ**の git dir（共有の `git_common_dir` とは違う。連結した
-    作業ツリーでは `<共通の git dir>/worktrees/<名前>`）。`.tw/` が無い作業ツリーの控えの古い置き場。"""
+    作業ツリーでは `<共通の git dir>/worktrees/<名前>`）。作業ツリーの控えの最も古い置き場。"""
     return _git(["rev-parse", "--path-format=absolute", "--git-dir"], cwd)
 
 
@@ -522,7 +522,7 @@ def write_last_id(root: str, number: int) -> None:
     os.replace(tmp, os.path.join(root, LAST_ID_FILE_NAME))
 
 
-# --- 作業ツリーごとの控えの置き場（作業ツリーの根の `.tw/`）----------------
+# --- 作業ツリーごとの控えの置き場（作業ツリーの根の `.tw/local/`）----------
 
 WORKTREE_STATE_DIR_NAME = ".tw"
 VERIFY_OWED_FILE_NAME = "task-ship-verify-owed"
@@ -532,7 +532,7 @@ SHIP_VERIFY_LOG_FILE_NAME = "task-ship-verify.log"
 PAUSE_STAMP_FILE_NAME = "task-pause-stamp"
 STEP_STAMPS_DIR_NAME = "task-step-stamps"
 OPEN_CLAIMS_DIR_NAME = "task-open-claims"
-# `.tw/` を作るときに古い置き場（`git_dir`）から写すもの。
+# `.tw/local/` を作るときに旧い置き場（`.tw/` 直下、無ければ `git_dir`）から移すもの。
 _CARRIED_OVER = (
     VERIFY_OWED_FILE_NAME,
     VERIFY_STAMP_FILE_NAME,
@@ -540,17 +540,30 @@ _CARRIED_OVER = (
     STEP_STAMPS_DIR_NAME,
     OPEN_CLAIMS_DIR_NAME,
 )
+_LOG_STEMS = (VERIFY_LOG_FILE_NAME.removesuffix(".log"), SHIP_VERIFY_LOG_FILE_NAME.removesuffix(".log"))
 
 
-WORKTREE_STATE_IGNORE = "*\n!config.toml\n"
+WORKTREE_STATE_IGNORE = "*\n"
+
+
+def _is_state_log(name: str) -> bool:
+    return name.endswith(".log") and any(name == f"{s}.log" or name.startswith(f"{s}.failed-") for s in _LOG_STEMS)
+
+
+def legacy_state_entries(tw_dir: str) -> list[str]:
+    """`.tw/` 直下にある旧い控えとログの名前。"""
+    if not os.path.isdir(tw_dir):
+        return []
+    return sorted(n for n in os.listdir(tw_dir) if n in _CARRIED_OVER or _is_state_log(n))
 
 
 def worktree_state_dir(cwd: str | None = None) -> str:
-    """書く・消す側の置き場。`.tw/` が無ければ、`.gitignore`（`WORKTREE_STATE_IGNORE`）と古い置き場の控えの写しを
-    一時ディレクトリに揃えてから `.tw` へ `rename` し、写した古い控えを消す（消せなければ残す）。
-    `.tw/` があって `.gitignore` が無ければ（`config.toml` だけをコミットした `.tw/`）、`.gitignore` だけを置く。"""
+    """書く・消す側の置き場 `.tw/local/`。無ければ、`.gitignore`（`*`）と旧い置き場の控え（名前ごとに `.tw/` 直下、
+    無ければ `git_dir`）と `.tw/` 直下のログの写しを `.tw/` の下の一時ディレクトリに揃えてから `.tw/local` へ
+    `rename` し、写した旧い側を両方の置き場から消す（消せなければ残す）。`.tw/.gitignore` は書かない。"""
     toplevel = git_toplevel(cwd)
-    target = os.path.join(toplevel, WORKTREE_STATE_DIR_NAME)
+    tw_dir = os.path.join(toplevel, WORKTREE_STATE_DIR_NAME)
+    target = os.path.join(toplevel, layout.LOCAL_DIR)
     if os.path.isdir(target):
         ignore = os.path.join(target, ".gitignore")
         if not os.path.exists(ignore):
@@ -558,19 +571,25 @@ def worktree_state_dir(cwd: str | None = None) -> str:
                 f.write(WORKTREE_STATE_IGNORE)
         return target
     old = git_dir(toplevel)
-    tmp = tempfile.mkdtemp(prefix=WORKTREE_STATE_DIR_NAME + "-", dir=toplevel)
+    os.makedirs(tw_dir, exist_ok=True)
+    tmp = tempfile.mkdtemp(prefix=".local-", dir=tw_dir)
     with open(os.path.join(tmp, ".gitignore"), "w", encoding="utf-8") as f:
         f.write(WORKTREE_STATE_IGNORE)
+    in_tw = legacy_state_entries(tw_dir)
+    names = [*_CARRIED_OVER, *(n for n in in_tw if n not in _CARRIED_OVER)]
     carried: list[str] = []
-    for name in _CARRIED_OVER:
-        src = os.path.join(old, name)
+    for name in names:
+        sources = [p for p in (os.path.join(tw_dir, name), os.path.join(old, name)) if os.path.lexists(p)]
+        if name not in _CARRIED_OVER:
+            sources = sources[:1]
+        if not sources:
+            continue
+        src = sources[0]
         if os.path.isdir(src):
             shutil.copytree(src, os.path.join(tmp, name))
-        elif os.path.isfile(src):
-            shutil.copy2(src, os.path.join(tmp, name))
         else:
-            continue
-        carried.append(src)
+            shutil.copy2(src, os.path.join(tmp, name))
+        carried.extend(sources)
     try:
         os.rename(tmp, target)
     except OSError:
@@ -590,9 +609,15 @@ def worktree_state_dir(cwd: str | None = None) -> str:
 
 
 def _worktree_state_read_dir(cwd: str | None = None) -> str:
-    """読む側の置き場。`.tw/` が無ければ古い置き場（`git_dir`）。"""
-    target = os.path.join(git_toplevel(cwd), WORKTREE_STATE_DIR_NAME)
-    return target if os.path.isdir(target) else git_dir(cwd)
+    """読む側の置き場。`.tw/local/` → `.tw/` 直下（旧い控えがあれば）→ `git_dir` の順。"""
+    toplevel = git_toplevel(cwd)
+    target = os.path.join(toplevel, layout.LOCAL_DIR)
+    if os.path.isdir(target):
+        return target
+    tw_dir = os.path.join(toplevel, WORKTREE_STATE_DIR_NAME)
+    if any(n in _CARRIED_OVER for n in legacy_state_entries(tw_dir)):
+        return tw_dir
+    return git_dir(cwd)
 
 
 # --- verify-owed（`VERIFY_FAILED` のあと打ち直すまでの検証の借り）----------
@@ -637,8 +662,9 @@ def content_key(verify_command: str, cwd: str | None = None, excluded: tuple[str
 
 
 def content_tree(toplevel: str, excluded: tuple[str, ...] = ()) -> str:
-    """鍵に取る木の SHA。`worktree_tree` の木から `develop/task/`・`develop/draft/` と `excluded` を外す。`.git` に書かない。"""
-    return worktree_tree(toplevel, objects_in_repo=False, excluded=(layout.TASK_DIR, layout.DRAFT_DIR, *excluded))
+    """鍵に取る木の SHA。`worktree_tree` の木から `<根>/task/`・`<根>/draft/`・`.tw/local/` と `excluded` を外す。`.git` に書かない。"""
+    places = (layout.task_dir(toplevel), layout.draft_dir(toplevel), layout.LOCAL_DIR)
+    return worktree_tree(toplevel, objects_in_repo=False, excluded=(*places, *excluded))
 
 
 def scratch_object_env(toplevel: str, scratch_dir: str) -> dict[str, str]:

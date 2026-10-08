@@ -256,7 +256,7 @@ def migrate(toplevel: str, dry_run: bool) -> MigrateResult:
 
     tasks_json_path = os.path.join(toplevel, "develop", "tasks.json")
     if not os.path.exists(tasks_json_path):
-        direction_path = os.path.join(toplevel, layout.DIRECTION_PATH)
+        direction_path = os.path.join(toplevel, layout.direction_path(toplevel))
         detail = "develop/tasks.json が無い" + ("（既に新形式）" if os.path.exists(direction_path) else "")
         return MigrateResult(kind="NOTHING", detail=detail)
 
@@ -275,7 +275,8 @@ def migrate(toplevel: str, dry_run: bool) -> MigrateResult:
             return MigrateResult(kind="INVALID", detail=f"{raw.get('id', '?')}\t{conv_err}")
         converted.append(task)  # type: ignore[arg-type]
 
-    written = tuple(f"{layout.TASK_DIR}/{t.id}.md" for t in converted)
+    task_rel = layout.task_dir(toplevel)
+    written = tuple(f"{task_rel}/{t.id}.md" for t in converted)
 
     progress_path = os.path.join(toplevel, "develop", "progress.md")
     moved_sections = 0
@@ -303,12 +304,12 @@ def migrate(toplevel: str, dry_run: bool) -> MigrateResult:
             task_count=len(converted),
         )
 
-    task_dir = os.path.join(toplevel, layout.TASK_DIR)
+    task_dir = os.path.join(toplevel, task_rel)
     os.makedirs(task_dir, exist_ok=True)
     for t in converted:
         with open(taskfile.task_path(task_dir, t.id), "w", encoding="utf-8") as f:
             f.write(taskfile.render(t))
-    _run_git(toplevel, ["add", layout.TASK_DIR])
+    _run_git(toplevel, ["add", task_rel])
 
     if moved_sections > 0:
         archive_path = os.path.join(toplevel, HISTORY_DIR, "progress.md")

@@ -11,21 +11,28 @@
 
 from __future__ import annotations
 
+import dataclasses
 import os
+import posixpath
 import re
 from dataclasses import dataclass
 
-# develop/task/T-xxx.md（正典3章）
-TASK_DIR = "develop/task"
+# 設定・作業ツリーごとの控えの置き場（`root` によらない）
+TW_DIR = ".tw"
+LOCAL_DIR = ".tw/local"
+TW_GITIGNORE_PATH = ".tw/.gitignore"
+TW_GITIGNORE = "local/\n"
+# `.tw/` 直下の控えを git の外に置いていたころの `.tw/.gitignore`
+OLD_TW_GITIGNORES = ("*", "*\n", "*\n!config.toml", "*\n!config.toml\n")
 
-# develop/direction.md とその節（正典「指示メモ」）
-DIRECTION_PATH = "develop/direction.md"
+# 旧配置（`.tw/config.toml` が無いプロジェクト）の根
+LEGACY_ROOT = "develop"
+LEGACY_DIRECTION_PATH = "develop/direction.md"
+
+# <根>/direction.md の節（正典「指示メモ」）
 SECTION_USER = "## ユーザーから"
 # ドラフトを direction.md に積んでいたころの節。移し忘れを数えるためだけに残す。
 LEGACY_SECTION_DRAFT = "## エージェントのドラフト"
-
-# エージェントのドラフト（1件1ファイル。正典「指示メモ」）
-DRAFT_DIR = "develop/draft"
 
 # docs/history/tasks.md（旧形式の履歴・採番の下限。正典5.3）
 HISTORY_TASKS_PATH = "docs/history/tasks.md"
@@ -119,12 +126,12 @@ _config_cache: dict[str, tuple[tuple, Config]] = {}
 
 def read_config(toplevel: str) -> Config:
     """`toplevel` の設定。`.tw/config.toml` が無く `develop/direction.md` があれば旧い「## タスク運用」節を
-    写して読む。どちらも無ければ既定の `Config(source=None)`。
+    写して読み、根は `develop`。どちらも無ければ既定の `Config(source=None)`。
 
     根ごとに覚え、設定のファイルが変わっていれば読み直す。読めなければ `ConfigError`。
     """
     root = os.path.realpath(toplevel)
-    stamp = tuple(_mtime(os.path.join(root, p)) for p in (CONFIG_PATH, DIRECTION_PATH, *CONFIG_FILENAMES))
+    stamp = tuple(_mtime(os.path.join(root, p)) for p in (CONFIG_PATH, LEGACY_DIRECTION_PATH, *CONFIG_FILENAMES))
     cached = _config_cache.get(root)
     if cached is not None and cached[0] == stamp:
         return cached[1]
@@ -132,12 +139,37 @@ def read_config(toplevel: str) -> Config:
     if os.path.exists(path):
         with open(path, encoding="utf-8") as f:
             config = _config_from_values(CONFIG_PATH, parse_config_text(f.read(), CONFIG_PATH))
-    elif os.path.exists(os.path.join(root, DIRECTION_PATH)):
-        config = _config_from_legacy_section(root)
+    elif os.path.exists(os.path.join(root, LEGACY_DIRECTION_PATH)):
+        config = dataclasses.replace(_config_from_legacy_section(root), root=LEGACY_ROOT)
     else:
         config = Config(source=None)
     _config_cache[root] = (stamp, config)
     return config
+
+
+def task_dir(toplevel: str) -> str:
+    """タスクファイルの置き場（`toplevel` からの相対）。"""
+    return posixpath.join(read_config(toplevel).root, "task")
+
+
+def direction_path(toplevel: str) -> str:
+    return posixpath.join(read_config(toplevel).root, "direction.md")
+
+
+def draft_dir(toplevel: str) -> str:
+    return posixpath.join(read_config(toplevel).root, "draft")
+
+
+def stranded_legacy_places(toplevel: str, config: Config) -> list[tuple[str, str]]:
+    """`.tw/config.toml` があり根が `develop` でないのに `develop/` に残っている置き場の `(元, 先)`（先が既にあっても返す）。"""
+    if config.source != CONFIG_PATH or config.root == LEGACY_ROOT:
+        return []
+    names = ["direction.md", "draft"] + (["task"] if config.store == STORE_FILES else [])
+    return [
+        (posixpath.join(LEGACY_ROOT, n), posixpath.join(config.root, n))
+        for n in names
+        if os.path.lexists(os.path.join(toplevel, LEGACY_ROOT, n))
+    ]
 
 
 def _mtime(path: str) -> tuple[int, int] | None:
@@ -217,9 +249,23 @@ def _config_from_values(source: str, entries: list[tuple[int, str, str]]) -> Con
             raise ConfigError(
                 f"{source}:{lines[key]}: {key} の値 {values[key]!r} が {' / '.join(vocabulary)} のどれでもない"
             )
-    if "root" in values and os.path.isabs(values["root"] or ""):
-        raise ConfigError(f"{source}:{lines['root']}: root はリポジトリの根からの相対パス")
+    if "root" in values:
+        values["root"] = _check_root(values["root"] or "", f"{source}:{lines['root']}")
     return _build_config(source, values)
+
+
+def _check_root(value: str, where: str) -> str:
+    if value.startswith("/") or os.path.isabs(value):
+        raise ConfigError(f"{where}: root はリポジトリの根からの相対パス: {value}")
+    if ".." in value.split("/"):
+        raise ConfigError(f"{where}: root に .. を含められない: {value}")
+    root = posixpath.normpath(value)
+    if root == ".":
+        raise ConfigError(f"{where}: root にリポジトリの根そのものは使えない: {value}")
+    for reserved in (".git", LOCAL_DIR):
+        if root == reserved or root.startswith(reserved + "/"):
+            raise ConfigError(f"{where}: root に {reserved} とその下は使えない: {value}")
+    return root
 
 
 def _build_config(source: str | None, values: dict[str, str | None]) -> Config:
@@ -288,6 +334,58 @@ def _legacy_lines(text: str) -> dict[str, str]:
         m = re.match(r"- ([^:]+):(.*)$", line) if in_section else None
         if m and m.group(1) not in found:
             found[m.group(1)] = m.group(2).strip()
+    return found
+
+
+LEGACY_LABELS = {
+    "検証コマンド": "verify",
+    "送る前の検証コマンド": "verify_before_ship",
+    "整形コマンド": "format",
+    "規則の発火の集計": "hook_tally",
+    "ブランチ": "branch",
+    "主ブランチ": "base_branch",
+    "バックアップ": "backup",
+    "GitHub Project": "github_project",
+    "タスクの置き場": "store",
+    "トラッカー": "tracker",
+}
+
+
+@dataclass(frozen=True)
+class LegacyLine:
+    """節の中の知っているラベルの `- <ラベル>: <値>` 行。`start`〜`end`（含まない）が続きの字下げ行までの行番号（0始まり）。"""
+
+    key: str
+    value: str
+    continuation: tuple[str, ...]
+    start: int
+    end: int
+
+
+def legacy_section_lines(text: str) -> list[LegacyLine]:
+    """「## タスク運用」節の、知っているラベルの行（ラベルごとに最初の1行）。"""
+    lines = text.splitlines()
+    found: list[LegacyLine] = []
+    seen: set[str] = set()
+    in_section = False
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("## "):
+            in_section = line.startswith(TASK_SECTION_HEADING)
+            i += 1
+            continue
+        m = re.match(r"- ([^:]+):(.*)$", line) if in_section else None
+        if m is None or m.group(1) not in LEGACY_LABELS or m.group(1) in seen:
+            i += 1
+            continue
+        seen.add(m.group(1))
+        end = i + 1
+        while end < len(lines) and lines[end][:1] in (" ", "\t") and lines[end].strip():
+            end += 1
+        found.append(LegacyLine(LEGACY_LABELS[m.group(1)], m.group(2).strip(),
+                                tuple(l.strip() for l in lines[i + 1 : end]), i, end))
+        i = end
     return found
 
 

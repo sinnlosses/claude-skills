@@ -1,4 +1,4 @@
-"""`develop/task/T-xxx.md` の読み書き（front matter の専用文法、本文の節の検査）。
+"""`<根>/task/T-xxx.md` の読み書き（front matter の専用文法、本文の節の検査）。
 
 正典は `docs/task-workflow-redesign.md` の3章。front matter は **YAML ではない**
 専用の6行（`id` / `summary` / `status` / `difficulty` / `loopable` / `dependencies`。
@@ -590,7 +590,7 @@ def format_id(number: int) -> str:
 
 
 def local_task_ids(task_dir: str) -> list[str]:
-    """作業ツリーの `develop/task/` にあるファイル名の語幹（拡張子抜き）を返す。"""
+    """作業ツリーの `<根>/task/` にあるファイル名の語幹（拡張子抜き）を返す。"""
     if not os.path.isdir(task_dir):
         return []
     return sorted(os.path.splitext(n)[0] for n in os.listdir(task_dir) if n.endswith(".md"))

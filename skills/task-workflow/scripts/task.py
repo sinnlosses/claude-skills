@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """1件1ファイル＋台帳の形のタスク運用を操作する入口コマンド。
 
-使い方: tw <status|new|claim|release|done|ship|prune|migrate|config-doctor|show|edit|plan-check|verify|verify-check|pause|step|commit-guard|handback-guard> ...
+使い方: tw <status|new|claim|release|done|ship|prune|migrate|migrate-layout|config-doctor|show|edit|plan-check|verify|verify-check|pause|step|commit-guard|handback-guard> ...
 
 正典は `docs/task-workflow-redesign.md`（5章が `task` コマンド、4章が状態と台帳、
 3章がタスクファイル、6章が送り出し、5.9・10章が `migrate`）。`install.sh` が PATH 上に張る
@@ -43,6 +43,7 @@ import layout
 import ledger
 import legacy
 import metrics
+import relayout
 import ship
 import taskfile
 import tracker
@@ -52,18 +53,15 @@ import tracker
 
 
 def detect_format(toplevel: str) -> tuple[str, str | None]:
-    tasks_json = os.path.join(toplevel, "develop", "tasks.json")
-    task_dir = os.path.join(toplevel, layout.TASK_DIR)
-    direction = os.path.join(toplevel, layout.DIRECTION_PATH)
-    has_tasks_json = os.path.exists(tasks_json)
-    has_task_files = os.path.isdir(task_dir) and any(
-        n.endswith(".md") for n in os.listdir(task_dir)
-    )
-    if has_tasks_json:
-        if has_task_files:
+    tasks_json = os.path.join(toplevel, layout.LEGACY_ROOT, "tasks.json")
+    task_dir = os.path.join(toplevel, layout.LEGACY_ROOT, "task")
+    if os.path.exists(tasks_json):
+        if os.path.isdir(task_dir) and any(n.endswith(".md") for n in os.listdir(task_dir)):
             return "INVALID", "develop/tasks.json と develop/task/ の両方がある（移行が途中）"
         return "LEGACY", None
-    if os.path.exists(direction):
+    if os.path.exists(os.path.join(toplevel, layout.CONFIG_PATH)):
+        return "NEW", None
+    if os.path.exists(os.path.join(toplevel, layout.LEGACY_DIRECTION_PATH)):
         return "NEW", None
     return "MISSING", None
 
@@ -88,14 +86,14 @@ def _run_git(toplevel: str, args: list[str]) -> subprocess.CompletedProcess:
 
 
 def _list_base_task_filenames(toplevel: str, base: str) -> list[str]:
-    r = _run_git(toplevel, ["ls-tree", "--name-only", "-r", base, "--", layout.TASK_DIR])
+    r = _run_git(toplevel, ["ls-tree", "--name-only", "-r", base, "--", layout.task_dir(toplevel)])
     if r.returncode != 0:
         return []
     return [os.path.basename(p) for p in r.stdout.splitlines() if p.endswith(".md")]
 
 
 def _read_base_task_text(toplevel: str, base: str, filename: str) -> str | None:
-    r = _run_git(toplevel, ["show", f"{base}:{layout.TASK_DIR}/{filename}"])
+    r = _run_git(toplevel, ["show", f"{base}:{layout.task_dir(toplevel)}/{filename}"])
     return r.stdout if r.returncode == 0 else None
 
 
@@ -129,7 +127,7 @@ def load_tasks(
             continue
         tasks[parsed.id] = parsed
 
-    task_dir = os.path.join(toplevel, layout.TASK_DIR)
+    task_dir = os.path.join(toplevel, layout.task_dir(toplevel))
     local_only: list[str] = []
     for stem in taskfile.local_task_ids(task_dir):
         if stem in tasks or stem in invalid:
@@ -354,6 +352,8 @@ def _print_old_layout(toplevel: str) -> None:
     config = layout.read_config(toplevel)
     if config.legacy:
         print(f"old_layout\t{config.source}\ttw migrate-layout --dry-run")
+    elif layout.stranded_legacy_places(toplevel, config):
+        print(f"old_layout\t{layout.LEGACY_ROOT}/\ttw migrate-layout --dry-run")
 
 
 # --- config ------------------------------------------------------------------
@@ -380,10 +380,10 @@ def cmd_config(toplevel: str) -> None:
         if value is None:
             value = layout.NO_COMMAND if key in CONFIG_COMMAND_KEYS else "-"
         print(f"{key}\t{value}\t{'config' if key in config.written else 'default'}")
-    print(f"direction\t{layout.DIRECTION_PATH}")
-    print(f"draft\t{layout.DRAFT_DIR}")
+    print(f"direction\t{layout.direction_path(toplevel)}")
+    print(f"draft\t{layout.draft_dir(toplevel)}")
     if config.store == layout.STORE_FILES:
-        print(f"task\t{layout.TASK_DIR}")
+        print(f"task\t{layout.task_dir(toplevel)}")
 
 
 # --- new（5.4） -------------------------------------------------------------
@@ -433,7 +433,7 @@ def cmd_new(toplevel: str, args: argparse.Namespace) -> None:
         number = max(candidates) + 1
         task_id = taskfile.format_id(number)
 
-        task_dir = os.path.join(toplevel, layout.TASK_DIR)
+        task_dir = os.path.join(toplevel, layout.task_dir(toplevel))
         os.makedirs(task_dir, exist_ok=True)
         path = taskfile.task_path(task_dir, task_id)
         rendered = taskfile.render(
@@ -446,7 +446,7 @@ def cmd_new(toplevel: str, args: argparse.Namespace) -> None:
         ledger.write_last_id(root, number)
         if plan_base is not None:
             ledger.write_plan_base(root, task_id, plan_base)
-        print(f"CREATED\t{task_id}\t{layout.TASK_DIR}/{task_id}.md")
+        print(f"CREATED\t{task_id}\t{layout.task_dir(toplevel)}/{task_id}.md")
     finally:
         ledger.release_lock(root)
 
@@ -549,7 +549,7 @@ def _task_difficulty(toplevel: str, task_id: str) -> str:
             issue = beads.show(toplevel, beads.to_bd_id(task_id))
             task = beads.to_task(issue)[0] if issue is not None else None
         else:
-            task = taskfile.read_task_file(taskfile.task_path(os.path.join(toplevel, layout.TASK_DIR), task_id))[0]
+            task = taskfile.read_task_file(taskfile.task_path(os.path.join(toplevel, layout.task_dir(toplevel)), task_id))[0]
     except Exception:
         return "?"
     return task.difficulty if task is not None else "?"
@@ -650,7 +650,7 @@ def cmd_claim(toplevel: str, task_id: str) -> None:
             registered = True
 
     _claim_branch_out(
-        toplevel, task_id, branch_setting, base, branch_after_sync, f"{layout.TASK_DIR}/{task_id}.md",
+        toplevel, task_id, branch_setting, base, branch_after_sync, f"{layout.task_dir(toplevel)}/{task_id}.md",
         _direct_column(task.direct, task.difficulty, task.body, registered),
     )
     _print_split_claims(split)
@@ -758,7 +758,7 @@ def cmd_done(toplevel: str, task_id: str, dropped: bool, result_path: str) -> No
         raise SystemExit(4)
     ledger.require_git_writable(toplevel)
 
-    task_dir = os.path.join(toplevel, layout.TASK_DIR)
+    task_dir = os.path.join(toplevel, layout.task_dir(toplevel))
     path = taskfile.task_path(task_dir, task_id)
     task, err = taskfile.read_task_file(path)
     if err is not None or task is None:
@@ -783,7 +783,7 @@ def cmd_done(toplevel: str, task_id: str, dropped: bool, result_path: str) -> No
     with open(path, "w", encoding="utf-8") as f:
         f.write(rendered)
 
-    relpath = os.path.join(layout.TASK_DIR, f"{task_id}.md")
+    relpath = os.path.join(layout.task_dir(toplevel), f"{task_id}.md")
     _run_git(toplevel, ["add", relpath])
     print(f"DONE\t{task_id}\t{relpath}\tstaged")
     _record(toplevel, "done", task_id, dropped=dropped, reflection=_reflection_of(result))
@@ -898,7 +898,7 @@ def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
     if not taskfile.ID_PATTERN.match(task_id):
         print(f"usage: {task_id!r} が T-999 の形式でない", file=sys.stderr)
         raise SystemExit(2)
-    path = taskfile.task_path(os.path.join(toplevel, layout.TASK_DIR), task_id)
+    path = taskfile.task_path(os.path.join(toplevel, layout.task_dir(toplevel)), task_id)
     if not os.path.exists(path):
         print(f"NOT_READY\t{task_id}\t存在しない")
         raise SystemExit(4)
@@ -937,7 +937,7 @@ def cmd_edit(toplevel: str, args: argparse.Namespace) -> None:
         and taskfile.plan_changed(task.body, body)
         and ledger.read_plan_mark(root, task_id) is None
     ):
-        own = f"{layout.TASK_DIR}/{task_id}.md"
+        own = f"{layout.task_dir(toplevel)}/{task_id}.md"
         state = _plan_state(toplevel, owner.get("head"), args.body_file, own)
         _refuse_plan_after_work(task_id, state, args.after_work)
         root = ledger.ledger_root_for_write(cwd=toplevel)
@@ -1006,7 +1006,7 @@ def _refuse_plan_after_work(shown: str, state: str, after_work: bool) -> None:
 def _file_unplanned_work(toplevel: str) -> list[str]:
     """この作業ツリーが印を持つ着手中のタスクのうち、`## やること` が空のまま作業が始まっているもの。"""
     root = ledger.ledger_root(cwd=toplevel)
-    task_dir = os.path.join(toplevel, layout.TASK_DIR)
+    task_dir = os.path.join(toplevel, layout.task_dir(toplevel))
     found: list[str] = []
     for task_id in ledger.list_claims(root):
         owner = ledger.read_owner(ledger.claim_dir(root, task_id))
@@ -1015,7 +1015,7 @@ def _file_unplanned_work(toplevel: str) -> list[str]:
         task, err = taskfile.read_task_file(taskfile.task_path(task_dir, task_id))
         if err is not None or task is None or task.status not in ("todo", "hold") or taskfile.has_plan(task.body):
             continue
-        own = f"{layout.TASK_DIR}/{task_id}.md"
+        own = f"{layout.task_dir(toplevel)}/{task_id}.md"
         if _plan_state(toplevel, owner.get("head"), "-", own) == PLAN_AFTER_WORK:
             found.append(task_id)
     return found
@@ -1030,7 +1030,7 @@ def cmd_plan_check(toplevel: str, task_id: str) -> None:
     if owner is None or owner.get("worktree") != toplevel:
         print(f"NOT_OWNER\t{task_id}")
         raise SystemExit(4)
-    task, err = taskfile.read_task_file(taskfile.task_path(os.path.join(toplevel, layout.TASK_DIR), task_id))
+    task, err = taskfile.read_task_file(taskfile.task_path(os.path.join(toplevel, layout.task_dir(toplevel)), task_id))
     if err is not None or task is None:
         print(f"INVALID\t{err or '読めない'}")
         raise SystemExit(3)
@@ -1313,7 +1313,7 @@ def _claimed_plan_body(toplevel: str, task_id: str) -> str:
     if layout.read_config(toplevel).store == layout.STORE_BEADS:
         issue = beads.show(toplevel, beads.to_bd_id(task_id))
         return f"{taskfile.PLAN_HEADING}\n{issue.raw.get('notes') or ''}\n" if issue is not None else ""
-    task, _ = taskfile.read_task_file(taskfile.task_path(os.path.join(toplevel, layout.TASK_DIR), task_id))
+    task, _ = taskfile.read_task_file(taskfile.task_path(os.path.join(toplevel, layout.task_dir(toplevel)), task_id))
     return task.body if task is not None else ""
 
 
@@ -1361,7 +1361,7 @@ def _handback_gaps(toplevel: str, task_id: str, store: str) -> list[str]:
     else:
         owner = ledger.read_owner(ledger.claim_dir(ledger.ledger_root(cwd=toplevel), task_id)) or {}
         head = owner.get("head")
-        own_path = f"{layout.TASK_DIR}/{task_id}.md"
+        own_path = f"{layout.task_dir(toplevel)}/{task_id}.md"
         plan_line = _first_output_line(lambda: cmd_plan_check(toplevel, task_id))
     plan_ok = plan_line.split("\t")[0] in HANDBACK_PLAN_OK
     gaps: list[str] = []
@@ -1667,7 +1667,7 @@ def cmd_prune(toplevel: str, dry_run: bool, minimum: int) -> None:
     if dry_run:
         print(f"PLAN\t{len(targets)}")
         return
-    paths = [f"{layout.TASK_DIR}/{tid}.md" for tid, _ in targets]
+    paths = [f"{layout.task_dir(toplevel)}/{tid}.md" for tid, _ in targets]
     r = _run_git(toplevel, ["rm", "-q", "--", *paths])
     if r.returncode != 0:
         raise ledger.GitCommandError(f"git rm が失敗した: {r.stderr.strip()}")
@@ -1675,7 +1675,7 @@ def cmd_prune(toplevel: str, dry_run: bool, minimum: int) -> None:
 
 
 def _tasks_at(toplevel: str, rev: str) -> dict[str, taskfile.Task]:
-    r = _run_git(toplevel, ["ls-tree", "--name-only", rev, f"{layout.TASK_DIR}/"])
+    r = _run_git(toplevel, ["ls-tree", "--name-only", rev, f"{layout.task_dir(toplevel)}/"])
     tasks: dict[str, taskfile.Task] = {}
     for path in r.stdout.splitlines() if r.returncode == 0 else []:
         stem = os.path.splitext(os.path.basename(path))[0]
@@ -1731,6 +1731,26 @@ def cmd_migrate(toplevel: str, dry_run: bool) -> None:
         print("REMOVE\tdevelop/progress.md")
     print("REMOVE\tdevelop/tasks.json")
     print(f"{'PLAN' if dry_run else 'MIGRATED'}\t{result.task_count}")
+
+
+# --- migrate-layout ----------------------------------------------------------
+
+
+def cmd_migrate_layout(toplevel: str, dry_run: bool) -> None:
+    if not dry_run:
+        ledger.require_git_writable(toplevel)
+    outcome = relayout.migrate_layout(toplevel, dry_run)
+    if outcome.kind == "DIRTY":
+        print("DIRTY")
+        raise SystemExit(4)
+    for line in outcome.lines:
+        print(line)
+    if outcome.kind == "BUSY":
+        raise SystemExit(4)
+    if outcome.kind == "INVALID":
+        raise SystemExit(3)
+    if outcome.kind in ("PLAN", "MIGRATED"):
+        print(outcome.kind)
 
 
 # --- config-doctor（T-021） --------------------------------------------------
@@ -1998,7 +2018,7 @@ NEW_ATTEMPTS = 20
 
 
 def _next_number(toplevel: str, snap: BeadsSnapshot) -> int:
-    """Beads の番号・`bd kv` の最後の番号・主ブランチの `develop/task/` と `docs/history/tasks.md`・
+    """Beads の番号・`bd kv` の最後の番号・主ブランチの `<根>/task/` と `docs/history/tasks.md`・
     ファイル方式の台帳の `last-id`（残っていれば）のうち最大の次。"""
     candidates = [0]
     candidates += [n for n in (beads.id_number(i.bd_id) for i in snap.issues.values()) if n is not None]
@@ -2191,7 +2211,7 @@ def cmd_show(toplevel: str, task_id: str, store: str) -> None:
         if not taskfile.ID_PATTERN.match(task_id):
             print(f"usage: {task_id!r} が T-999 の形式でない", file=sys.stderr)
             raise SystemExit(2)
-        path = taskfile.task_path(os.path.join(toplevel, layout.TASK_DIR), task_id)
+        path = taskfile.task_path(os.path.join(toplevel, layout.task_dir(toplevel)), task_id)
         text = None
         if os.path.exists(path):
             with open(path, encoding="utf-8") as f:
@@ -2484,6 +2504,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_migrate = sub.add_parser("migrate")
     p_migrate.add_argument("--dry-run", dest="dry_run", action="store_true")
 
+    p_migrate_layout = sub.add_parser("migrate-layout")
+    p_migrate_layout.add_argument("--dry-run", dest="dry_run", action="store_true")
+
     sub.add_parser("config-doctor")
     sub.add_parser("config")
 
@@ -2574,11 +2597,14 @@ def main(argv: list[str] | None = None) -> None:
         if args.command == "config":
             cmd_config(toplevel)
             return
+        if args.command == "migrate-layout":
+            cmd_migrate_layout(toplevel, args.dry_run)
+            return
         if store == layout.STORE_BEADS:
             _main_beads(toplevel, args)
             return
         if args.command in BEADS_ONLY_COMMANDS:
-            print(f"usage: {args.command} は Beads 方式だけ（ファイル方式では develop/task/ を直に直す）", file=sys.stderr)
+            print(f"usage: {args.command} は Beads 方式だけ（ファイル方式では <根>/task/ を直に直す）", file=sys.stderr)
             raise SystemExit(2)
         if args.command == "status":
             cmd_status(toplevel, args.show_all, args.check)
