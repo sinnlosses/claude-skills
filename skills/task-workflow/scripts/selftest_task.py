@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """`task.py`（1件1ファイル＋台帳の形）の自己テスト。
 
-使い方: python3 selftest_task.py
+使い方: python3 selftest_task.py [テストの関数名 ...]（名前を渡すとそれだけを流す）
 
 一時ディレクトリに git リポジトリと作業ツリー2本を作り、`task.py` を実際に
 子プロセスで（並行するテストは同時に）起こして検証する。正典は
@@ -19,7 +19,9 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -43,13 +45,27 @@ TASK_REL = ".tw/task"
 DRAFT_REL = ".tw/draft"
 
 failures: list[str] = []
+_local = threading.local()
+
+
+def say(line: str = "") -> None:
+    _local.lines.append(line)
+
+
+def _run_one(test) -> list[str]:
+    _local.lines = []
+    try:
+        test()
+    except Exception as e:  # noqa: BLE001  1件の故障で残りのテストを止めない
+        check(f"{test.__name__} が落ちずに終わる", False, repr(e))
+    return _local.lines
 
 
 def check(label: str, cond: bool, detail: str = "") -> None:
     if cond:
-        print(f"  ok   {label}")
+        say(f"  ok   {label}")
     else:
-        print(f"  FAIL {label}{(': ' + detail) if detail else ''}")
+        say(f"  FAIL {label}{(': ' + detail) if detail else ''}")
         failures.append(label)
 
 
@@ -171,7 +187,7 @@ def commit_task(main_path: str, task: taskfile.Task) -> None:
 
 
 def test_taskfile_parse() -> None:
-    print("taskfile.parse / render / validate_new_body")
+    say("taskfile.parse / render / validate_new_body")
     ok_text = (
         "---\nid: T-001\nsummary: 例\nstatus: todo\ndifficulty: sonnet\nloopable: Y\n"
         "dependencies: []\n---\n本文\n"
@@ -379,7 +395,7 @@ def test_taskfile_parse() -> None:
 
 
 def test_new_and_status_single_worktree() -> None:
-    print("task.py new/status（単独の作業ツリー）")
+    say("task.py new/status（単独の作業ツリー）")
     with tempfile.TemporaryDirectory() as tmp:
         _main_path, wt1, _wt2 = make_repo(tmp)
 
@@ -422,7 +438,7 @@ def test_new_and_status_single_worktree() -> None:
 
 
 def test_claim_and_release_single_worktree() -> None:
-    print("task.py claim/release（単独の作業ツリー）")
+    say("task.py claim/release（単独の作業ツリー）")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _wt2 = make_repo(tmp)
         commit_task(main_path, taskfile.Task("T-100", "既存タスク", "todo", "sonnet", "Y", (), BODY))
@@ -453,7 +469,7 @@ def test_claim_and_release_single_worktree() -> None:
 
 
 def test_new_missing_and_legacy() -> None:
-    print("task.py: MISSING/LEGACY の判定")
+    say("task.py: MISSING/LEGACY の判定")
     with tempfile.TemporaryDirectory() as tmp:
         empty_repo = os.path.join(tmp, "empty")
         os.makedirs(empty_repo)
@@ -555,7 +571,7 @@ LEGACY_PROGRESS_PREAMBLE_ONLY = (
 
 
 def test_legacy_convert_task() -> None:
-    print("legacy.convert_task: 架空タスクの変換（10.1の表）")
+    say("legacy.convert_task: 架空タスクの変換（10.1の表）")
     task, err = legacy.convert_task(
         {
             "id": "T-010",
@@ -665,7 +681,7 @@ def test_legacy_convert_task() -> None:
 
 
 def test_migrate_dry_run_then_real() -> None:
-    print("task.py migrate: 架空のtasks.json/progress.mdの変換の往復")
+    say("task.py migrate: 架空のtasks.json/progress.mdの変換の往復")
     with tempfile.TemporaryDirectory() as tmp:
         repo = _make_legacy_repo(tmp, tasks=LEGACY_TASKS, progress=LEGACY_PROGRESS)
 
@@ -750,7 +766,7 @@ def test_migrate_dry_run_then_real() -> None:
 
 
 def test_migrate_keeps_preamble_when_sections_empty() -> None:
-    print("task.py migrate: 未解決・注意が空でも前置き文があればprogress.mdを消さない")
+    say("task.py migrate: 未解決・注意が空でも前置き文があればprogress.mdを消さない")
     with tempfile.TemporaryDirectory() as tmp:
         repo = _make_legacy_repo(tmp, tasks=LEGACY_TASKS, progress=LEGACY_PROGRESS_PREAMBLE_ONLY)
 
@@ -779,7 +795,7 @@ def test_migrate_keeps_preamble_when_sections_empty() -> None:
 
 
 def test_migrate_stops_on_doing() -> None:
-    print("task.py migrate: doingが残っていればNOT_READYで止まる")
+    say("task.py migrate: doingが残っていればNOT_READYで止まる")
     with tempfile.TemporaryDirectory() as tmp:
         tasks = [dict(LEGACY_TASKS[0], status="doing")]
         repo = _make_legacy_repo(tmp, tasks=tasks)
@@ -793,7 +809,7 @@ def test_migrate_stops_on_doing() -> None:
 
 
 def test_migrate_dirty_worktree_stops() -> None:
-    print("task.py migrate: 作業ツリーが汚れていればDIRTYで止まる")
+    say("task.py migrate: 作業ツリーが汚れていればDIRTYで止まる")
     with tempfile.TemporaryDirectory() as tmp:
         repo = _make_legacy_repo(tmp, tasks=LEGACY_TASKS)
         write(os.path.join(repo, "dirty.txt"), "x")
@@ -802,7 +818,7 @@ def test_migrate_dirty_worktree_stops() -> None:
 
 
 def test_migrate_nothing_when_no_tasks_json() -> None:
-    print("task.py migrate: develop/tasks.jsonが無ければNOTHING")
+    say("task.py migrate: develop/tasks.jsonが無ければNOTHING")
     with tempfile.TemporaryDirectory() as tmp:
         repo = _make_legacy_repo(tmp, tasks=None)
         r = run_task(repo, "migrate", "--dry-run")
@@ -817,7 +833,7 @@ def test_migrate_nothing_when_no_tasks_json() -> None:
 
 
 def test_new_parallel_no_collision() -> None:
-    print("task.py new: 2本の作業ツリーから同時に打っても番号が重ならない")
+    say("task.py new: 2本の作業ツリーから同時に打っても番号が重ならない")
     with tempfile.TemporaryDirectory() as tmp:
         _main_path, wt1, wt2 = make_repo(tmp)
         b1 = body_file(wt1)
@@ -839,7 +855,7 @@ def test_new_parallel_no_collision() -> None:
 
 
 def test_claim_race() -> None:
-    print("task.py claim: 2本から取り合うと片方だけ通る")
+    say("task.py claim: 2本から取り合うと片方だけ通る")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp)
         commit_task(main_path, taskfile.Task("T-100", "取り合うタスク", "todo", "sonnet", "Y", (), BODY))
@@ -857,7 +873,7 @@ def test_claim_race() -> None:
 
 
 def test_new_avoids_history_ids() -> None:
-    print("task.py new: docs/history/tasks.md の番号を採番が避ける")
+    say("task.py new: docs/history/tasks.md の番号を採番が避ける")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _wt2 = make_repo(tmp)
         write(
@@ -879,7 +895,7 @@ def test_new_avoids_history_ids() -> None:
 
 
 def test_taskfile_set_result_section() -> None:
-    print("taskfile.set_result_section")
+    say("taskfile.set_result_section")
     body = BODY
     out = taskfile.set_result_section(body, "結果その1")
     check("結果が無ければ末尾に足す", out.endswith("## 結果\n\n結果その1\n"), out)
@@ -898,7 +914,7 @@ def test_taskfile_set_result_section() -> None:
 
 
 def test_done_single_worktree() -> None:
-    print("task.py done（単独の作業ツリー）")
+    say("task.py done（単独の作業ツリー）")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _wt2 = make_repo(tmp)
         commit_task(main_path, taskfile.Task("T-100", "完了させる", "todo", "sonnet", "Y", (), BODY))
@@ -942,7 +958,7 @@ def test_done_single_worktree() -> None:
 
 
 def test_body_frame_check() -> None:
-    print("task.py done・status --check: 本文の枠を検査する")
+    say("task.py done・status --check: 本文の枠を検査する")
     bad = BODY.replace("## 注意\n\n## 参考情報\n", "## 参考情報\n\n## 注意\n")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _wt2 = make_repo(tmp)
@@ -968,7 +984,7 @@ def test_body_frame_check() -> None:
 
 
 def test_done_commits_since_claim() -> None:
-    print("task.py done: claim 後のコミットを COMMITS_SINCE_CLAIM で知らせる（控えの無い印は出さない）")
+    say("task.py done: claim 後のコミットを COMMITS_SINCE_CLAIM で知らせる（控えの無い印は出さない）")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp)
         commit_task(main_path, taskfile.Task("T-100", "コミットを知らせる", "todo", "sonnet", "Y", (), BODY))
@@ -1033,7 +1049,7 @@ def _hook_command(subcommand: str) -> str:
 
 
 def test_commit_guard() -> None:
-    print("task.py commit-guard: 印が立って done 前の作業ツリーのコミットを拒む")
+    say("task.py commit-guard: 印が立って done 前の作業ツリーのコミットを拒む")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp)
         commit_task(main_path, taskfile.Task("T-100", "拒む", "todo", "sonnet", "Y", (), BODY))
@@ -1096,7 +1112,7 @@ def _plugin_hook_commands() -> list[str]:
 
 
 def test_agent_scoped_guard() -> None:
-    print("task.py commit-guard・handback-guard --agent-scoped: no-delegate のときだけ関門を掛ける")
+    say("task.py commit-guard・handback-guard --agent-scoped: no-delegate のときだけ関門を掛ける")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _wt2 = make_repo(tmp, verify="`true`")
         commit_task(main_path, taskfile.Task("T-100", "拒む", "todo", "sonnet", "Y", (), BODY))
@@ -1184,7 +1200,7 @@ def _block_reason(out: dict | None) -> str:
 
 
 def test_handback_guard() -> None:
-    print("task.py handback-guard・pause: 作業があるのに計画か検証が欠けた返却を拒む")
+    say("task.py handback-guard・pause: 作業があるのに計画か検証が欠けた返却を拒む")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp, verify="`true`")
         commit_task(main_path, taskfile.Task("T-100", "先に計画", "todo", "sonnet", "Y", (), BODY))
@@ -1242,7 +1258,7 @@ def test_handback_guard() -> None:
 
 
 def test_lap() -> None:
-    print("task.py lap: 5つの段が flow に1行ずつ書かれ、知らない段は拒み、印が無ければ記録しない")
+    say("task.py lap: 5つの段が flow に1行ずつ書かれ、知らない段は拒み、印が無ければ記録しない")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp, verify="`true`")
         commit_task(main_path, taskfile.Task("T-100", "段", "todo", "sonnet", "Y", (), BODY))
@@ -1274,7 +1290,7 @@ def test_lap() -> None:
 
 
 def test_handback_guard_step() -> None:
-    print("task.py step・handback-guard: 途中の段の返却は tw step で通し、最後の段は検証を求める")
+    say("task.py step・handback-guard: 途中の段の返却は tw step で通し、最後の段は検証を求める")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp, verify="`true`")
         commit_task(main_path, taskfile.Task("T-100", "段ごと", "todo", "sonnet", "Y", (), BODY))
@@ -1314,7 +1330,7 @@ def test_handback_guard_step() -> None:
 
 
 def test_handback_guard_parallel_steps() -> None:
-    print("task.py step・pause・handback-guard: 同じ作業ツリーで並列の段の担当どうしが互いの控えを崩さない")
+    say("task.py step・pause・handback-guard: 同じ作業ツリーで並列の段の担当どうしが互いの控えを崩さない")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _wt2 = make_repo(tmp, verify="`true`")
         commit_task(main_path, taskfile.Task("T-100", "並列の段", "todo", "sonnet", "Y", (), BODY))
@@ -1363,7 +1379,7 @@ def test_handback_guard_parallel_steps() -> None:
 
 
 def test_handback_guard_other_repo() -> None:
-    print("task.py step・pause・handback-guard: 作業先が別のリポジトリなら、枝の名前がタスクIDの作業ツリーも見る")
+    say("task.py step・pause・handback-guard: 作業先が別のリポジトリなら、枝の名前がタスクIDの作業ツリーも見る")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(os.path.join(tmp, "own"), verify="`true`")
         work_repo, _, _ = make_repo(os.path.join(tmp, "work"), verify="`true`")
@@ -1426,7 +1442,7 @@ def test_handback_guard_other_repo() -> None:
 
 
 def test_worktree_state_dir() -> None:
-    print("ledger.py .tw/local/: 作業ツリーごとの控えとログを .tw/local/ に置き、旧い置き場の控えも読んで移す")
+    say("ledger.py .tw/local/: 作業ツリーごとの控えとログを .tw/local/ に置き、旧い置き場の控えも読んで移す")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp, verify="`true`", config_filename="CLAUDE.md")
         commit_task(main_path, taskfile.Task("T-100", "新しい置き場", "todo", "sonnet", "Y", (), BODY))
@@ -1541,7 +1557,7 @@ def snapshot(*paths: str) -> dict[str, bytes]:
 
 
 def test_readonly_git() -> None:
-    print("task.py: .git が読み取り専用でも claim・verify・verify-check・step が通り、git に書く claim・verify は GIT_READ_ONLY")
+    say("task.py: .git が読み取り専用でも claim・verify・verify-check・step が通り、git に書く claim・verify は GIT_READ_ONLY")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _ = make_repo(tmp, branch="切らない", verify="`true`")
         commit_task(main_path, taskfile.Task("T-100", "読み取り専用", "todo", "sonnet", "Y", (), BODY))
@@ -1597,7 +1613,7 @@ def test_readonly_git() -> None:
 
 
 def test_readonly_git_stops_writers() -> None:
-    print("task.py: .git が読み取り専用なら done・ship・migrate は GIT_READ_ONLY で止まり、何も変えない")
+    say("task.py: .git が読み取り専用なら done・ship・migrate は GIT_READ_ONLY で止まり、何も変えない")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _ = make_repo(tmp, branch="切らない", verify="`true`")
         commit_task(main_path, taskfile.Task("T-100", "書けない", "todo", "sonnet", "Y", (), BODY))
@@ -1646,7 +1662,7 @@ def test_readonly_git_stops_writers() -> None:
 
 
 def test_state_dir() -> None:
-    print("ledger.py TW_STATE_DIR: 台帳の置き場を変え、古い台帳を写し、分かれた印と書けない置き場を知らせる")
+    say("ledger.py TW_STATE_DIR: 台帳の置き場を変え、古い台帳を写し、分かれた印と書けない置き場を知らせる")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp, branch="切らない")
         for tid in ("T-100", "T-101", "T-102"):
@@ -1728,7 +1744,7 @@ def test_state_dir() -> None:
 
 
 def test_edit_and_plan_check() -> None:
-    print("task.py edit・plan-check: ## やること を作業より先に書いたかを知らせる")
+    say("task.py edit・plan-check: ## やること を作業より先に書いたかを知らせる")
     planned = task_body([("書く", "")])
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp)
@@ -1854,7 +1870,7 @@ def test_edit_and_plan_check() -> None:
 
 
 def test_edit_section() -> None:
-    print("task.py edit --section: 指した節の中身だけを置き換える")
+    say("task.py edit --section: 指した節の中身だけを置き換える")
     purpose = "文中の `## やること` は境目でない\nx"
     mentions = task_body(purpose=purpose)
     with tempfile.TemporaryDirectory() as tmp:
@@ -1929,7 +1945,7 @@ def test_edit_section() -> None:
 
 
 def test_edit_deps() -> None:
-    print("task.py edit --add-deps・--remove-deps: 台帳の依存を後から変える")
+    say("task.py edit --add-deps・--remove-deps: 台帳の依存を後から変える")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _wt2 = make_repo(tmp)
 
@@ -2003,7 +2019,7 @@ def test_edit_deps() -> None:
 
 
 def test_registered_plan() -> None:
-    print("task.py new・claim・plan-check: 登録時の計画が名指すファイルが着手時までに変わったかを知らせる")
+    say("task.py new・claim・plan-check: 登録時の計画が名指すファイルが着手時までに変わったかを知らせる")
 
     def plan_body(*paths: str, work_repo: str | None = None) -> str:
         return task_body([("書く", "x")], paths, work_repo)
@@ -2145,7 +2161,7 @@ def test_registered_plan() -> None:
 
 
 def test_direct_mark() -> None:
-    print("task.py new・edit・claim --direct: 近道の印は基準に当たるときだけ付き、着手時に測り直す")
+    say("task.py new・edit・claim --direct: 近道の印は基準に当たるときだけ付き、着手時に測り直す")
 
     def register(body: str, difficulty: str = "haiku") -> subprocess.CompletedProcess:
         return run_task(main_path, "new", "--summary", "近道", "--difficulty", difficulty, "--loopable", "Y", "--direct",
@@ -2219,7 +2235,7 @@ def test_direct_mark() -> None:
 
 
 def test_verify_refuses_unplanned_work() -> None:
-    print("task.py verify: 着手中のタスクの ## やること が空のまま作業が始まっていたら検証を打たない")
+    say("task.py verify: 着手中のタスクの ## やること が空のまま作業が始まっていたら検証を打たない")
     planned = task_body([("書く", "")])
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp, branch="切らない", verify="`echo verified`")
@@ -2264,7 +2280,7 @@ VERIFY_SCRIPT = (
 
 
 def test_verify_stamp() -> None:
-    print("task.py verify・verify-check: 検証が通った中身の鍵を控え、同じなら省いてよいと判定する")
+    say("task.py verify・verify-check: 検証が通った中身の鍵を控え、同じなら省いてよいと判定する")
     with tempfile.TemporaryDirectory() as tmp:
         _main, wt1, wt2 = make_repo(tmp, branch="切らない", verify="`sh verify.sh`")
         write(os.path.join(wt1, "verify.sh"), VERIFY_SCRIPT)
@@ -2401,7 +2417,7 @@ def _advance_main(main_path: str, notes: str, extra: str | None = None) -> str:
 
 
 def test_verify_runs_format_first() -> None:
-    print("task.py verify: 取り込みのあと・検証の前に整形コマンドを打ち、整形のあとの中身で鍵を控える")
+    say("task.py verify: 取り込みのあと・検証の前に整形コマンドを打ち、整形のあとの中身で鍵を控える")
     fix = "echo fixed > formatted.txt\n"
     saw = 'cat formatted.txt >> saw.log\necho "ok"\n'
     with tempfile.TemporaryDirectory() as tmp:
@@ -2453,7 +2469,7 @@ def _count_lines(path: str) -> int:
 
 
 def test_verify_keeps_failed_logs() -> None:
-    print("task.py verify: 落ちた回のログが時刻つきで直近3本残り、整形と検証の出力が task-verify.log に並ぶ")
+    say("task.py verify: 落ちた回のログが時刻つきで直近3本残り、整形と検証の出力が task-verify.log に並ぶ")
     with tempfile.TemporaryDirectory() as tmp:
         _main, wt1, _wt2 = make_repo(
             tmp, branch="切らない", verify="`sh verify.sh`", format_command="`sh format.sh`"
@@ -2506,7 +2522,7 @@ def _commit_and_ship(wt: str, tmp: str, *paths: str) -> subprocess.CompletedProc
 
 
 def test_verify_folds_base_before_check() -> None:
-    print("task.py verify: main が進んでいれば未コミットの中身ごと取り込んでから検証し、受け入れの検証は1回で済む")
+    say("task.py verify: main が進んでいれば未コミットの中身ごと取り込んでから検証し、受け入れの検証は1回で済む")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1 = _fold_repo(tmp)
         claim_head = git(wt1, "rev-parse", "HEAD").stdout.strip()
@@ -2556,7 +2572,7 @@ def _object_files(main_path: str) -> list[str]:
 
 
 def test_readonly_commands_stay_out_of_git() -> None:
-    print("task.py: 読むだけのサブコマンドは、未コミット・主ブランチが進んだ・衝突の各状態で、読み取り専用の .git でも落ちず object を足さない")
+    say("task.py: 読むだけのサブコマンドは、未コミット・主ブランチが進んだ・衝突の各状態で、読み取り専用の .git でも落ちず object を足さない")
     args_of = {
         "status": ["status"],
         "show": ["show", "T-120"],
@@ -2609,7 +2625,7 @@ def test_readonly_commands_stay_out_of_git() -> None:
 
 
 def test_verify_uses_preship_command_for_stamp() -> None:
-    print("task.py verify: 送る前の検証コマンドの行があれば、検証コマンドではなくそれを打ち、その控えで verify-check が判定する")
+    say("task.py verify: 送る前の検証コマンドの行があれば、検証コマンドではなくそれを打ち、その控えで verify-check が判定する")
     with tempfile.TemporaryDirectory() as tmp:
         write(os.path.join(tmp, "preship.sh"), "echo x >> ../preship-count.log\n")
         _main, wt1 = _fold_repo(tmp, preship="`sh ../preship.sh`")
@@ -2636,7 +2652,7 @@ def _commit_work_and_ship(wt: str, *paths: str) -> subprocess.CompletedProcess:
 
 
 def test_ship_skips_preship_verify_when_stamp_matches() -> None:
-    print("task.py ship: 控えの中身をそのままコミットして送れば送る前の検証を飛ばし、中身が違う・付け替えた・借りがある・控えが無ければ打つ")
+    say("task.py ship: 控えの中身をそのままコミットして送れば送る前の検証を飛ばし、中身が違う・付け替えた・借りがある・控えが無ければ打つ")
 
     def prepare(tmp: str) -> tuple[str, str]:
         write(os.path.join(tmp, "preship.sh"), "echo x >> ../preship-count.log\n")
@@ -2704,7 +2720,7 @@ def test_ship_skips_preship_verify_when_stamp_matches() -> None:
 
 
 def test_ship_runs_preship_verify_when_work_changes_tree() -> None:
-    print("task.py ship: 送る前の検証コマンドの行があり、控えのあとに作業の木が変わったなら、主ブランチへ入れる直前に打つ")
+    say("task.py ship: 送る前の検証コマンドの行があり、控えのあとに作業の木が変わったなら、主ブランチへ入れる直前に打つ")
     for passes in (True, False):
         with tempfile.TemporaryDirectory() as tmp:
             write(os.path.join(tmp, "preship.sh"), "echo x >> ../preship-count.log\n[ ! -f ../preship-fail ]\n")
@@ -2738,7 +2754,7 @@ def test_ship_runs_preship_verify_when_work_changes_tree() -> None:
 
 
 def test_worktree_tree_sees_same_size_edit_after_second_boundary() -> None:
-    print("ledger.worktree_tree: index の書き込みと同じ秒にした同サイズの書き換えを、秒をまたいでから測っても拾う")
+    say("ledger.worktree_tree: index の書き込みと同じ秒にした同サイズの書き換えを、秒をまたいでから測っても拾う")
     with tempfile.TemporaryDirectory() as tmp:
         git(tmp, "init", "-q")
         write(os.path.join(tmp, "n"), NOTES)
@@ -2753,7 +2769,7 @@ def test_worktree_tree_sees_same_size_edit_after_second_boundary() -> None:
 
 
 def test_verify_conflict_before_check() -> None:
-    print("task.py verify: 取り込みが衝突すれば、何も書き換えず検証コマンドを打たずに CONFLICT で止まる")
+    say("task.py verify: 取り込みが衝突すれば、何も書き換えず検証コマンドを打たずに CONFLICT で止まる")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1 = _fold_repo(tmp)
         write(os.path.join(wt1, "notes.txt"), NOTES.replace("e\n", "E\n"))
@@ -2776,7 +2792,7 @@ def test_verify_conflict_before_check() -> None:
 
 
 def test_verify_check_reports_base() -> None:
-    print("task.py verify-check: 控えのあとに main が進めば NOT_VERIFIED base で、verify が取り込んで打てば ship は打たない")
+    say("task.py verify-check: 控えのあとに main が進めば NOT_VERIFIED base で、verify が取り込んで打てば ship は打たない")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1 = _fold_repo(tmp)
         write(os.path.join(wt1, "work.txt"), "x\n")
@@ -2797,7 +2813,7 @@ def test_verify_check_reports_base() -> None:
 
 
 def test_verify_check_passes_base_with_preship() -> None:
-    print("task.py verify-check: 送る前の検証コマンドがあれば、main が衝突なく進んだだけでは VERIFIED_SAME で、衝突すれば NOT_VERIFIED base")
+    say("task.py verify-check: 送る前の検証コマンドがあれば、main が衝突なく進んだだけでは VERIFIED_SAME で、衝突すれば NOT_VERIFIED base")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1 = _fold_repo(tmp, preship="`true`", planned=False)
         r = run_task(wt1, "edit", "T-120", "--section", "やること", "--body-file", "-", stdin="### 1. 書く\n")
@@ -2834,7 +2850,7 @@ def test_verify_check_passes_base_with_preship() -> None:
 
 
 def test_root_setting() -> None:
-    print("task.py: config.toml の root に置き場が従い、置けない root は INVALID")
+    say("task.py: config.toml の root に置き場が従い、置けない root は INVALID")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _wt2 = make_repo(tmp)
         config = os.path.join(main_path, ".tw", "config.toml")
@@ -2890,7 +2906,7 @@ MIGRATE_LAYOUT_SECTION = (
 
 
 def test_migrate_layout() -> None:
-    print("task.py migrate-layout: 旧配置を .tw/ へ移す（git add まで）")
+    say("task.py migrate-layout: 旧配置を .tw/ へ移す（git add まで）")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _wt2 = make_repo(tmp, config_filename="CLAUDE.md")
         write(os.path.join(main_path, "CLAUDE.md"), MIGRATE_LAYOUT_SECTION)
@@ -3044,7 +3060,7 @@ def _no_merge_commits(repo: str, base: str = "main") -> str:
 
 
 def test_ship_fast_forward() -> None:
-    print("task.py ship: main が進んでいなければ追い付くだけで送る")
+    say("task.py ship: main が進んでいなければ追い付くだけで送る")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _wt2 = make_repo(tmp, branch="切らない")
         commit_task(main_path, taskfile.Task("T-100", "追い付くだけ", "todo", "sonnet", "Y", (), BODY))
@@ -3067,7 +3083,7 @@ def test_ship_fast_forward() -> None:
 
 
 def test_ship_rebases_when_main_advances() -> None:
-    print("task.py ship: main が先に進んでいれば付け替えてから送る")
+    say("task.py ship: main が先に進んでいれば付け替えてから送る")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _wt2 = make_repo(tmp, branch="切らない", verify="`echo verified`")
         commit_task(main_path, taskfile.Task("T-100", "付け替え", "todo", "sonnet", "Y", (), BODY))
@@ -3094,7 +3110,7 @@ def test_ship_rebases_when_main_advances() -> None:
 
 
 def test_ship_forces_verify_after_verify_failed_without_new_rebase() -> None:
-    print("task.py ship: VERIFY_FAILEDのあと打ち直すと、付け替えが無くても検証を飛ばさない（T-777）")
+    say("task.py ship: VERIFY_FAILEDのあと打ち直すと、付け替えが無くても検証を飛ばさない（T-777）")
     with tempfile.TemporaryDirectory() as tmp:
         flag = os.path.join(tmp, "verify-ok")
         verify_script = write(
@@ -3131,7 +3147,7 @@ def test_ship_forces_verify_after_verify_failed_without_new_rebase() -> None:
 
 
 def test_ship_verify_failed_keeps_full_log_in_order() -> None:
-    print("task.py ship: 検証が落ちると、全文が出た順のログに残り、VERIFY_FAILED の行にそのパスが出る")
+    say("task.py ship: 検証が落ちると、全文が出た順のログに残り、VERIFY_FAILED の行にそのパスが出る")
     with tempfile.TemporaryDirectory() as tmp:
         verify_script = write(
             os.path.join(tmp, "verify.sh"),
@@ -3169,7 +3185,7 @@ def flow_rows(wt: str) -> list[dict]:
 
 
 def test_flow_records_and_metrics() -> None:
-    print("task.py: 着手・検証・送り出し・完了が台帳の flow/ に残り、metrics が数を出す")
+    say("task.py: 着手・検証・送り出し・完了が台帳の flow/ に残り、metrics が数を出す")
     with tempfile.TemporaryDirectory() as tmp:
         flag = os.path.join(tmp, "verify-ok")
         verify_script = write(os.path.join(tmp, "verify.sh"), f'[ -f "{flag}" ] && echo ok || {{ echo fail; exit 1; }}\n')
@@ -3244,9 +3260,9 @@ def test_flow_records_and_metrics() -> None:
         write(os.path.join(d, "2000-01.jsonl"), "\n".join([old(stamp(9), "claim"), old(stamp(8), "ship", result="SHIPPED")]) + "\n")
         r = run_task(wt1, "metrics")
         table = {l.split("\t")[0]: l.split("\t")[1:] for l in r.stdout.splitlines()}
-        print("  --- tw metrics の出力 ---")
+        say("  --- tw metrics の出力 ---")
         for line in r.stdout.splitlines():
-            print(f"  | {line}")
+            say(f"  | {line}")
         check(
             "metrics が今の期間と前の期間の数を並べる",
             r.returncode == 0
@@ -3291,7 +3307,7 @@ def test_flow_records_and_metrics() -> None:
 
 
 def test_metrics_stages() -> None:
-    print("task.py metrics --stages: lap を含む flow から段×difficulty×道の件数・中央値・最大が出る")
+    say("task.py metrics --stages: lap を含む flow から段×difficulty×道の件数・中央値・最大が出る")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _wt2 = make_repo(tmp, branch="切らない")
         d = ledger.flow_dir(ledger.ledger_root(cwd=wt1))
@@ -3359,13 +3375,13 @@ def test_metrics_stages() -> None:
             ],
             r.stdout + r.stderr,
         )
-        print("  --- tw metrics --stages の出力 ---")
+        say("  --- tw metrics --stages の出力 ---")
         for line in r.stdout.splitlines():
-            print(f"  | {line}")
+            say(f"  | {line}")
 
 
 def test_metrics_stages_parallel_steps() -> None:
-    print("task.py metrics --stages: 並列の段の返却が重なっても、委譲の時間を段ごとの和で数えない")
+    say("task.py metrics --stages: 並列の段の返却が重なっても、委譲の時間を段ごとの和で数えない")
     base = datetime.now(timezone.utc) - timedelta(hours=2)
     row = lambda sec, ev, **kw: metrics.Event(base + timedelta(seconds=sec), ev, "T-070", {"difficulty": "opus", **kw})
     events = [
@@ -3380,7 +3396,7 @@ def test_metrics_stages_parallel_steps() -> None:
 
 
 def test_retrospect_due() -> None:
-    print("task.py status: 横断の振り返りの時期に retrospect_due の行を出す")
+    say("task.py status: 横断の振り返りの時期に retrospect_due の行を出す")
     due_line = lambda out: next((l for l in out.splitlines() if l.startswith("retrospect_due\t")), None)
     record = lambda day: f"# 横断の振り返りの記録\n\n## {day}（x〜y）\n\n- ドラフト: 0件（なし）\n"
     with tempfile.TemporaryDirectory() as tmp:
@@ -3421,7 +3437,7 @@ def test_retrospect_due() -> None:
 
 
 def test_ship_stale_verify_owed_does_not_block_nothing_or_main_worktree() -> None:
-    print("task.py ship: 検証の借りの印が残っていても、main に送るものが無い・main上で起こしたときは今までどおり動く")
+    say("task.py ship: 検証の借りの印が残っていても、main に送るものが無い・main上で起こしたときは今までどおり動く")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _wt2 = make_repo(tmp, branch="切らない", verify="`false`")
 
@@ -3446,7 +3462,7 @@ def test_ship_stale_verify_owed_does_not_block_nothing_or_main_worktree() -> Non
 
 
 def test_ship_conflict_aborts_rebase() -> None:
-    print("task.py ship: 衝突すればrebase --abortして止まる")
+    say("task.py ship: 衝突すればrebase --abortして止まる")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _wt2 = make_repo(tmp, branch="切らない")
         commit_task(main_path, taskfile.Task("T-100", "衝突", "todo", "sonnet", "Y", (), BODY))
@@ -3475,7 +3491,7 @@ def test_ship_conflict_aborts_rebase() -> None:
 
 
 def test_ship_main_dirty_stops() -> None:
-    print("task.py ship: 本体が汚れていれば送らずに止まる")
+    say("task.py ship: 本体が汚れていれば送らずに止まる")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _wt2 = make_repo(tmp, branch="切らない")
         commit_task(main_path, taskfile.Task("T-100", "本体汚れ", "todo", "sonnet", "Y", (), BODY))
@@ -3491,7 +3507,7 @@ def test_ship_main_dirty_stops() -> None:
 
 
 def test_ship_skips_send_on_main_worktree() -> None:
-    print("task.py ship: main の作業ツリーで起こしたときは送る段を飛ばす")
+    say("task.py ship: main の作業ツリーで起こしたときは送る段を飛ばす")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, _wt1, _wt2 = make_repo(tmp, branch="切らない")
         commit_task(main_path, taskfile.Task("T-100", "本体で完結", "todo", "sonnet", "Y", (), BODY))
@@ -3517,7 +3533,7 @@ def test_ship_skips_send_on_main_worktree() -> None:
 
 
 def test_ship_race_gives_up_after_three_tries() -> None:
-    print("task.py ship: 相手に先を越され続けるとRACEで終わる")
+    say("task.py ship: 相手に先を越され続けるとRACEで終わる")
     with tempfile.TemporaryDirectory() as tmp:
         # 相手役は**検証コマンドそのもの**にする。rebase の直後・送る直前に必ず本体が1コミット
         # 進むので `--ff-only` は毎回落ちる。（別スレッドから一定間隔で commit する形は、
@@ -3559,7 +3575,7 @@ def test_ship_race_gives_up_after_three_tries() -> None:
 
 
 def test_ship_default_branch_leaves_feature_branch() -> None:
-    print("task.py ship: 既定の枝設定で本体が main を出していても feature 枝を残さない")
+    say("task.py ship: 既定の枝設定で本体が main を出していても feature 枝を残さない")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, wt2 = make_repo(tmp, branch="既定")
         commit_task(main_path, taskfile.Task("T-100", "戻り先あり", "todo", "sonnet", "Y", (), BODY))
@@ -3593,7 +3609,7 @@ def test_ship_default_branch_leaves_feature_branch() -> None:
 
 
 def test_branch_setting_reads_leading_word() -> None:
-    print("task.py claim: 旧い節の - ブランチ: は先頭語だけを読み、config.toml の branch は語彙の外なら INVALID")
+    say("task.py claim: 旧い節の - ブランチ: は先頭語だけを読み、config.toml の branch は語彙の外なら INVALID")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, wt1, _wt2 = make_repo(
             tmp, branch="切らない。作業ツリーの枝のまま ship で送る", config_filename="CLAUDE.md"
@@ -3624,7 +3640,7 @@ def test_branch_setting_reads_leading_word() -> None:
 
 
 def test_branch_setting_missing_is_default() -> None:
-    print("task.py claim・ship: branch が無ければ `既定` として枝を切り、ship は送る")
+    say("task.py claim・ship: branch が無ければ `既定` として枝を切り、ship は送る")
     for reason, kwargs in (
         ("config.toml に branch が無い", {"branch": None}),
         ("旧い節に - ブランチ: 行が無い", {"branch": None, "config_filename": "CLAUDE.md"}),
@@ -3648,7 +3664,7 @@ def test_branch_setting_missing_is_default() -> None:
 
 
 def test_prune() -> None:
-    print("task.py prune: 振り返り済みの done/dropped だけを git rm して stage する")
+    say("task.py prune: 振り返り済みの done/dropped だけを git rm して stage する")
     with tempfile.TemporaryDirectory() as tmp:
         main_path, _wt1, _wt2 = make_repo(tmp, branch="切らない")
         reviewed_body = BODY + "\n## 結果\n\n- 検証: x\n- 振り返り: 兆候なし\n"
@@ -3702,7 +3718,7 @@ def test_prune() -> None:
 
 
 def test_base_branch_resolution() -> None:
-    print("ledger.base_branch: 設定の base_branch → origin/HEAD → main/master/trunk → NoBaseBranch")
+    say("ledger.base_branch: 設定の base_branch → origin/HEAD → main/master/trunk → NoBaseBranch")
     with tempfile.TemporaryDirectory() as tmp:
         ledger.clear_base_branch_cache()
         master_repo, _wt1, _wt2 = make_repo(tmp, base="master")
@@ -3760,7 +3776,7 @@ def test_base_branch_resolution() -> None:
 
 
 def test_config_file_agents_md_and_conflict() -> None:
-    print("設定ファイルの探索（T-020: AGENTS.md → CLAUDE.md の順、両方あれば INVALID）")
+    say("設定ファイルの探索（T-020: AGENTS.md → CLAUDE.md の順、両方あれば INVALID）")
     with tempfile.TemporaryDirectory() as tmp:
         # AGENTS.md だけのリポジトリ: claim・ship まで CLAUDE.md と同じ形で通る。
         main_path, wt1, _wt2 = make_repo(tmp, config_filename="AGENTS.md", verify="`echo verified`")
@@ -3819,7 +3835,7 @@ def _make_config_doctor_repo(tmp: str, name: str) -> str:
 
 
 def test_config_doctor() -> None:
-    print("task.py config-doctor（T-021: 設定と形式のズレの点検。読むだけ）")
+    say("task.py config-doctor（T-021: 設定と形式のズレの点検。読むだけ）")
 
     with tempfile.TemporaryDirectory() as tmp:
         repo = _make_config_doctor_repo(tmp, "ok")
@@ -3911,7 +3927,7 @@ def test_config_doctor() -> None:
 
 
 def test_config_command() -> None:
-    print("task.py config: 解けた設定を出す")
+    say("task.py config: 解けた設定を出す")
     with tempfile.TemporaryDirectory() as tmp:
         repo = _make_config_doctor_repo(tmp, "legacy")
         r = run_task(repo, "config")
@@ -3954,7 +3970,7 @@ def test_config_command() -> None:
 
 
 def test_full_cycle_on_master_repo() -> None:
-    print("task.py: 主ブランチが master のリポジトリで一式（status→new→claim→done→ship→prune）")
+    say("task.py: 主ブランチが master のリポジトリで一式（status→new→claim→done→ship→prune）")
     with tempfile.TemporaryDirectory() as tmp:
         base_path, wt1, wt2 = make_repo(tmp, branch="既定", verify="`echo verified`", base="master")
         commit_task(base_path, taskfile.Task("T-100", "master で一式", "todo", "sonnet", "Y", (), BODY))
@@ -4030,79 +4046,88 @@ def test_full_cycle_on_master_repo() -> None:
 
 
 def main() -> None:
-    for t in (
-        test_taskfile_parse,
-        test_new_and_status_single_worktree,
-        test_claim_and_release_single_worktree,
-        test_new_missing_and_legacy,
-        test_legacy_convert_task,
-        test_migrate_dry_run_then_real,
-        test_migrate_keeps_preamble_when_sections_empty,
-        test_migrate_stops_on_doing,
-        test_migrate_dirty_worktree_stops,
-        test_migrate_nothing_when_no_tasks_json,
-        test_new_parallel_no_collision,
-        test_claim_race,
-        test_new_avoids_history_ids,
-        test_taskfile_set_result_section,
-        test_done_single_worktree,
-        test_body_frame_check,
-        test_done_commits_since_claim,
-        test_commit_guard,
-        test_agent_scoped_guard,
+    only = sys.argv[1:]
+    # 長いものから並列に乗せる（後ろに残ると全体がその分延びる）。
+    tests = (
+        test_ship_skips_preship_verify_when_stamp_matches,
+        test_registered_plan,
+        test_verify_stamp,
+        test_edit_and_plan_check,
         test_handback_guard,
-        test_handback_guard_step,
-        test_handback_guard_parallel_steps,
-        test_lap,
+        test_readonly_commands_stay_out_of_git,
         test_handback_guard_other_repo,
         test_worktree_state_dir,
         test_state_dir,
-        test_readonly_git,
-        test_readonly_git_stops_writers,
-        test_edit_and_plan_check,
-        test_edit_section,
-        test_edit_deps,
-        test_registered_plan,
-        test_direct_mark,
-        test_verify_refuses_unplanned_work,
-        test_verify_stamp,
-        test_verify_runs_format_first,
-        test_verify_keeps_failed_logs,
-        test_verify_folds_base_before_check,
-        test_worktree_tree_sees_same_size_edit_after_second_boundary,
-        test_verify_conflict_before_check,
-        test_verify_check_reports_base,
-        test_verify_check_passes_base_with_preship,
-        test_readonly_commands_stay_out_of_git,
-        test_verify_uses_preship_command_for_stamp,
-        test_ship_skips_preship_verify_when_stamp_matches,
-        test_ship_runs_preship_verify_when_work_changes_tree,
-        test_ship_fast_forward,
-        test_ship_rebases_when_main_advances,
-        test_ship_forces_verify_after_verify_failed_without_new_rebase,
-        test_ship_verify_failed_keeps_full_log_in_order,
+        test_handback_guard_parallel_steps,
         test_flow_records_and_metrics,
-        test_metrics_stages,
-        test_metrics_stages_parallel_steps,
+        test_edit_deps,
+        test_full_cycle_on_master_repo,
+        test_handback_guard_step,
+        test_verify_check_passes_base_with_preship,
+        test_commit_guard,
+        test_branch_setting_missing_is_default,
+        test_migrate_layout,
+        test_agent_scoped_guard,
+        test_ship_runs_preship_verify_when_work_changes_tree,
+        test_edit_section,
+        test_verify_refuses_unplanned_work,
+        test_root_setting,
+        test_direct_mark,
+        test_readonly_git,
+        test_lap,
+        test_verify_check_reports_base,
+        test_ship_default_branch_leaves_feature_branch,
+        test_verify_runs_format_first,
+        test_prune,
+        test_verify_folds_base_before_check,
+        test_readonly_git_stops_writers,
+        test_worktree_tree_sees_same_size_edit_after_second_boundary,
+        test_verify_keeps_failed_logs,
+        test_ship_forces_verify_after_verify_failed_without_new_rebase,
+        test_config_file_agents_md_and_conflict,
+        test_ship_rebases_when_main_advances,
+        test_ship_race_gives_up_after_three_tries,
+        test_done_commits_since_claim,
         test_retrospect_due,
+        test_branch_setting_reads_leading_word,
+        test_verify_conflict_before_check,
+        test_done_single_worktree,
+        test_ship_fast_forward,
+        test_verify_uses_preship_command_for_stamp,
+        test_config_doctor,
+        test_claim_and_release_single_worktree,
         test_ship_stale_verify_owed_does_not_block_nothing_or_main_worktree,
         test_ship_conflict_aborts_rebase,
-        test_ship_main_dirty_stops,
+        test_ship_verify_failed_keeps_full_log_in_order,
         test_ship_skips_send_on_main_worktree,
-        test_ship_race_gives_up_after_three_tries,
-        test_ship_default_branch_leaves_feature_branch,
-        test_branch_setting_reads_leading_word,
-        test_branch_setting_missing_is_default,
-        test_prune,
+        test_body_frame_check,
+        test_ship_main_dirty_stops,
         test_base_branch_resolution,
-        test_config_file_agents_md_and_conflict,
-        test_config_doctor,
+        test_new_and_status_single_worktree,
+        test_claim_race,
         test_config_command,
-        test_root_setting,
-        test_migrate_layout,
-        test_full_cycle_on_master_repo,
-    ):
-        t()
+        test_migrate_dry_run_then_real,
+        test_new_parallel_no_collision,
+        test_new_avoids_history_ids,
+        test_migrate_keeps_preamble_when_sections_empty,
+        test_metrics_stages,
+        test_new_missing_and_legacy,
+        test_migrate_stops_on_doing,
+        test_migrate_dirty_worktree_stops,
+        test_migrate_nothing_when_no_tasks_json,
+        test_taskfile_parse,
+        test_legacy_convert_task,
+        test_taskfile_set_result_section,
+        test_metrics_stages_parallel_steps,
+    )
+    tests = tuple(t for t in tests if not only or t.__name__ in only)
+    if not tests:
+        print("該当するテストが無い: " + ", ".join(only))
+        raise SystemExit(1)
+    with ThreadPoolExecutor(max_workers=min(len(tests), max(1, (os.cpu_count() or 2) // 2))) as pool:
+        outputs = list(pool.map(_run_one, tests))
+    for lines in outputs:
+        print("\n".join(lines))
     print()
     if failures:
         print(f"FAILED {len(failures)}件: " + ", ".join(failures))
