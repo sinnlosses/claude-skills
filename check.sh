@@ -17,7 +17,8 @@
 # 6. test-audit のスクリプトの自己テスト
 # 7. plan-tasks のスクリプトの自己テスト
 # 8. next-task のスクリプトの自己テスト
-# 9. リポジトリ全体の整合（frontmatter・README の索引・参照先の実在）（いつも）
+# 9. maintenance-docs のスクリプトの自己テスト
+# 10. リポジトリ全体の整合（frontmatter・README の索引・参照先の実在）（いつも）
 #
 # 当たる段は `./check.sh --plan` で見る。
 set -e
@@ -111,6 +112,10 @@ if stage "next-task scripts の自己テスト" 'skills/next-task/*'; then
   python3 "$here/skills/next-task/scripts/selftest_review_needed.py"
   python3 "$here/skills/next-task/scripts/selftest_context_size.py"
   python3 "$here/skills/next-task/scripts/selftest_review_snapshot.py"
+fi
+
+if stage "maintenance-docs scripts の自己テスト" 'skills/maintenance-docs/*' 'skills/task-workflow/scripts/layout.py'; then
+  python3 "$here/skills/maintenance-docs/scripts/selftest_check_docs.py"
 fi
 
 echo

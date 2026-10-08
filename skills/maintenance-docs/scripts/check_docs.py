@@ -33,16 +33,7 @@ if _TASK_WORKFLOW_SCRIPTS not in sys.path:
 
 import layout  # noqa: E402
 
-# 設定ファイル（`AGENTS.md`／`CLAUDE.md`）の「## タスク運用」節で行頭が固定されている行
-# （task-workflow の WORKFLOW.md「ファイル配置と設定ファイル」
-# が正典。ファイルの探索そのものは `layout.find_legacy_section` に寄せる）。
-TASK_SECTION_KEYS = ("検証コマンド", "整形コマンド", "ブランチ")
-# 行頭がズレているのか、行そのものが無いのかを見分けるための短い手がかり。
-TASK_SECTION_STEMS = {"検証コマンド": "検証", "整形コマンド": "整形", "ブランチ": "ブランチ"}
-DEVELOP_FILES = ("tasks.json", "progress.md", "direction.md")
-# 新形式（`develop/task/` の1件1ファイル）で在ったら旧形式の残りと見なすファイル。
-# `task-workflow` の `cmd_config_doctor` の検査4（`develop/tasks.json`・`develop/progress.md`）
-# と同じ組・同じ案内（`tw migrate --dry-run`）に揃える（T-030）。
+# 旧形式（`tasks.json`・`progress.md`）の残りと見なすファイル。
 DEVELOP_LEGACY_FILES = ("tasks.json", "progress.md")
 
 # `docs/history/` は当時の記述をそのまま残すアーカイブなので、どの検査の対象にもしない。
@@ -73,7 +64,7 @@ CHECKS = [
     (2, "索引のリンク切れ", "確定"),
     (3, "先回りして置かれた空の索引", "確定"),
     (4, "相対リンク切れ", "確定"),
-    (5, "タスク運用節の形", "確定"),
+    (5, "タスク設定の読みと根の揃い", "確定"),
     (6, "実在しないパスの言及", "候補"),
     (7, "置き場の逸脱", "候補"),
     (8, "正典の二重化", "候補"),
@@ -319,50 +310,31 @@ def main() -> int:
                 continue
             note(4, f"{rel} -> {link} が実在しない")
 
-    # 検査5: 「## タスク運用」節の形と develop/ の揃い。
-    #
-    # 節を持つファイルの探索は `layout.find_legacy_section`（`AGENTS.md` → `CLAUDE.md` の順。
-    # task-workflow の WORKFLOW.md「ファイル配置と設定ファイル」）に寄せる。CLAUDE.md を
-    # **ドキュメントとして**見る他の検査（4・8・10 の `claude_body`）はそのまま CLAUDE.md 限定。
+    # 検査5: タスク設定（`.tw/config.toml`）が読めるかと、設定の根の揃い。
+    config = None
     try:
-        config_found = layout.find_legacy_section(root)
-        config_conflict = None
-    except layout.ConfigError as e:
-        config_found = None
-        config_conflict = str(e)
-    sec = task_section(config_found[1]) if config_found else []
-    task_dir_present = os.path.isdir(os.path.join(root, "develop", "task"))
-    develop_present = [f for f in DEVELOP_FILES if os.path.exists(os.path.join(root, "develop", f))]
-    if config_conflict is not None:
-        note(5, f"AGENTS.md と CLAUDE.md の両方に「## タスク運用」節がある（{config_conflict}）")
-    elif not sec and (develop_present or task_dir_present):
-        found = list(develop_present) + (["task/"] if task_dir_present else [])
-        note(5, f"develop/ はあるが AGENTS.md/CLAUDE.md に「## タスク運用」節が無い（develop/{', develop/'.join(found)}）")
-    if sec:
-        for key in TASK_SECTION_KEYS:
-            hit = [l for l in sec if l.startswith(f"- {key}:")]
-            if not hit:
-                stem = TASK_SECTION_STEMS[key]
-                loose = [l for l in sec if stem in l and ":" in l and l.lstrip().startswith(("-", "*"))]
-                if loose:
-                    note(5, f"「- {key}:」の行頭が正典とズレている: {loose[0].strip()}")
-                else:
-                    note(5, f"「- {key}:」の行が無い（消さずに「なし」と書く）")
-            elif not hit[0].split(":", 1)[1].strip():
-                note(5, f"「- {key}:」の値が空（走らせるものが無ければ「なし」）")
-        # 新形式が期待するもの（正典 WORKFLOW.md「ファイル配置と設定ファイル」）は
-        # `develop/direction.md`（新形式の目印も兼ねる）と `develop/task/`。
-        # `develop/tasks.json`・`develop/progress.md` は在っても新形式では要らないので、
-        # 「無い」を NG にはせず、**在ったら**旧形式の残りとして指摘する
-        # （`cmd_config_doctor` の検査4と同じ判定・同じ案内。二重の言い方にしない）。
-        if not os.path.exists(os.path.join(root, "develop", "direction.md")):
-            note(5, "「## タスク運用」節はあるが develop/direction.md が無い")
+        config = layout.read_config(root)
+    except (layout.ConfigError, OSError, UnicodeDecodeError) as e:
+        note(5, f"タスク設定が読めない: {e}")
+    if config is not None and config.source is None:
+        try:
+            old = layout.find_legacy_section(root)
+        except layout.ConfigError as e:
+            old = None
+            note(5, f"タスク設定が読めない: {e}")
+        if old is not None:
+            note(5, f"旧い「## タスク運用」節（{os.path.basename(old[0])}）が残っているが develop/direction.md が無く読まれない（`tw migrate-layout` で `.tw/config.toml` に移す）")
+    if config is not None and config.source is not None:
+        if config.legacy:
+            note(5, f"旧い「## タスク運用」節（{os.path.basename(config.source)}）で読んでいる（`tw migrate-layout` で `.tw/config.toml` に移す）")
+        if not os.path.exists(os.path.join(root, config.root, "direction.md")):
+            note(5, f"{config.root}/direction.md が無い")
+        if config.store == layout.STORE_FILES and not os.path.isdir(os.path.join(root, config.root, "task")):
+            note(5, f"{config.root}/task/ が無い")
         legacy_present = [f for f in DEVELOP_LEGACY_FILES if os.path.exists(os.path.join(root, "develop", f))]
         if legacy_present:
             leftover = "・".join(f"develop/{f}" for f in legacy_present)
             note(5, f"{leftover} が残っている（旧形式の残り。`tw migrate --dry-run` で移行を確かめる）")
-        elif not task_dir_present:
-            note(5, "「## タスク運用」節はあるが develop/task/ が無い")
 
     # 検査6: バッククォートで名指ししたパスが実在しない（経緯の記録なら正当なので候補群）。
     #
@@ -431,19 +403,14 @@ def main() -> int:
         if same_dir and files[0].startswith("docs/"):
             continue  # `docs/research/` などのテンプレート。ルートの README/CLAUDE は除外しない
         note(8, f"見出し「{h}」が {', '.join(files)} に重複")
-    # `- ブランチ:` に既定の中身が書き写されていないか。既定は WORKFLOW.md が持っていて、
-    # 従うなら `既定` の2文字でよい。写すと正典が2箇所になる。
-    branch = next((l for l in sec if l.startswith("- ブランチ:")), "")
-    value = branch.split(":", 1)[1].strip() if branch else ""
-    if "feature/T-" in value and "既定" not in value:
-        note(8, "`- ブランチ:` に既定の運用が書き写されている（従うだけなら「既定」と書く）")
-
-    # 検証コマンドの値が節の外にも書かれていないか（同じ値の二重化）。
-    for key in ("検証コマンド", "整形コマンド"):
-        line = next((l for l in sec if l.startswith(f"- {key}:")), "")
-        m = re.search(r"`([^`]+)`", line)
-        if m and claude_body.count(f"`{m.group(1)}`") > 1:
-            note(8, f"検証/整形コマンド `{m.group(1)}` が CLAUDE.md の複数箇所にある")
+    # 検証コマンドの値そのものが AGENTS.md・CLAUDE.md の文章にあれば二重化（旧節の中は除く）。
+    if config is not None and config.verify:
+        for name in layout.CONFIG_FILENAMES:
+            text = read(os.path.join(root, name))
+            if layout.has_task_section(text):
+                text = text.replace("\n".join(task_section(text)), "")
+            if config.verify in text:
+                note(8, f"検証コマンド `{config.verify}` が {name} の文章にも書かれている")
 
     # 検査9: 通読させる気が無い大きさなのに索引が無い。
     for rel in tgts:
@@ -503,16 +470,20 @@ def main() -> int:
     print(f"root\t{root}")
     print(f"targets\t{len(tgts)}件\t{', '.join(tgts) if tgts else '(none)'}")
     print(f"{index_path}\t{'YES' if has_index else 'NO'}")
-    for f in DEVELOP_FILES:
-        print(f"develop/{f}\t{'YES' if os.path.exists(os.path.join(root, 'develop', f)) else 'NO'}")
+    task_root = config.root if config is not None else layout.DEFAULT_ROOT
+    for f in ("direction.md", "task"):
+        print(f"{task_root}/{f}\t{'YES' if os.path.exists(os.path.join(root, task_root, f)) else 'NO'}")
     for name, where in skill_where:
         print(f"skill-ref\t{name}\t{where}")
 
-    print("\n== 参考 タスク運用節 ==")
-    if not sec:
-        print("(「## タスク運用」節が無い)")
-    for line in sec:
-        print(line)
+    print("\n== 参考 タスク設定 ==")
+    if config is None or config.source is None:
+        print("(タスク設定が無い)")
+    else:
+        print(f"source\t{config.source}")
+        print(f"root\t{config.root}")
+        print(f"store\t{config.store}")
+        print(f"verify\t{config.verify}")
 
     print("\n== 参考 canon（スキルが名指ししている docs 側のパス） ==")
     if not canon:
