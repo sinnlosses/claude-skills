@@ -58,7 +58,7 @@ frontmatter の `hooks` は無視されるので、`no-delegate` の hook（`tw 
   `code-review` `codebase-design` `diagnosing-bugs` `domain-modeling` `grilling`
   `grill-with-docs` `implement` `improve-codebase-architecture` `prototype` `research`
   `resolving-merge-conflicts` `retro` `tdd` `wizard` `writing-for-agents`
-  （`retro` は改善の7観点の一覧を `retrospect` へ移してそこを指し、色・ドラフトの形も `retrospect` に合わせ、選ばれた改善案を `develop/draft/` に積む）
+  （`retro` は改善の7観点の一覧を `retrospect` へ移してそこを指し、色・ドラフトの形も `retrospect` に合わせ、選ばれた改善案をドラフトの置き場に積む）
 - [anthropics/skills](https://github.com/anthropics/skills) を日本語化したもの（3件。Apache-2.0。
   各スキルの `LICENSE.txt` を同梱）: `frontend-design` `webapp-testing` `skill-creator`
 - [openclaw/openclaw](https://github.com/openclaw/openclaw/tree/main/.agents/skills/test-audit) を
@@ -71,7 +71,7 @@ frontmatter の `hooks` は無視されるので、`no-delegate` の hook（`tw 
   `maintenance-docs`（`docs/` と CLAUDE.md がスキルの記載とズレていないか点検して直す）、
   `retrospect`（`/next-task` の中で1件ごとに振り返り、改善の7観点でエージェントの環境の改善候補を探して、
   物差しを通ったもの〔利用者がいるときは選ばれたもの〕だけを指示メモのドラフトに積む。正典・参照専用）と、
-  `develop/` 配下でタスクを管理する運用の `task-workflow`（正典・参照専用）
+  `.tw/` 配下でタスクを管理する運用の `task-workflow`（正典・参照専用）
   `setup-tasks` `next-task` `plan-tasks` `list-tasks`
 
 翻訳の方針:
@@ -96,13 +96,12 @@ frontmatter の `hooks` は無視されるので、`no-delegate` の hook（`tw 
 
 ## プロジェクト側に要るもの
 
-タスク系スキルを使うプロジェクトは、`develop/direction.md` を置き（タスクは `develop/task/` に
-1件1ファイルで `tw new` が作る）、検証コマンド・整形コマンド・ブランチの3行を CLAUDE.md の
-「## タスク運用」節に書く。**用意するのは `/setup-tasks`**（既にあるファイルは上書きしない）。
-置き場と節の形は `skills/task-workflow/WORKFLOW.md`「ファイル配置と設定ファイル」。旧形式
+タスク系スキルを使うプロジェクトは、`.tw/direction.md` を置き（タスクは `.tw/task/` に
+1件1ファイルで `tw new` が作る）、検証コマンドを `.tw/config.toml` に書く。
+**用意するのは `/setup-tasks`**（既にあるファイルは上書きしない）。置き場と設定の形は `skills/task-workflow/WORKFLOW.md`「ファイル配置と設定ファイル」。旧形式
 （`develop/tasks.json`）のプロジェクトでは、タスク系のスキルが `LEGACY` で止まって
-`tw migrate` を案内する（同「旧形式からの移行」）。「## タスク運用」節に
-`- タスクの置き場: beads` を足したプロジェクトは、錠と本文・履歴を Beads に置く（同「Beads 方式」）。
+`tw migrate` を案内する（同「旧形式からの移行」）。`.tw/config.toml` に
+`store = "beads"` を足したプロジェクトは、錠と本文・履歴を Beads に置く（同「Beads 方式」）。
 
 `docs/` 系は逆に、**新規プロジェクトでは何も作らない**（遅延作成。最初に書くべき内容ができた
 スキルが、そのとき作る）。育つ順序と置き場は次の「## docs/ の育て方」。
@@ -159,11 +158,11 @@ detached HEAD、差分が取れないときは全段を流す。
 ## 制約
 
 - ユーザー単位スキルはプロジェクト単位の同名スキルより優先される。プロジェクト側で同名の
-  スキルを置いても効かないので、プロジェクト差分は設定ファイル（AGENTS.md → CLAUDE.md）の「## タスク運用」節で表す
+  スキルを置いても効かないので、プロジェクト差分は `.tw/config.toml` で表す
 - ユーザー単位スキルはクラウド/Web セッションには同期されない
 - SKILL.md 内の `` !`コマンド` `` はスキル読み込み時に実行され、非0で終わるとスキル全体が
-  失敗する。`/next-task` と `/plan-tasks` が設定ファイル（AGENTS.md → CLAUDE.md）の「## タスク運用」節を読む箇所は、
-  git の外や節が無いときも非0で終わらないよう、結果を変数に溜めて `if` で出し分けてガードしてある
+  失敗する。`/next-task` と `/plan-tasks` は設定を `` !`tw config 2>&1 || true` `` で読む。
+  設定が無い（`MISSING`、終了コード6）・git の外（終了コード1）でも非0で終わらないようにしてある
 - スキルとワークフロー文書には、出力スタイル由来の呼び名（一人称・ユーザーへの呼びかけなど）
   を書かず、『ユーザー』『エージェント』で書く。出力スタイルは差し替わるため、スタイル依存の
   呼び名を使うと文書が意味を失う
