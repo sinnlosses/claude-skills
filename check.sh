@@ -84,7 +84,7 @@ if stage "task-workflow: scripts・task コマンド（ファイル方式・Bead
   'skills/task-workflow/*' 'agents/*' 'hooks/*' 'bin/*' 'skills/retrospect/scripts/*'; then
   python3 "$here/skills/task-workflow/scripts/selftest.py"
   echo
-  echo "-- task コマンド（develop/task/ + 台帳） --"
+  echo "-- task コマンド（.tw/task/ + 台帳） --"
   python3 "$here/skills/task-workflow/scripts/selftest_task.py"
   echo
   echo "-- task コマンド（Beads 方式。bd が無ければ飛ばす） --"

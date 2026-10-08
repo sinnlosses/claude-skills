@@ -1,0 +1,4 @@
+# タスク運用の設定（tw が読む）
+verify = "./check.sh"
+branch = "既定"
+store = "beads"
