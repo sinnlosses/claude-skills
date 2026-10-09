@@ -1,12 +1,11 @@
 #!/bin/sh
-# install.sh が張ったリンクを外す。使い方は `uninstall.sh [--dest DIR] [--bin-dir DIR] [スキル名...]`。
+# install.sh が張ったリンクを外す。使い方は `uninstall.sh [--dest DIR] [スキル名...]`。
 #
 # - 張る先の決め方は install.sh と同じ
 # - 外すのは**このリポジトリを指すリンクだけ**。実ファイル・実ディレクトリ・他所を指すリンクは
 #   触らず警告する
-# - スキル名を省けば、全スキルと `agents/` のリンクと `tw` を外し、このリポジトリを指していて
-#   解決できなくなったリンクも消す。名前を渡せばそのスキルだけを外し（`task-workflow` を含む
-#   ときは `tw` も）、エージェント定義には触らない
+# - スキル名を省けば、全スキルのリンクを外し、このリポジトリを指していて解決できなくなった
+#   リンクも消す。名前を渡せばそのスキルだけを外す
 # - 名前を渡したとき、外したスキルに `REQUIRES` で依存するスキルが張る先に残っていれば警告する
 #   （自動では外さない）
 set -e
@@ -57,42 +56,6 @@ else
       fi
     done < "$req"
   done
-fi
-
-unlink_tw=1
-if [ "$filtered" -eq 1 ]; then
-  unlink_tw=0
-  if name_in task-workflow "$@"; then
-    unlink_tw=1
-  fi
-fi
-if [ "$unlink_tw" -eq 1 ]; then
-  link="$bin_dest/tw"
-  if [ -e "$link" ] || [ -L "$link" ]; then
-    if link_refuse "$link" tw "$here/skills/task-workflow/scripts/task.py" "触らない"; then
-      :
-    else
-      rm "$link"
-      echo "unlinked tw"
-    fi
-  fi
-fi
-
-if [ "$filtered" -eq 0 ]; then
-  for f in "$here"/agents/*.md; do
-    [ -f "$f" ] || continue
-    n=$(basename "$f")
-    link="$agents_dest/$n"
-    if [ ! -e "$link" ] && [ ! -L "$link" ]; then
-      continue
-    fi
-    if link_refuse "$link" "$n" "$here/agents/" "触らない"; then
-      continue
-    fi
-    rm "$link"
-    echo "unlinked $n"
-  done
-  prune_links "$agents_dest" "$here/agents/"
 fi
 
 [ "$warned" -eq 0 ] || echo "※ skipped または warning があります。上の理由を確認してから手で片付けてください。" >&2

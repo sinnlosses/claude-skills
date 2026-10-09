@@ -11,14 +11,10 @@
 #
 # 1. 構文: install.sh・uninstall.sh・scripts/links.sh（いつも）
 # 2. install.sh・uninstall.sh の自己テスト
-# 3. task-workflow のスクリプトの自己テスト
-# 4. retrospect のスクリプトの自己テスト
-# 5. comment-audit のスクリプトの自己テスト
-# 6. test-audit のスクリプトの自己テスト
-# 7. plan-tasks のスクリプトの自己テスト
-# 8. next-task のスクリプトの自己テスト
-# 9. maintenance-docs のスクリプトの自己テスト
-# 10. リポジトリ全体の整合（frontmatter・README の索引・参照先の実在）（いつも）
+# 3. comment-audit のスクリプトの自己テスト
+# 4. test-audit のスクリプトの自己テスト
+# 5. maintenance-docs のスクリプトの自己テスト
+# 6. リポジトリ全体の整合（frontmatter・README の索引・参照先の実在）（いつも）
 #
 # 当たる段は `./check.sh --plan` で見る。
 set -e
@@ -75,25 +71,9 @@ if [ "$mode" != plan ]; then
 fi
 
 if stage "install.sh・uninstall.sh の自己テスト" \
-  install.sh uninstall.sh scripts/links.sh scripts/selftest_links.sh 'agents/*' 'bin/*' \
+  install.sh uninstall.sh scripts/links.sh scripts/selftest_links.sh \
   'skills/*/SKILL.md' 'skills/*/REQUIRES'; then
   sh "$here/scripts/selftest_links.sh"
-fi
-
-if stage "task-workflow: scripts・task コマンド（ファイル方式・Beads 方式）の自己テスト" \
-  'skills/task-workflow/*' 'agents/*' 'hooks/*' 'bin/*' 'skills/retrospect/scripts/*'; then
-  python3 "$here/skills/task-workflow/scripts/selftest.py"
-  echo
-  echo "-- task コマンド（.tw/task/ + 台帳） --"
-  python3 "$here/skills/task-workflow/scripts/selftest_task.py"
-  echo
-  echo "-- task コマンド（Beads 方式。bd が無ければ飛ばす） --"
-  python3 "$here/skills/task-workflow/scripts/selftest_beads.py"
-fi
-
-if stage "retrospect scripts の自己テスト" \
-  'skills/retrospect/*' 'skills/task-workflow/scripts/*'; then
-  python3 "$here/skills/retrospect/scripts/selftest.py"
 fi
 
 if stage "comment-audit scripts の自己テスト" 'skills/comment-audit/*'; then
@@ -102,16 +82,6 @@ fi
 
 if stage "test-audit scripts の自己テスト" 'skills/test-audit/*'; then
   python3 "$here/skills/test-audit/scripts/selftest_list_test_declarations.py"
-fi
-
-if stage "plan-tasks scripts の自己テスト" 'skills/plan-tasks/*'; then
-  python3 "$here/skills/plan-tasks/scripts/selftest_removed_lines.py"
-fi
-
-if stage "next-task scripts の自己テスト" 'skills/next-task/*'; then
-  python3 "$here/skills/next-task/scripts/selftest_review_needed.py"
-  python3 "$here/skills/next-task/scripts/selftest_context_size.py"
-  python3 "$here/skills/next-task/scripts/selftest_review_snapshot.py"
 fi
 
 if stage "maintenance-docs scripts の自己テスト" 'skills/maintenance-docs/*'; then

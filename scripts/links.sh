@@ -1,16 +1,13 @@
 # install.sh と uninstall.sh が読む関数群。読み込んだだけでは何も動かさない。
 # 呼ぶ側は `here` を決めてから `. "$here/scripts/links.sh"` で読む。
 
-# 張る先を決める。`--dest`・`--bin-dir` は parse_dest_args が上書きする
+# 張る先を決める。`--dest` は parse_dest_args が上書きする
 resolve_dests() {
   if [ -n "$CLAUDE_CONFIG_DIR" ]; then
     dest="$CLAUDE_CONFIG_DIR/skills"
-    agents_dest="$CLAUDE_CONFIG_DIR/agents"
   else
     dest="$HOME/.claude/skills"
-    agents_dest="$HOME/.claude/agents"
   fi
-  bin_dest="$HOME/.local/bin"
 }
 
 # オプションを読み、消費した引数の数を parsed_args に置く（呼ぶ側が shift "$parsed_args" する）。
@@ -31,21 +28,6 @@ parse_dest_args() {
         ;;
       --dest=*)
         dest="${1#--dest=}"
-        shift
-        parsed_args=$((parsed_args + 1))
-        ;;
-      --bin-dir)
-        shift
-        if [ $# -eq 0 ]; then
-          echo "--bin-dir には値が要ります" >&2
-          exit 2
-        fi
-        bin_dest="$1"
-        shift
-        parsed_args=$((parsed_args + 2))
-        ;;
-      --bin-dir=*)
-        bin_dest="${1#--bin-dir=}"
         shift
         parsed_args=$((parsed_args + 1))
         ;;

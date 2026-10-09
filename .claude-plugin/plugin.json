@@ -1,7 +1,7 @@
 {
   "name": "sinnlos-skills",
   "version": "0.1.0",
-  "description": "タスク運用（tw）・レビュー・調査などのスキルと、委譲先のエージェント定義",
+  "description": "レビュー・設計・調査などのスキル",
   "author": {
     "name": "sinnlosses",
     "url": "https://github.com/sinnlosses"

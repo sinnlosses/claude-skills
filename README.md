@@ -1,8 +1,14 @@
 # claude-skills
 
-Claude Code のスキル・エージェント定義・タスク運用のコマンド `tw` のソース。各スキルは
-`skills/<name>/` に置く。入れ方は2通りあり、**どちらか一方だけ**にする（両方で入れると同じスキルが
-二重に見える）。
+Claude Code のスキルのソース。各スキルは `skills/<name>/` に置く。入れ方は2通りあり、
+**どちらか一方だけ**にする（両方で入れると同じスキルが二重に見える）。
+
+タスク運用（`tw` コマンド、`task-workflow`・`next-task`・`plan-tasks`・`list-tasks`・`setup-tasks`・
+`retro`・`retrospect` のスキル、`no-delegate`・`reviewer` のエージェント定義）は
+[tsukumo-plugins](https://github.com/sinnlosses/tsukumo-plugins) にあり、そちらから入れる。
+運用のルールの正典は tsukumo-plugins の `skills/task-workflow/WORKFLOW.md`。
+以前にこのリポジトリの `install.sh` で張った `~/.local/bin/tw`・`~/.claude/agents/no-delegate.md`・
+`~/.claude/agents/reviewer.md` が claude-skills を指していたら、先に外してから tsukumo-plugins の `install.sh` を打つ。
 
 ## plugin で入れる（主な入れ方）
 
@@ -13,11 +19,7 @@ Claude Code のスキル・エージェント定義・タスク運用のコマ�
 /plugin install sinnlos-skills@sinnlos-skills
 ```
 
-スキルは `sinnlos-skills:<name>`、エージェント定義は `sinnlos-skills:no-delegate`・`sinnlos-skills:reviewer`
-の名前で入る。`bin/tw` は plugin が有効なあいだ Bash の PATH に入る。plugin に入れたエージェント定義の
-frontmatter の `hooks` は無視されるので、`no-delegate` の hook（`tw commit-guard`・`tw handback-guard`）は
-`hooks/hooks.json` が `"${CLAUDE_PLUGIN_ROOT}/bin/tw"` を `--agent-scoped` 付きで呼び（hook のシェルの PATH に
-`bin/` が入る保証が無いため絶対パスで呼ぶ）、`agent_type` の末尾が `no-delegate` のときだけ掛かる。
+スキルは `sinnlos-skills:<name>` の名前で入る。
 
 開発中は `claude --plugin-dir .`（このリポジトリの根）で読ませ、`claude plugin validate .` で検査する。
 リンクで入れていた環境を plugin に切り替えるときは、先に `./uninstall.sh` でリンクを外す。
@@ -33,46 +35,30 @@ frontmatter の `hooks` は無視されるので、`no-delegate` の hook（`tw 
 意図を裏切らないため）。ここを直接 `~/.claude/skills` にしないのは、Claude Code が
 `~/.claude/skills/synced/` を claude.ai 同期用に予約していて、git 管理下に混ざるのを避けるため。
 
-`./uninstall.sh [--dest DIR] [--bin-dir DIR] [スキル名...]` は張ったものを外す。張る先の決め方と
+`./uninstall.sh [--dest DIR] [スキル名...]` は張ったものを外す。張る先の決め方と
 リンクの判定は `scripts/links.sh` を `install.sh` と共有し、外すのは**このリポジトリを指すリンクだけ**
-（実ファイル・他所を指すリンクは触らず警告する）。スキル名を省けば全スキルと `agents/` のリンクと `tw`
-を外し、渡せばそのスキルだけ（`task-workflow` を含むときは `tw` も。エージェント定義は残す）。
+（実ファイル・他所を指すリンクは触らず警告する。tsukumo-plugins から張ったタスク系スキルのリンクにも
+触らない）。スキル名を省けば全スキルを外し、渡せばそのスキルだけ。
 外したスキルに依存するスキルが張る先に残るなら警告する。
-
-`agents/` にはサブエージェントの定義（1ファイル1エージェント）を置き、`./install.sh` が同じ安全策で
-`~/.claude/agents/`（`CLAUDE_CONFIG_DIR` があればその下の `agents/`）へ張る。スキル名の絞り込みは
-効かず常に全件が対象。`no-delegate` は frontmatter の hooks で `tw commit-guard`・`tw handback-guard` を呼ぶので、`tw` も
-張っておく（`task-workflow` を対象に含める。`tw` が無ければ hook は何もせずに通す）。`reviewer` は
-読むだけのレビュアーで、書き換えの道具を持たず hook も掛けない。
-
-`task-workflow` が対象なら、`./install.sh` はタスク運用のコマンド `tw`（`skills/task-workflow/scripts/task.py`
-へのシンボリックリンク）も `--bin-dir DIR`（無ければ `~/.local/bin`）に張る。`--dest`・`CLAUDE_CONFIG_DIR`
-の影響は受けない。既にある実ファイル・他所を指すリンクの `tw` は触らず警告し、張る先が PATH に無い・
-別の `tw` が先に見つかるときも警告する（PATH への追加はシェルの設定で行う）。
 
 ## 由来
 
-全30スキル。`skills/` にあるものが全てで、この一覧がその索引。
+全23スキル。`skills/` にあるものが全てで、この一覧がその索引。
 
-- [mattpocock/skills](https://github.com/mattpocock/skills) を日本語化したもの（15件）:
+- [mattpocock/skills](https://github.com/mattpocock/skills) を日本語化したもの（14件）:
   `code-review` `codebase-design` `diagnosing-bugs` `domain-modeling` `grilling`
   `grill-with-docs` `implement` `improve-codebase-architecture` `prototype` `research`
-  `resolving-merge-conflicts` `retro` `tdd` `wizard` `writing-for-agents`
-  （`retro` は改善の7観点の一覧を `retrospect` へ移してそこを指し、色・ドラフトの形も `retrospect` に合わせ、選ばれた改善案をドラフトの置き場に積む）
+  `resolving-merge-conflicts` `tdd` `wizard` `writing-for-agents`
 - [anthropics/skills](https://github.com/anthropics/skills) を日本語化したもの（3件。Apache-2.0。
   各スキルの `LICENSE.txt` を同梱）: `frontend-design` `webapp-testing` `skill-creator`
 - [openclaw/openclaw](https://github.com/openclaw/openclaw/tree/main/.agents/skills/test-audit) を
   日本語化したもの（1件。MIT。`LICENSE.txt` を同梱。openclaw 固有のコマンドとスキル参照は
   プロジェクトの `CLAUDE.md` と `code-review` への参照に置き換えた）: `test-audit`
-- 自作（11件）: `architecture-proposal`（様式とディレクトリ構造の提案書を書く）、
+- 自作（5件）: `architecture-proposal`（様式とディレクトリ構造の提案書を書く）、
   `dispatching-parallel-agents`（独立した問題を、問題ごとに1体のサブエージェントへ並べて起こす手順）、
   `verifying-before-completion`（完了と言う前に、主張ごとの証拠のコマンドを打って出力を読む関門）、
   `comment-audit`（コメントを種類で判定して消す・縮める・正典へ移す）、
-  `maintenance-docs`（`docs/` と CLAUDE.md がスキルの記載とズレていないか点検して直す）、
-  `retrospect`（`/next-task` の中で1件ごとに振り返り、改善の7観点でエージェントの環境の改善候補を探して、
-  物差しを通ったもの〔利用者がいるときは選ばれたもの〕だけを指示メモのドラフトに積む。正典・参照専用）と、
-  `.tw/` 配下でタスクを管理する運用の `task-workflow`（正典・参照専用）
-  `setup-tasks` `next-task` `plan-tasks` `list-tasks`
+  `maintenance-docs`（`docs/` と CLAUDE.md がスキルの記載とズレていないか点検して直す）
 
 翻訳の方針:
 1. **散文とコメントは日本語にし、コード例・スキーマ・識別子・URL・引用文献は原文のまま**残す
@@ -87,23 +73,16 @@ frontmatter の `hooks` は無視されるので、`no-delegate` の hook（`tw 
 - `webapp-testing` は **Python + Playwright** を要求する（`scripts/` と `examples/` が
   Python スクリプト）。使う前に `pip install playwright && playwright install chromium`
 - `skill-creator` の `scripts/` `eval-viewer/`、`architecture-proposal` の
-  `scripts/import_edges.py`、`maintenance-docs` の `scripts/check_docs.py`、
-  `task-workflow` の `scripts/` も Python（標準ライブラリのみ）。
-  SKILL.md を読むだけなら不要で、実際にスクリプトを走らせるときにだけ要る
-- タスク系スキルを **Beads 方式**（`- タスクの置き場: beads`）で使うプロジェクトは `bd`（Beads）と
-  Dolt、トラッカーが `github` なら `gh` も要る（`skills/task-workflow/WORKFLOW.md`「Beads 方式」）。
-  既定のファイル方式では要らない
+  `scripts/import_edges.py`、`maintenance-docs` の `scripts/check_docs.py` も Python
+  （標準ライブラリのみ）。SKILL.md を読むだけなら不要で、実際にスクリプトを走らせるときにだけ要る
+- `maintenance-docs` はタスク設定を `tw config` で読む（`tw` は tsukumo-plugins から入れる）
 
 ## プロジェクト側に要るもの
 
-タスク系スキルを使うプロジェクトは、`.tw/direction.md` を置き（タスクは `.tw/task/` に
-1件1ファイルで `tw new` が作る）、検証コマンドを `.tw/config.toml` に書く。
-**用意するのは `/setup-tasks`**（既にあるファイルは上書きしない）。置き場と設定の形は `skills/task-workflow/WORKFLOW.md`「ファイル配置と設定ファイル」。旧形式
-（`develop/tasks.json`）のプロジェクトでは、タスク系のスキルが `LEGACY` で止まって
-`tw migrate` を案内する（同「旧形式からの移行」）。`.tw/config.toml` に
-`store = "beads"` を足したプロジェクトは、錠と本文・履歴を Beads に置く（同「Beads 方式」）。
+タスク運用に要るもの（`.tw/` の置き場と設定）は、tsukumo-plugins の README と
+tsukumo-plugins の `skills/task-workflow/WORKFLOW.md` を見る。
 
-`docs/` 系は逆に、**新規プロジェクトでは何も作らない**（遅延作成。最初に書くべき内容ができた
+`docs/` 系は、**新規プロジェクトでは何も作らない**（遅延作成。最初に書くべき内容ができた
 スキルが、そのとき作る）。育つ順序と置き場は次の「## docs/ の育て方」。
 
 ## docs/ の育て方
@@ -145,13 +124,10 @@ detached HEAD、差分が取れないときは全段を流す。
 
 1. `install.sh`・`uninstall.sh`・`scripts/links.sh` の構文
 2. `install.sh`・`uninstall.sh` の自己テスト（`scripts/selftest_links.sh`。全件で張って外すとこのリポジトリを指すリンクだけが消えること、名前を渡した外し方と依存の警告を確かめる）
-3. `task-workflow` のスクリプトの自己テスト（`selftest.py` が旧形式の読み取りと `init.py`、`selftest_task.py` が `tw` コマンドを一時リポジトリと作業ツリー2本で通す。`selftest_beads.py` は Beads 方式を本物の `bd` と偽の `gh`・トラッカー同期で通し、`bd` が無ければ飛ばす）
-4. `retrospect` の自己テスト
-5. `comment-audit` の自己テスト
-6. `test-audit` の自己テスト
-7. `plan-tasks` の自己テスト
-8. `next-task` の自己テスト
-9. リポジトリの整合（`scripts/check_repo.py`。frontmatter の `name` とディレクトリ名の一致、この README の由来一覧と `skills/` の一致、`${CLAUDE_SKILL_DIR}` で書かれた参照先の実在、スキル名の相互参照の実在、`docs/` に書くスキル（`architecture-proposal` `domain-modeling` `research`。`check_repo.py` の `DOCS_WRITING_SKILLS`）が索引 `docs/README.md` に1行足す指示を持っていること、`agents/*.md` の frontmatter の `name` とファイル名の一致・`description` の有無、`tw` の張り先の`task.py` が実行できることとスキルに `task.py` の長い呼び方・`` `task …` `` の略記が残っていないこと）。
+3. `comment-audit` の自己テスト
+4. `test-audit` の自己テスト
+5. `maintenance-docs` の自己テスト
+6. リポジトリの整合（`scripts/check_repo.py`。frontmatter の `name` とディレクトリ名の一致、この README の由来一覧と `skills/` の一致、`${CLAUDE_SKILL_DIR}` で書かれた参照先の実在、スキル名の相互参照の実在〔tsukumo-plugins のタスク系スキルは `check_repo.py` の `EXTERNAL_SKILLS` で認める〕、`docs/` に書くスキル（`architecture-proposal` `domain-modeling` `research`。`check_repo.py` の `DOCS_WRITING_SKILLS`）が索引 `docs/README.md` に1行足す指示を持っていること、スキルに `task.py` の長い呼び方・`` `task …` `` の略記が残っていないこと）。
 
 **由来の一覧が索引なので、スキルを足したり消したりしたらここも直す**（直し忘れは `./check.sh` が落として教える）。標準ライブラリだけで動く。
 
@@ -161,8 +137,7 @@ detached HEAD、差分が取れないときは全段を流す。
   スキルを置いても効かないので、プロジェクト差分は `.tw/config.toml` で表す
 - ユーザー単位スキルはクラウド/Web セッションには同期されない
 - SKILL.md 内の `` !`コマンド` `` はスキル読み込み時に実行され、非0で終わるとスキル全体が
-  失敗する。`/next-task` と `/plan-tasks` は設定を `` !`tw config 2>&1 || true` `` で読む。
-  設定が無い（`MISSING`、終了コード6）・git の外（終了コード1）でも非0で終わらないようにしてある
+  失敗する。失敗しうるコマンドは `` !`… 2>&1 || true` `` の形で書く
 - スキルとワークフロー文書には、出力スタイル由来の呼び名（一人称・ユーザーへの呼びかけなど）
   を書かず、『ユーザー』『エージェント』で書く。出力スタイルは差し替わるため、スタイル依存の
   呼び名を使うと文書が意味を失う

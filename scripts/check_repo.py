@@ -5,18 +5,13 @@
 
 見るもの:
 - 各 SKILL.md の frontmatter が読めて、`name` がディレクトリ名と一致すること
-- 各 `agents/*.md`（`install.sh` が `~/.claude/agents/` へ張るエージェント定義）の frontmatter が
-  読めて、`name` がファイル名と一致し、`description` があること。`no-delegate` の frontmatter が
-  コミットを拒む hook（`tw commit-guard`）と返却を拒む hook（`tw handback-guard`）を持つこと。
-  `reviewer` が `Agent`・`Edit`・`Write`・`NotebookEdit` を持たず hooks も持たないこと
 - README の「由来」一覧が `skills/` と過不足なく一致すること（README が索引なので）
-- スキル同士の相互参照が実在するスキルを指していること
+- スキル同士の相互参照が実在するスキルか `EXTERNAL_SKILLS` を指していること
 - `docs/` に書くスキルが、索引 `docs/README.md` に1行足す指示を持っていること
 - スクリプトのパスが `${CLAUDE_SKILL_DIR}` 形で書かれ、実在するファイルを指していること
 - 同梱スクリプトが構文として読めること
-- `.claude-plugin/plugin.json` の `name` が `sinnlos-skills` であること、`bin/tw` が実行でき `task.py` を
-  呼ぶこと、`hooks/hooks.json` が `--agent-scoped` 付きで `${CLAUDE_PLUGIN_ROOT}/bin/tw` を呼ぶ hook 3つを持つこと
-- `tw` の指す `task.py` が実行でき、スキルの Markdown が `task.py` を `python3` で呼ぶ形や `` `task …` `` の略記で書いていないこと
+- `.claude-plugin/plugin.json` の `name` が `sinnlos-skills` であること
+- スキルの Markdown が `task.py` を `python3` で呼ぶ形や `` `task …` `` の略記で書いていないこと
 - 兄弟スキルの `scripts/` を `sys.path` に足して `import` しているなら、`REQUIRES` にその
   兄弟スキル名があること
 """
@@ -27,25 +22,26 @@ import ast
 import json
 import os
 import re
-import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PLUGIN_NAME = "sinnlos-skills"
 SKILLS = os.path.join(ROOT, "skills")
-AGENTS = os.path.join(ROOT, "agents")
 
 # 使う側のプロジェクトの `docs/` に成果物を書くスキル。ここに載っているスキルは
 # 「索引 `docs/README.md` に1行足す」指示を持っていなければならない。
 DOCS_WRITING_SKILLS = ("architecture-proposal", "domain-modeling", "research")
 
-# `agents/no-delegate.md` の frontmatter の hooks に要る行。
-NO_DELEGATE_HOOK_LINES = (
-    "command: tw commit-guard 2>/dev/null || true",
-    "command: tw handback-guard 2>/dev/null || true",
+# tsukumo-plugins にあり、このリポジトリに無いが本文で名指してよいスキル。
+EXTERNAL_SKILLS = (
+    "list-tasks",
+    "next-task",
+    "plan-tasks",
+    "retro",
+    "retrospect",
+    "setup-tasks",
+    "task-workflow",
 )
-
-REVIEWER_DISALLOWED_TOOLS = ("Agent", "Edit", "Write", "NotebookEdit")
 
 problems: list[str] = []
 
@@ -58,12 +54,6 @@ def skill_names() -> list[str]:
     return sorted(
         n for n in os.listdir(SKILLS) if os.path.isdir(os.path.join(SKILLS, n))
     )
-
-
-def agent_names() -> list[str]:
-    if not os.path.isdir(AGENTS):
-        return []
-    return sorted(f[:-3] for f in os.listdir(AGENTS) if f.endswith(".md"))
 
 
 def read(path: str) -> str:
@@ -101,36 +91,6 @@ def check_frontmatter(names: list[str]) -> None:
             fail(f"{n}: frontmatter の name が {fm.get('name')!r} でディレクトリ名と違う")
         if not fm.get("description"):
             fail(f"{n}: description が無い")
-
-
-def check_agent_frontmatter(names: list[str]) -> None:
-    for n in names:
-        path = os.path.join(AGENTS, f"{n}.md")
-        fm = frontmatter(read(path))
-        if not fm:
-            fail(f"agents/{n}.md: frontmatter を読めない")
-            continue
-        if fm.get("name") != n:
-            fail(f"agents/{n}.md: frontmatter の name が {fm.get('name')!r} でファイル名と違う")
-        if not fm.get("description"):
-            fail(f"agents/{n}.md: description が無い")
-    if "no-delegate" in names:
-        text = read(os.path.join(AGENTS, "no-delegate.md"))
-        head = text[: text.find("\n---\n", 3)]
-        lines = [line.strip() for line in head.splitlines()]
-        for hook_line in NO_DELEGATE_HOOK_LINES:
-            if hook_line not in lines:
-                fail(f"agents/no-delegate.md: frontmatter に hook の行 {hook_line!r} が無い")
-    if "reviewer" in names:
-        text = read(os.path.join(AGENTS, "reviewer.md"))
-        head = text[: text.find("\n---\n", 3)]
-        fm = frontmatter(text) or {}
-        denied = {t.strip() for t in str(fm.get("disallowedTools", "")).split(",")}
-        for tool in REVIEWER_DISALLOWED_TOOLS:
-            if tool not in denied:
-                fail(f"agents/reviewer.md: disallowedTools に {tool} が無い")
-        if "hooks:" in head:
-            fail("agents/reviewer.md: frontmatter に hooks を持たせない")
 
 
 def check_readme_index(names: list[str]) -> None:
@@ -182,17 +142,7 @@ def check_script_paths(names: list[str]) -> None:
                 fail(f"{os.path.relpath(md, ROOT)}: スクリプトの実行に絶対パスを埋めている")
 
 
-TW_TARGET = os.path.join(SKILLS, "task-workflow", "scripts", "task.py")
-
-
-def check_tw_entry(names: list[str]) -> None:
-    if not os.path.exists(TW_TARGET):
-        fail(f"{os.path.relpath(TW_TARGET, ROOT)} が無い（install.sh の tw の張り先）")
-    else:
-        if not os.access(TW_TARGET, os.X_OK):
-            fail(f"{os.path.relpath(TW_TARGET, ROOT)} に実行ビットが無い（tw から起こせない）")
-        if not read(TW_TARGET).startswith("#!/usr/bin/env python3\n"):
-            fail(f"{os.path.relpath(TW_TARGET, ROOT)} の1行目が #!/usr/bin/env python3 でない")
+def check_tw_call_style(names: list[str]) -> None:
     long_form = re.compile(r"python3 [^\n`]*task-workflow/scripts/task\.py")
     old_abbrev = re.compile(r"`task[ `]")
     for n in names:
@@ -216,30 +166,11 @@ def check_plugin() -> None:
         if name != PLUGIN_NAME:
             fail(f".claude-plugin/plugin.json の name が {name!r} で {PLUGIN_NAME!r} でない")
 
-    tw = os.path.join(ROOT, "bin", "tw")
-    if not os.access(tw, os.X_OK):
-        fail("bin/tw が無いか実行ビットが無い")
-    else:
-        done = subprocess.run([tw, "--help"], capture_output=True, text=True, cwd=ROOT)
-        if done.returncode != 0 or "commit-guard" not in done.stdout:
-            fail(f"bin/tw --help が task.py に届かない（終了コード {done.returncode}）")
-
-    try:
-        hooks = json.loads(read(os.path.join(ROOT, "hooks", "hooks.json")))["hooks"]
-        commands = [h["command"] for groups in hooks.values() for g in groups for h in g["hooks"]]
-    except (OSError, ValueError, KeyError, TypeError):
-        fail("hooks/hooks.json を読めない（hooks.<イベント>[].hooks[].command の形）")
-        return
-    for subcommand in ("commit-guard", "handback-guard"):
-        want = f'"${{CLAUDE_PLUGIN_ROOT}}/bin/tw" {subcommand} --agent-scoped 2>/dev/null || true'
-        if want not in commands:
-            fail(f"hooks/hooks.json に hook {want!r} が無い")
-
 
 def check_cross_references(names: list[str]) -> None:
     """`` `skill-name` スキル`` の形の参照が実在するか。"""
     pat = re.compile(r"`([a-z][a-z0-9-]{2,})`\s*スキル")
-    known = set(names)
+    known = set(names) | set(EXTERNAL_SKILLS)
     for n in names:
         for md in markdown_files(n):
             for ref in set(pat.findall(read(md))):
@@ -299,61 +230,6 @@ def check_python_syntax(names: list[str]) -> None:
                     fail(f"{os.path.relpath(p, ROOT)}: 構文エラー（{e}）")
 
 
-# T-018: develop/task 等の置き場・IDの形は skills/task-workflow/scripts/layout.py に
-# 1箇所だけ書き、読む側は直書きしない（正典は task-workflow の WORKFLOW.md「ファイル配置と
-# 設定ファイル（AGENTS.md → CLAUDE.md の順）」）。ここでは layout.py 自身は対象から外し、
-# 読む側の6ファイルだけを見る。
-_TASK_WORKFLOW_SCRIPTS = os.path.join(SKILLS, "task-workflow", "scripts")
-_RETROSPECT_SCRIPTS = os.path.join(SKILLS, "retrospect", "scripts")
-LAYOUT_PATH = os.path.join(_TASK_WORKFLOW_SCRIPTS, "layout.py")
-LAYOUT_CONSUMERS = (
-    os.path.join(_TASK_WORKFLOW_SCRIPTS, "task.py"),
-    os.path.join(_TASK_WORKFLOW_SCRIPTS, "taskfile.py"),
-    os.path.join(_TASK_WORKFLOW_SCRIPTS, "init.py"),
-    os.path.join(_TASK_WORKFLOW_SCRIPTS, "legacy.py"),
-    os.path.join(_RETROSPECT_SCRIPTS, "material.py"),
-    os.path.join(_RETROSPECT_SCRIPTS, "transcript.py"),
-)
-
-# layout.py が持つ値そのもの（値は1文字も変えない。ここは「他のファイルに戻っていないか」の検査）。
-_LAYOUT_PATHS = {
-    "develop/task",
-    "develop/direction.md",
-    "develop/draft",
-    "docs/history/tasks.md",
-}
-_LAYOUT_STRINGS = _LAYOUT_PATHS | {
-    "## ユーザーから",
-    "## エージェントのドラフト",
-    "feature/",
-    r"T-\d{3,}",
-    r"^T-\d{3,}$",
-    r"\bT-\d{3,}\b",
-    r"feature/(T-\d{3,})",
-    r"^## (T-\d{3,})\b",
-}
-
-
-def _docstring_constant_ids(tree: ast.AST) -> set[int]:
-    """モジュール／クラス／関数の docstring として使われている `Constant` ノードの `id()` の集合。
-
-    人向けの説明文で `develop/task/T-xxx.md` のようにパスへ触れるのは直書きの問題ではないので、
-    リテラルの検査から外す（対象は実際に使われる値だけ）。
-    """
-    ids: set[int] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            body = getattr(node, "body", [])
-            if (
-                body
-                and isinstance(body[0], ast.Expr)
-                and isinstance(body[0].value, ast.Constant)
-                and isinstance(body[0].value.value, str)
-            ):
-                ids.add(id(body[0].value))
-    return ids
-
-
 def _is_os_path_join(node: ast.AST) -> bool:
     return (
         isinstance(node, ast.Call)
@@ -375,56 +251,6 @@ def _trailing_literal_segments(args: list[ast.expr]) -> list[str]:
         else:
             break
     return segments
-
-
-def check_task_workflow_layout() -> None:
-    """`layout.py` の値が読む側のファイルに直書きで戻っていないか（T-018）。"""
-    if not os.path.exists(LAYOUT_PATH):
-        fail("skills/task-workflow/scripts/layout.py が無い")
-        return
-    for path in LAYOUT_CONSUMERS:
-        rel = os.path.relpath(path, ROOT)
-        if not os.path.exists(path):
-            fail(f"{rel} が無い")
-            continue
-        text = read(path)
-        if not re.search(r"^import layout\b", text, flags=re.MULTILINE):
-            fail(f"{rel}: `import layout` が無い（layout.py の値を読んでいない）")
-            continue
-        tree = ast.parse(text)
-        docstring_ids = _docstring_constant_ids(tree)
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Constant)
-                and isinstance(node.value, str)
-                and id(node) not in docstring_ids
-                and node.value in _LAYOUT_STRINGS
-            ):
-                fail(f"{rel}:{node.lineno}: layout.py にある値 {node.value!r} を直書きしている")
-            if _is_os_path_join(node):
-                segments = _trailing_literal_segments(node.args)
-                joined = ["/".join(segments[i:]) for i in range(len(segments))]
-                hit = next((j for j in joined if j in _LAYOUT_PATHS), None)
-                if hit is not None:
-                    fail(f"{rel}:{node.lineno}: os.path.join が {hit!r} を直書きしている")
-
-
-def check_selftest_body_literal() -> None:
-    """自己テストが `### 名指すファイル` を直書きして本文を組んでいないか（`selftest_body.task_body` で組む）。"""
-    for fname in sorted(os.listdir(_TASK_WORKFLOW_SCRIPTS)):
-        if not (fname.startswith("selftest") and fname.endswith(".py")) or fname == "selftest_body.py":
-            continue
-        path = os.path.join(_TASK_WORKFLOW_SCRIPTS, fname)
-        tree = ast.parse(read(path))
-        docstring_ids = _docstring_constant_ids(tree)
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Constant)
-                and isinstance(node.value, str)
-                and id(node) not in docstring_ids
-                and "### 名指すファイル" in node.value
-            ):
-                fail(f"{os.path.relpath(path, ROOT)}:{node.lineno}: `### 名指すファイル` を直書きしている（selftest_body.task_body で組む）")
 
 
 def _sys_path_call(node: ast.AST) -> ast.expr | None:
@@ -529,16 +355,13 @@ def main() -> None:
     check_frontmatter(names)
     check_readme_index(names)
     check_script_paths(names)
-    check_tw_entry(names)
+    check_tw_call_style(names)
     check_plugin()
     check_cross_references(names)
     check_requires(names)
     check_sibling_imports(names)
     check_docs_index(names)
     check_python_syntax(names)
-    check_task_workflow_layout()
-    check_selftest_body_literal()
-    check_agent_frontmatter(agent_names())
 
     if problems:
         for p in problems:
