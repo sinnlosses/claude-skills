@@ -24,8 +24,8 @@ def write(root: str, rel: str, text: str = "") -> None:
         f.write(text)
 
 
-def ng_lines(root: str, check: int) -> list[str]:
-    out = subprocess.run([sys.executable, CHECK, root], capture_output=True, text=True, check=True).stdout
+def ng_lines(root: str, check: int, env: dict[str, str] | None = None) -> list[str]:
+    out = subprocess.run([sys.executable, CHECK, root], capture_output=True, text=True, check=True, env=env).stdout
     lines = out.splitlines()
     head = next(i for i, l in enumerate(lines) if l.startswith(f"== 検査{check} "))
     found = []
@@ -44,6 +44,7 @@ def expect(name: str, ok: bool, detail: str = "") -> None:
 
 def make_config_project(tmp: str, name: str) -> str:
     root = os.path.join(tmp, name)
+    subprocess.run(["git", "init", "-q", root], check=True)
     write(root, ".tw/config.toml", 'verify = "make test"\n')
     write(root, ".tw/direction.md", "## ユーザーから\n")
     write(root, ".tw/task/.keep")
@@ -58,21 +59,21 @@ def main() -> int:
         expect("設定だけで節が無い: 検査5は指摘0", ng_lines(root, 5) == [], str(ng_lines(root, 5)))
 
         root = os.path.join(tmp, "legacy")
+        subprocess.run(["git", "init", "-q", root], check=True)
         write(root, "AGENTS.md", "## タスク運用\n\n- 検証コマンド: `make test`\n- 整形コマンド: なし\n- ブランチ: 既定\n")
         write(root, "develop/direction.md", "## ユーザーから\n")
         write(root, "develop/task/.keep")
         got = ng_lines(root, 5)
-        expect("旧節だけ: tw migrate-layout を促す", any("tw migrate-layout" in l for l in got), str(got))
-        expect("旧節の検証コマンドは検査8で二重化とされない", ng_lines(root, 8) == [], str(ng_lines(root, 8)))
+        expect("旧配置: tw migrate-layout を促す", any("tw migrate-layout" in l for l in got), str(got))
+        expect("旧配置の検証コマンドは検査8で二重化とされない", ng_lines(root, 8) == [], str(ng_lines(root, 8)))
 
-        root = os.path.join(tmp, "legacy-no-direction")
+        root = make_config_project(tmp, "legacy-section-with-config")
         write(root, "AGENTS.md", "## タスク運用\n\n- 検証コマンド: `make test`\n")
-        got = ng_lines(root, 5)
-        expect(
-            "旧節あり・direction.md 無し: 移行を促し direction.md が無いと分かる",
-            any("tw migrate-layout" in l and "direction.md" in l for l in got),
-            str(got),
-        )
+        expect("設定があり旧節も残る: 旧節の中は検査8で除く", ng_lines(root, 8) == [], str(ng_lines(root, 8)))
+
+        root = make_config_project(tmp, "no-tw")
+        got = ng_lines(root, 5, env={"PATH": "/nonexistent"})
+        expect("tw が無い: 読めない指摘", any("tw が無い" in l for l in got), str(got))
 
         root = make_config_project(tmp, "broken")
         write(root, ".tw/config.toml", "verify = make test\n")

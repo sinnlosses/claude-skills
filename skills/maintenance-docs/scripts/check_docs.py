@@ -23,15 +23,50 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import subprocess
 import sys
 
-_TASK_WORKFLOW_SCRIPTS = os.path.normpath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "task-workflow", "scripts")
-)
-if _TASK_WORKFLOW_SCRIPTS not in sys.path:
-    sys.path.insert(0, _TASK_WORKFLOW_SCRIPTS)
+DEFAULT_TASK_ROOT = ".tw"
+CONFIG_FILENAMES = ("AGENTS.md", "CLAUDE.md")
+STORE_FILES = "files"
 
-import layout  # noqa: E402
+
+class TaskConfig:
+    def __init__(self, source: str, root: str, store: str, verify: str) -> None:
+        self.source = source
+        self.root = root
+        self.store = store
+        self.verify = verify
+
+
+def read_task_config(root: str) -> tuple[TaskConfig | None, str | None]:
+    """`tw config` の出力から (設定, 指摘の文) を返す。設定が無いときは両方 None。"""
+    try:
+        proc = subprocess.run(["tw", "config"], cwd=root, capture_output=True, text=True, timeout=30)
+    except FileNotFoundError:
+        return None, "タスク設定が読めない（tw が無い）"
+    except subprocess.TimeoutExpired:
+        return None, "タスク設定が読めない（tw config が終わらない）"
+    out = proc.stdout.strip()
+    first = out.splitlines()[0].split("\t") if out else [""]
+    if first[0] == "MISSING":
+        return None, None
+    if first[0] == "OLD_LAYOUT":
+        return None, "旧い配置（develop/ か「## タスク運用」節）で、`.tw/config.toml` に移っていない（`tw migrate-layout` で移す）"
+    if first[0] != "CONFIG":
+        return None, f"タスク設定が読めない: {(out or proc.stderr.strip())[:200]}"
+    rows = {}
+    for line in out.splitlines()[1:]:
+        cols = line.split("\t")
+        if len(cols) >= 2:
+            rows[cols[0]] = cols[1]
+    verify = rows.get("verify", "")
+    return TaskConfig(
+        source=first[1] if len(first) > 1 else "",
+        root=rows.get("root", DEFAULT_TASK_ROOT),
+        store=rows.get("store", STORE_FILES),
+        verify="" if verify == "なし" else verify,
+    ), None
 
 # 旧形式（`tasks.json`・`progress.md`）の残りと見なすファイル。
 DEVELOP_LEGACY_FILES = ("tasks.json", "progress.md")
@@ -311,25 +346,13 @@ def main() -> int:
             note(4, f"{rel} -> {link} が実在しない")
 
     # 検査5: タスク設定（`.tw/config.toml`）が読めるかと、設定の根の揃い。
-    config = None
-    try:
-        config = layout.read_config(root)
-    except (layout.ConfigError, OSError, UnicodeDecodeError) as e:
-        note(5, f"タスク設定が読めない: {e}")
-    if config is not None and config.source is None:
-        try:
-            old = layout.find_legacy_section(root)
-        except layout.ConfigError as e:
-            old = None
-            note(5, f"タスク設定が読めない: {e}")
-        if old is not None:
-            note(5, f"旧い「## タスク運用」節（{os.path.basename(old[0])}）が残っているが develop/direction.md が無く読まれない（`tw migrate-layout` で `.tw/config.toml` に移す）")
-    if config is not None and config.source is not None:
-        if config.legacy:
-            note(5, f"旧い「## タスク運用」節（{os.path.basename(config.source)}）で読んでいる（`tw migrate-layout` で `.tw/config.toml` に移す）")
+    config, config_problem = read_task_config(root)
+    if config_problem:
+        note(5, config_problem)
+    if config is not None:
         if not os.path.exists(os.path.join(root, config.root, "direction.md")):
             note(5, f"{config.root}/direction.md が無い")
-        if config.store == layout.STORE_FILES and not os.path.isdir(os.path.join(root, config.root, "task")):
+        if config.store == STORE_FILES and not os.path.isdir(os.path.join(root, config.root, "task")):
             note(5, f"{config.root}/task/ が無い")
         legacy_present = [f for f in DEVELOP_LEGACY_FILES if os.path.exists(os.path.join(root, "develop", f))]
         if legacy_present:
@@ -405,9 +428,9 @@ def main() -> int:
         note(8, f"見出し「{h}」が {', '.join(files)} に重複")
     # 検証コマンドの値そのものが AGENTS.md・CLAUDE.md の文章にあれば二重化（旧節の中は除く）。
     if config is not None and config.verify:
-        for name in layout.CONFIG_FILENAMES:
+        for name in CONFIG_FILENAMES:
             text = read(os.path.join(root, name))
-            if layout.has_task_section(text):
+            if task_section(text):
                 text = text.replace("\n".join(task_section(text)), "")
             if config.verify in text:
                 note(8, f"検証コマンド `{config.verify}` が {name} の文章にも書かれている")
@@ -470,14 +493,14 @@ def main() -> int:
     print(f"root\t{root}")
     print(f"targets\t{len(tgts)}件\t{', '.join(tgts) if tgts else '(none)'}")
     print(f"{index_path}\t{'YES' if has_index else 'NO'}")
-    task_root = config.root if config is not None else layout.DEFAULT_ROOT
+    task_root = config.root if config is not None else DEFAULT_TASK_ROOT
     for f in ("direction.md", "task"):
         print(f"{task_root}/{f}\t{'YES' if os.path.exists(os.path.join(root, task_root, f)) else 'NO'}")
     for name, where in skill_where:
         print(f"skill-ref\t{name}\t{where}")
 
     print("\n== 参考 タスク設定 ==")
-    if config is None or config.source is None:
+    if config is None:
         print("(タスク設定が無い)")
     else:
         print(f"source\t{config.source}")

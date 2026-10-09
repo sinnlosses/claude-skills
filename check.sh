@@ -114,7 +114,7 @@ if stage "next-task scripts の自己テスト" 'skills/next-task/*'; then
   python3 "$here/skills/next-task/scripts/selftest_review_snapshot.py"
 fi
 
-if stage "maintenance-docs scripts の自己テスト" 'skills/maintenance-docs/*' 'skills/task-workflow/scripts/layout.py'; then
+if stage "maintenance-docs scripts の自己テスト" 'skills/maintenance-docs/*'; then
   python3 "$here/skills/maintenance-docs/scripts/selftest_check_docs.py"
 fi
 
