@@ -28,14 +28,12 @@ import sys
 
 DEFAULT_TASK_ROOT = ".tw"
 CONFIG_FILENAMES = ("AGENTS.md", "CLAUDE.md")
-STORE_FILES = "files"
 
 
 class TaskConfig:
-    def __init__(self, source: str, root: str, store: str, verify: str) -> None:
+    def __init__(self, source: str, root: str, verify: str) -> None:
         self.source = source
         self.root = root
-        self.store = store
         self.verify = verify
 
 
@@ -50,9 +48,9 @@ def read_task_config(root: str) -> tuple[TaskConfig | None, str | None]:
     out = proc.stdout.strip()
     first = out.splitlines()[0].split("\t") if out else [""]
     if first[0] == "MISSING":
+        if has_old_layout(root):
+            return None, "旧い配置（develop/ か「## タスク運用」節）で、`.tw/config.toml` に移っていない（`/setup-tasks` で `.tw/config.toml` を用意する）"
         return None, None
-    if first[0] == "OLD_LAYOUT":
-        return None, "旧い配置（develop/ か「## タスク運用」節）で、`.tw/config.toml` に移っていない（`tw migrate-layout` で移す）"
     if first[0] != "CONFIG":
         return None, f"タスク設定が読めない: {(out or proc.stderr.strip())[:200]}"
     rows = {}
@@ -64,9 +62,15 @@ def read_task_config(root: str) -> tuple[TaskConfig | None, str | None]:
     return TaskConfig(
         source=first[1] if len(first) > 1 else "",
         root=rows.get("root", DEFAULT_TASK_ROOT),
-        store=rows.get("store", STORE_FILES),
         verify="" if verify == "なし" else verify,
     ), None
+
+
+def has_old_layout(root: str) -> bool:
+    """`develop/` があるか、AGENTS.md・CLAUDE.md に「## タスク運用」節が残っている。"""
+    if os.path.isdir(os.path.join(root, "develop")):
+        return True
+    return any(task_section(read(os.path.join(root, name))) for name in CONFIG_FILENAMES)
 
 # 旧形式（`tasks.json`・`progress.md`）の残りと見なすファイル。
 DEVELOP_LEGACY_FILES = ("tasks.json", "progress.md")
@@ -350,14 +354,10 @@ def main() -> int:
     if config_problem:
         note(5, config_problem)
     if config is not None:
-        if not os.path.exists(os.path.join(root, config.root, "direction.md")):
-            note(5, f"{config.root}/direction.md が無い")
-        if config.store == STORE_FILES and not os.path.isdir(os.path.join(root, config.root, "task")):
-            note(5, f"{config.root}/task/ が無い")
         legacy_present = [f for f in DEVELOP_LEGACY_FILES if os.path.exists(os.path.join(root, "develop", f))]
         if legacy_present:
             leftover = "・".join(f"develop/{f}" for f in legacy_present)
-            note(5, f"{leftover} が残っている（旧形式の残り。`tw migrate --dry-run` で移行を確かめる）")
+            note(5, f"{leftover} が残っている（旧形式の残り。タスクは Beads に置くので、残すか消すかを決める）")
 
     # 検査6: バッククォートで名指ししたパスが実在しない（経緯の記録なら正当なので候補群）。
     #
@@ -493,9 +493,6 @@ def main() -> int:
     print(f"root\t{root}")
     print(f"targets\t{len(tgts)}件\t{', '.join(tgts) if tgts else '(none)'}")
     print(f"{index_path}\t{'YES' if has_index else 'NO'}")
-    task_root = config.root if config is not None else DEFAULT_TASK_ROOT
-    for f in ("direction.md", "task"):
-        print(f"{task_root}/{f}\t{'YES' if os.path.exists(os.path.join(root, task_root, f)) else 'NO'}")
     for name, where in skill_where:
         print(f"skill-ref\t{name}\t{where}")
 
@@ -505,7 +502,6 @@ def main() -> int:
     else:
         print(f"source\t{config.source}")
         print(f"root\t{config.root}")
-        print(f"store\t{config.store}")
         print(f"verify\t{config.verify}")
 
     print("\n== 参考 canon（スキルが名指ししている docs 側のパス） ==")
