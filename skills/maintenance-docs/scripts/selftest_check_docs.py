@@ -46,8 +46,6 @@ def make_config_project(tmp: str, name: str) -> str:
     root = os.path.join(tmp, name)
     subprocess.run(["git", "init", "-q", root], check=True)
     write(root, ".tw/config.toml", 'verify = "make test"\n')
-    write(root, ".tw/direction.md", "## ユーザーから\n")
-    write(root, ".tw/task/.keep")
     write(root, "AGENTS.md", "# 規約\n")
     write(root, "CLAUDE.md", "# 規約\n")
     return root
@@ -64,7 +62,7 @@ def main() -> int:
         write(root, "develop/direction.md", "## ユーザーから\n")
         write(root, "develop/task/.keep")
         got = ng_lines(root, 5)
-        expect("旧配置: tw migrate-layout を促す", any("tw migrate-layout" in l for l in got), str(got))
+        expect("旧配置: /setup-tasks を促す", any("/setup-tasks" in l for l in got), str(got))
         expect("旧配置の検証コマンドは検査8で二重化とされない", ng_lines(root, 8) == [], str(ng_lines(root, 8)))
 
         root = make_config_project(tmp, "legacy-section-with-config")
@@ -80,16 +78,10 @@ def main() -> int:
         got = ng_lines(root, 5)
         expect("壊れた設定: 読めない指摘", any("読めない" in l for l in got), str(got))
 
-        root = make_config_project(tmp, "noroot")
-        os.remove(os.path.join(root, ".tw/direction.md"))
+        root = make_config_project(tmp, "leftover")
+        write(root, "develop/tasks.json", "[]\n")
         got = ng_lines(root, 5)
-        expect("根の direction.md が無い", any("direction.md" in l for l in got), str(got))
-
-        root = make_config_project(tmp, "notask")
-        os.remove(os.path.join(root, ".tw/task/.keep"))
-        os.rmdir(os.path.join(root, ".tw/task"))
-        got = ng_lines(root, 5)
-        expect("files 方式で task/ が無い", any("task/" in l for l in got), str(got))
+        expect("旧形式の残り: 検査5が指摘", any("develop/tasks.json" in l for l in got), str(got))
 
         root = make_config_project(tmp, "dup")
         write(root, "CLAUDE.md", "# 規約\n\n検証は make test で通す。\n")
