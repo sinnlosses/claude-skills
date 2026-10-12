@@ -43,7 +43,7 @@ Claude Code のスキルのソース。各スキルは `skills/<name>/` に置�
 
 ## 由来
 
-全23スキル。`skills/` にあるものが全てで、この一覧がその索引。
+全22スキル。`skills/` にあるものが全てで、この一覧がその索引。
 
 - [mattpocock/skills](https://github.com/mattpocock/skills) を日本語化したもの（14件）:
   `code-review` `codebase-design` `diagnosing-bugs` `domain-modeling` `grilling`
