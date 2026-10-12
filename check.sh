@@ -11,10 +11,9 @@
 #
 # 1. 構文: install.sh・uninstall.sh・scripts/links.sh（いつも）
 # 2. install.sh・uninstall.sh の自己テスト
-# 3. comment-audit のスクリプトの自己テスト
-# 4. test-audit のスクリプトの自己テスト
-# 5. maintenance-docs のスクリプトの自己テスト
-# 6. リポジトリ全体の整合（frontmatter・README の索引・参照先の実在）（いつも）
+# 3. test-audit のスクリプトの自己テスト
+# 4. maintenance-docs のスクリプトの自己テスト
+# 5. リポジトリ全体の整合（frontmatter・README の索引・参照先の実在）（いつも）
 #
 # 当たる段は `./check.sh --plan` で見る。
 set -e
@@ -74,10 +73,6 @@ if stage "install.sh・uninstall.sh の自己テスト" \
   install.sh uninstall.sh scripts/links.sh scripts/selftest_links.sh \
   'skills/*/SKILL.md' 'skills/*/REQUIRES'; then
   sh "$here/scripts/selftest_links.sh"
-fi
-
-if stage "comment-audit scripts の自己テスト" 'skills/comment-audit/*'; then
-  python3 "$here/skills/comment-audit/scripts/selftest_diff_added_comment_lines.py"
 fi
 
 if stage "test-audit scripts の自己テスト" 'skills/test-audit/*'; then

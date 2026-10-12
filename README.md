@@ -54,10 +54,9 @@ Claude Code のスキルのソース。各スキルは `skills/<name>/` に置�
 - [openclaw/openclaw](https://github.com/openclaw/openclaw/tree/main/.agents/skills/test-audit) を
   日本語化したもの（1件。MIT。`LICENSE.txt` を同梱。openclaw 固有のコマンドとスキル参照は
   プロジェクトの `CLAUDE.md` と `code-review` への参照に置き換えた）: `test-audit`
-- 自作（5件）: `architecture-proposal`（様式とディレクトリ構造の提案書を書く）、
+- 自作（4件）: `architecture-proposal`（様式とディレクトリ構造の提案書を書く）、
   `dispatching-parallel-agents`（独立した問題を、問題ごとに1体のサブエージェントへ並べて起こす手順）、
   `verifying-before-completion`（完了と言う前に、主張ごとの証拠のコマンドを打って出力を読む関門）、
-  `comment-audit`（コメントを種類で判定して消す・縮める・正典へ移す）、
   `maintenance-docs`（`docs/` と CLAUDE.md がスキルの記載とズレていないか点検して直す）
 
 翻訳の方針:
@@ -124,10 +123,9 @@ detached HEAD、差分が取れないときは全段を流す。
 
 1. `install.sh`・`uninstall.sh`・`scripts/links.sh` の構文
 2. `install.sh`・`uninstall.sh` の自己テスト（`scripts/selftest_links.sh`。全件で張って外すとこのリポジトリを指すリンクだけが消えること、名前を渡した外し方と依存の警告を確かめる）
-3. `comment-audit` の自己テスト
-4. `test-audit` の自己テスト
-5. `maintenance-docs` の自己テスト
-6. リポジトリの整合（`scripts/check_repo.py`。frontmatter の `name` とディレクトリ名の一致、この README の由来一覧と `skills/` の一致、`${CLAUDE_SKILL_DIR}` で書かれた参照先の実在、スキル名の相互参照の実在〔tsukumo-plugins のタスク系スキルは `check_repo.py` の `EXTERNAL_SKILLS` で認める〕、`docs/` に書くスキル（`architecture-proposal` `domain-modeling` `research`。`check_repo.py` の `DOCS_WRITING_SKILLS`）が索引 `docs/README.md` に1行足す指示を持っていること、スキルに `task.py` の長い呼び方・`` `task …` `` の略記が残っていないこと）。
+3. `test-audit` の自己テスト
+4. `maintenance-docs` の自己テスト
+5. リポジトリの整合（`scripts/check_repo.py`。frontmatter の `name` とディレクトリ名の一致、この README の由来一覧と `skills/` の一致、`${CLAUDE_SKILL_DIR}` で書かれた参照先の実在、スキル名の相互参照の実在〔tsukumo-plugins のタスク系スキルは `check_repo.py` の `EXTERNAL_SKILLS` で認める〕、`docs/` に書くスキル（`architecture-proposal` `domain-modeling` `research`。`check_repo.py` の `DOCS_WRITING_SKILLS`）が索引 `docs/README.md` に1行足す指示を持っていること、スキルに `task.py` の長い呼び方・`` `task …` `` の略記が残っていないこと）。
 
 **由来の一覧が索引なので、スキルを足したり消したりしたらここも直す**（直し忘れは `./check.sh` が落として教える）。標準ライブラリだけで動く。
 
