@@ -79,8 +79,10 @@ DEVELOP_LEGACY_FILES = ("tasks.json", "progress.md")
 # `docs/history/` は当時の記述をそのまま残すアーカイブなので、どの検査の対象にもしない。
 HISTORY_DIR = "history"
 
-# 検査9（索引の無い大きなドキュメント）のしきい値。
+# 検査9（索引の無い／太りすぎた大きなドキュメント）のしきい値。
+# 目次なしは BIG_DOC_BYTES、目次ありは HUGE_DOC_BYTES で別々に見る。
 BIG_DOC_BYTES = 20480
+HUGE_DOC_BYTES = 102400
 BIG_DOC_HEADINGS = 8
 
 # 検査11（どこからも参照されない文書）で「更新が止まった」と見なす日数。
@@ -113,7 +115,7 @@ CHECKS = [
     (6, "実在しないパスの言及", "候補"),
     (7, "置き場の逸脱", "候補"),
     (8, "正典の二重化", "候補"),
-    (9, "索引の無い大きなドキュメント", "候補"),
+    (9, "索引の無い／太りすぎた大きなドキュメント", "候補"),
     (10, "スキル参照の不一致", "候補"),
     (11, "どこからも参照されない文書", "候補"),
 ]
@@ -499,9 +501,12 @@ def main() -> int:
             continue
         if len(headings(body)) < BIG_DOC_HEADINGS:
             continue
+        size = os.path.getsize(path)
         if "目次" in body or "索引" in body:
+            if size >= HUGE_DOC_BYTES:
+                note(9, f"{rel}: {size}B・見出し{len(headings(body))}個で目次はあるが太い")
             continue
-        note(9, f"{rel}: {os.path.getsize(path)}B・見出し{len(headings(body))}個だが目次が無い")
+        note(9, f"{rel}: {size}B・見出し{len(headings(body))}個だが目次が無い")
 
     # 検査10: CLAUDE.md が名指ししているスキルの在り処。
     ref_skills: list[str] = []
