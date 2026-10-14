@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""check_docs.py の検査5（タスク設定の読みと根の揃い）・検査8（検証コマンドの二重化）・検査11（どこからも参照されない文書）の自己テスト。
+"""check_docs.py の検査5（タスク設定の読みと根の揃い）・検査8（検証コマンドの二重化）・検査9（太りすぎた文書）・検査11（どこからも参照されない文書）の自己テスト。
 
 使い方: python3 selftest_check_docs.py
 """
@@ -124,6 +124,31 @@ def main() -> int:
         write(root, "docs/orphan.md", "# git の外\n")
         got = ng_lines(root, 11)
         expect("git の外: 参照0だけで出す", any("docs/orphan.md" in l and "測れない" in l for l in got), str(got))
+
+        def fat(index: str, size: int) -> str:
+            body = "# 太い文書\n\n" + index + "\n" + "".join(f"## 節{i}\n\n" for i in range(9))
+            return body + "x" * (size - len(body.encode("utf-8")))
+
+        root = make_config_project(tmp, "fat")
+        write(root, "docs/huge-indexed.md", fat("節の索引", 102400))
+        write(root, "docs/mid-indexed.md", fat("節の索引", 102399))
+        write(root, "docs/big-noindex.md", fat("", 30000))
+        write(root, "docs/huge-few-headings.md", "# 見出し少\n\n節の索引\n" + "x" * 110000)
+        write(root, "README.md", fat("目次", 110000))
+        commit_all(root, "docs/huge-indexed.md", "docs/mid-indexed.md", "docs/big-noindex.md", "docs/huge-few-headings.md", "README.md", date="2020-01-01T00:00:00")
+        write(root, "docs/huge-untracked.md", fat("節の索引", 120000))
+        got = ng_lines(root, 9)
+        expect("目次あり・閾値ちょうど: 検査9が出す", any("docs/huge-indexed.md" in l and "目次はあるが太い" in l for l in got), str(got))
+        expect("目次あり・閾値未満: 検査9は出さない", not any("mid-indexed" in l for l in got), str(got))
+        expect("目次なし・20KB以上: 従来の文言で出す", any("docs/big-noindex.md" in l and "目次が無い" in l for l in got), str(got))
+        expect("目次あり・見出しが少ない: 検査9は出さない", not any("huge-few-headings" in l for l in got), str(got))
+        expect("入口の README.md は太くても検査9は出さない", not any("README.md" in l for l in got), str(got))
+        expect("未追跡の太い文書: 検査9が出す（履歴の古さに依らない）", any("huge-untracked" in l for l in got), str(got))
+
+        root = os.path.join(tmp, "fat-outside-git")
+        write(root, "docs/huge-indexed.md", fat("節の索引", 102400))
+        got = ng_lines(root, 9)
+        expect("git の外でも目次あり・太い文書は検査9が出す", any("docs/huge-indexed.md" in l for l in got), str(got))
 
     if failures:
         print("\n失敗:")
