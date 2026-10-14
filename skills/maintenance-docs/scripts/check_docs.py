@@ -84,7 +84,8 @@ BIG_DOC_BYTES = 20480
 BIG_DOC_HEADINGS = 8
 
 # 検査11（どこからも参照されない文書）で「更新が止まった」と見なす日数。
-# git で測れない（`.git` が無い・未コミット）ときは日数の条件を飛ばし、参照の有無だけで見る。
+# git の外（`.git` が無い）で測れないときだけ日数の条件を飛ばし、参照の有無だけで見る。
+# リポジトリの中で履歴の無い文書（未コミットなど）は新しいものとして出さない。
 STALE_DAYS = 90
 
 # 検査8（見出しの重複）で無視する見出し。
@@ -320,22 +321,28 @@ def reference_counts(root: str, tgts: list[str]) -> dict[str, int]:
 
 
 def last_commit_days(root: str, rel: str, now: float | None = None) -> int | None:
-    """`rel` を最後にコミットしてからの日数。git の外・未コミット・git が無いときは None。"""
-    try:
-        proc = subprocess.run(
-            ["git", "log", "-1", "--format=%ct", "--", rel],
-            cwd=root, capture_output=True, text=True, timeout=30,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    """`rel` を最後にコミットしてからの日数。git の外・git が無いときだけ None。
+
+    リポジトリの中で履歴の無いファイル（未追跡・未コミット・最初のコミット前）は新しい文書として 0。
+    """
+    def git(*args: str) -> subprocess.CompletedProcess[str] | None:
+        try:
+            return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, timeout=30)
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return None
+
+    inside = git("rev-parse", "--is-inside-work-tree")
+    if inside is None or inside.returncode != 0:
         return None
-    out = proc.stdout.strip()
-    if proc.returncode != 0 or not out.isdigit():
-        return None
+    log = git("log", "-1", "--format=%ct", "--", rel)
+    out = log.stdout.strip() if log is not None and log.returncode == 0 else ""
+    if not out.isdigit():
+        return 0
     return int(((time.time() if now is None else now) - int(out)) // 86400)
 
 
 def main() -> int:
-    ap =argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("root", nargs="?", default=".")
     ap.add_argument("--skills-dir", default=None)
     ap.add_argument("--docs-dir", default="docs")

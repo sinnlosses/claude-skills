@@ -111,10 +111,19 @@ def main() -> int:
         expect("新しい文書: 検査11は出さない", not any("orphan-new" in l for l in got), str(got))
         expect("adr・research・索引: 検査11は対象外", not any(k in l for l in got for k in ("adr/", "research/", "README")), str(got))
 
-        root = make_config_project(tmp, "orphan-no-git-history")
-        write(root, "docs/orphan.md", "# 未コミット\n")
+        write(root, "docs/orphan-untracked.md", "# 履歴のあるリポジトリで未追跡\n")
         got = ng_lines(root, 11)
-        expect("git で測れない: 参照0だけで出す", any("測れない" in l for l in got), str(got))
+        expect("履歴のあるリポジトリの未追跡の文書: 検査11は出さない", not any("orphan-untracked" in l for l in got), str(got))
+
+        root = make_config_project(tmp, "orphan-before-first-commit")
+        write(root, "docs/orphan.md", "# 最初のコミット前\n")
+        got = ng_lines(root, 11)
+        expect("最初のコミット前の文書: 検査11は出さない", got == [], str(got))
+
+        root = os.path.join(tmp, "orphan-outside-git")
+        write(root, "docs/orphan.md", "# git の外\n")
+        got = ng_lines(root, 11)
+        expect("git の外: 参照0だけで出す", any("docs/orphan.md" in l and "測れない" in l for l in got), str(got))
 
     if failures:
         print("\n失敗:")
