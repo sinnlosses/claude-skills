@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""check_docs.py の検査5（タスク設定の読みと根の揃い）と検査8（検証コマンドの二重化）の自己テスト。
+"""check_docs.py の検査5（タスク設定の読みと根の揃い）・検査8（検証コマンドの二重化）・検査11（どこからも参照されない文書）の自己テスト。
 
 使い方: python3 selftest_check_docs.py
 """
@@ -51,6 +51,14 @@ def make_config_project(tmp: str, name: str) -> str:
     return root
 
 
+def commit_all(root: str, *rels: str, date: str | None = None) -> None:
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    if date:
+        env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = date
+    subprocess.run(["git", "add", *rels], cwd=root, check=True, env=env)
+    subprocess.run(["git", "commit", "-q", "-m", "x"], cwd=root, check=True, env=env)
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         root = make_config_project(tmp, "ok")
@@ -87,6 +95,26 @@ def main() -> int:
         write(root, "CLAUDE.md", "# 規約\n\n検証は make test で通す。\n")
         got = ng_lines(root, 8)
         expect("検証コマンドの値が文章にある: 検査8", any("make test" in l for l in got), str(got))
+
+        root = make_config_project(tmp, "orphan")
+        write(root, "docs/README.md", "# 索引\n\n- `docs/linked.md`\n")
+        write(root, "docs/linked.md", "# 参照される\n")
+        write(root, "docs/orphan-old.md", "# 孤立した古い文書\n")
+        write(root, "docs/orphan-new.md", "# 孤立しているが新しい文書\n")
+        write(root, "docs/adr/0001-x.md", "# 決定\n")
+        write(root, "docs/research/memo.md", "# 調査\n")
+        commit_all(root, "docs/orphan-new.md", "docs/README.md", "docs/linked.md", "docs/adr/0001-x.md", "docs/research/memo.md")
+        commit_all(root, "docs/orphan-old.md", date="2020-01-01T00:00:00")
+        got = ng_lines(root, 11)
+        expect("参照0で古い文書: 検査11が出す", any("docs/orphan-old.md" in l for l in got), str(got))
+        expect("参照されている文書: 検査11は出さない", not any("docs/linked.md" in l for l in got), str(got))
+        expect("新しい文書: 検査11は出さない", not any("orphan-new" in l for l in got), str(got))
+        expect("adr・research・索引: 検査11は対象外", not any(k in l for l in got for k in ("adr/", "research/", "README")), str(got))
+
+        root = make_config_project(tmp, "orphan-no-git-history")
+        write(root, "docs/orphan.md", "# 未コミット\n")
+        got = ng_lines(root, 11)
+        expect("git で測れない: 参照0だけで出す", any("測れない" in l for l in got), str(got))
 
     if failures:
         print("\n失敗:")

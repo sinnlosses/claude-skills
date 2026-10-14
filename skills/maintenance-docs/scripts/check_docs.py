@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""`docs/`・`README.md`・`CLAUDE.md` を10個の検査にかけ、指摘を出す。
+"""`docs/`・`README.md`・`CLAUDE.md` を11個の検査にかけ、指摘を出す。
 
 使い方:
     python3 check_docs.py [プロジェクトのルート] [--skills-dir DIR] [--docs-dir DIR] [--index FILE]
@@ -25,6 +25,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 DEFAULT_TASK_ROOT = ".tw"
 CONFIG_FILENAMES = ("AGENTS.md", "CLAUDE.md")
@@ -82,6 +83,10 @@ HISTORY_DIR = "history"
 BIG_DOC_BYTES = 20480
 BIG_DOC_HEADINGS = 8
 
+# 検査11（どこからも参照されない文書）で「更新が止まった」と見なす日数。
+# git で測れない（`.git` が無い・未コミット）ときは日数の条件を飛ばし、参照の有無だけで見る。
+STALE_DAYS = 90
+
 # 検査8（見出しの重複）で無視する見出し。
 #
 # 2種類ある。どのドキュメントにも出る一般的なものと、**同じ種類のドキュメントが
@@ -109,6 +114,7 @@ CHECKS = [
     (8, "正典の二重化", "候補"),
     (9, "索引の無い大きなドキュメント", "候補"),
     (10, "スキル参照の不一致", "候補"),
+    (11, "どこからも参照されない文書", "候補"),
 ]
 
 
@@ -287,8 +293,49 @@ def basenames(root: str) -> set[str]:
     return out
 
 
+def reference_counts(root: str, tgts: list[str]) -> dict[str, int]:
+    """対象の文書ごとの被参照数（自分以外の対象に名指しされた数）。
+
+    名指しは3つを数える: Markdown リンクの行き先、`docs/x.md` のようなルートからのパス、
+    ベース名（`x.md`）。ベース名は前後が名前の文字でないときだけ一致とする。
+    """
+    bodies = {rel: read(os.path.join(root, rel)) for rel in tgts}
+    counts = {rel: 0 for rel in tgts}
+    for rel in tgts:
+        base = os.path.basename(rel)
+        name_re = re.compile(r"(?<![\w.-])" + re.escape(base) + r"(?![\w-])")
+        for other, body in bodies.items():
+            if other == rel:
+                continue
+            if rel in body or name_re.search(body):
+                counts[rel] += 1
+                continue
+            src_dir = os.path.dirname(other)
+            for m in LINK.finditer(body):
+                link = m.group(1).split("#")[0]
+                if link and os.path.normpath(os.path.join(src_dir, link)).replace(os.sep, "/") == rel:
+                    counts[rel] += 1
+                    break
+    return counts
+
+
+def last_commit_days(root: str, rel: str, now: float | None = None) -> int | None:
+    """`rel` を最後にコミットしてからの日数。git の外・未コミット・git が無いときは None。"""
+    try:
+        proc = subprocess.run(
+            ["git", "log", "-1", "--format=%ct", "--", rel],
+            cwd=root, capture_output=True, text=True, timeout=30,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    out = proc.stdout.strip()
+    if proc.returncode != 0 or not out.isdigit():
+        return None
+    return int(((time.time() if now is None else now) - int(out)) // 86400)
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap =argparse.ArgumentParser(description=__doc__)
     ap.add_argument("root", nargs="?", default=".")
     ap.add_argument("--skills-dir", default=None)
     ap.add_argument("--docs-dir", default="docs")
@@ -475,6 +522,22 @@ def main() -> int:
             where = "NOT_FOUND"
             note(10, f"`{name}`: スキルもコマンドも見つからない")
         skill_where.append((name, where))
+
+    # 検査11: 他の対象のどこからも名指しされず、更新も止まっている文書（削除か history 行きの候補）。
+    # 決定記録・調査メモの置き場（正典の地図の docs 側ディレクトリ）と入口のファイルは対象外。
+    exempt_dirs = {p for p in prescribed if p.startswith(f"{docs_dir}/") and "." not in os.path.basename(p)}
+    exempt_dirs |= {f"{docs_dir}/adr", f"{docs_dir}/research"}
+    refs = reference_counts(root, tgts)
+    for rel in docs:
+        if os.path.basename(rel) in index_exempt or refs.get(rel, 0) > 0:
+            continue
+        if any(rel.startswith(d + "/") for d in exempt_dirs):
+            continue
+        days = last_commit_days(root, rel)
+        if days is not None and days < STALE_DAYS:
+            continue
+        age = f"最終更新 {days}日前" if days is not None else "最終更新は git で測れない"
+        note(11, f"{rel}: どこからも参照されず（被参照0）、{age}")
 
     # ---- 出力 ----
     for n, title, group in CHECKS:

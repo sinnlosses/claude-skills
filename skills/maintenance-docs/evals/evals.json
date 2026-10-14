@@ -53,6 +53,22 @@
         "旧い「## タスク運用」節で読んでいることを指摘し、`/setup-tasks` で `.tw/config.toml` を用意するよう促している",
         "src/ 配下のコードを書き換えていない"
       ]
+    },
+    {
+      "id": 3,
+      "name": "judges-unreferenced-stale-docs",
+      "prompt": "docs の中に、もう要らなさそうなものがあれば洗って、片付けて",
+      "expected_output": "検査11の候補を1問（今の姿の説明か、昔の話か）で判定する。昔の話の1件は docs/history/ へ移し、今の姿を説明している1件は残す。",
+      "files": [
+        "fixtures/d-orphan-doc"
+      ],
+      "assertions": [
+        "検査11の候補（どこからも参照されず更新が止まった文書）を候補群として挙げている",
+        "docs/old-import-flow.md を「昔の話」と判断し、削除ではなく docs/history/ へ移している（索引の行も直している）",
+        "docs/release-checklist.md は今の姿の説明で、意図して残してある文書と判断し、移動も削除もしていない",
+        "参照されている文書や docs/adr/・docs/research/ 配下の文書を候補に挙げていない",
+        "判断の根拠を1問の答えとして文書ごとに書いている"
+      ]
     }
   ]
 }
