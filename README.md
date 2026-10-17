@@ -43,7 +43,7 @@ Claude Code のスキルのソース。各スキルは `skills/<name>/` に置�
 
 ## 由来
 
-全22スキル。`skills/` にあるものが全てで、この一覧がその索引。
+全23スキル。`skills/` にあるものが全てで、この一覧がその索引。
 
 - [mattpocock/skills](https://github.com/mattpocock/skills) を日本語化したもの（14件）:
   `code-review` `codebase-design` `diagnosing-bugs` `domain-modeling` `grilling`
@@ -54,6 +54,9 @@ Claude Code のスキルのソース。各スキルは `skills/<name>/` に置�
 - [openclaw/openclaw](https://github.com/openclaw/openclaw/tree/main/.agents/skills/test-audit) を
   日本語化したもの（1件。MIT。`LICENSE.txt` を同梱。openclaw 固有のコマンドとスキル参照は
   プロジェクトの `CLAUDE.md` と `code-review` への参照に置き換えた）: `test-audit`
+- [cursor/plugins](https://github.com/cursor/plugins/tree/main/pstack/skills) の pstack
+  から考え方を借りて日本語で書き直したもの（1件。MIT）: `benchmark-checklist`（測った数を報告する前の7問と、
+  交互に5回以上・中央値と範囲で言う作法）
 - 自作（4件）: `architecture-proposal`（様式とディレクトリ構造の提案書を書く）、
   `dispatching-parallel-agents`（独立した問題を、問題ごとに1体のサブエージェントへ並べて起こす手順）、
   `verifying-before-completion`（完了と言う前に、主張ごとの証拠のコマンドを打って出力を読む関門）、
