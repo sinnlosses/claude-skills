@@ -77,6 +77,7 @@ fi
 
 if stage "test-audit scripts の自己テスト" 'skills/test-audit/*'; then
   python3 "$here/skills/test-audit/scripts/selftest_list_test_declarations.py"
+  python3 "$here/skills/test-audit/scripts/selftest_mutate_and_run.py"
 fi
 
 if stage "maintenance-docs scripts の自己テスト" 'skills/maintenance-docs/*'; then
