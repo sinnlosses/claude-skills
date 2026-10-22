@@ -17,7 +17,7 @@ description: "docs/ に requirements・coding-standards などの文書の雛形
 
 ### 1. 対象の文書を決める
 
-作れる型は `requirements`・`coding-standards` の2つ。型は `references/<文書名>.md` にある。
+作れる型は `requirements`・`coding-standards` の2つ。型は `references/<文書名>.md` にある（`references/requirements.md`・`references/coding-standards.md`）。どちらも「`X.md` が索引と結論、`X/` が詳細」の一組で、30KB を超えたら `X/` へ分ける基準を持つ。
 
 - `architecture` は型を持たない。`architecture-proposal` を使う
 - `glossary`（用語集）・ADR は型を持たない。`domain-modeling` を使う
@@ -31,6 +31,12 @@ description: "docs/ に requirements・coding-standards などの文書の雛形
 
 ### 4. 型で作る
 
+対象の文書の `references/<文書名>.md` を読み、その雛形から `docs/<文書名>.md` を作る。型の `<...>` はプロジェクトの言葉で埋める。見出し名は節の索引表にそのまま入れ、索引の行数を本文の `##`／`###` の数に合わせる。
+
 ### 5. 索引に足す
 
 生成したら、`docs/README.md` にパスと一行説明で1行足す。
+
+## 参考情報
+
+型の実例（読むだけ）: tsukumo リポジトリの `docs/coding-standards.md` 冒頭（責務／読む時／直す時・節の索引・30KB 超で切り替える運用）と、`docs/architecture.md` と `docs/architecture/` の一組。
