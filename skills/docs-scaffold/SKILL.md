@@ -46,7 +46,9 @@ description: "docs/ に requirements・coding-standards などの文書の雛形
 
 ### 5. 索引に足す
 
-生成したら、`docs/README.md` にパスと一行説明で1行足す。
+生成したら、`docs/README.md` にパスと一行説明で1行足す（例: `docs/requirements.md`: 要件定義。やること・やらないこと・技術制約）。`docs/README.md` が存在しなければそのとき作る。空の索引を先回りして置かない。
+
+プロジェクトの `AGENTS.md`／`CLAUDE.md` に「こういうとき → 読むもの」の索引表があれば、その表にも1行足す。表が無ければ作らない。2回目の起動で承認された節だけを足したときは、索引の行が既にあるので足さない。
 
 ## 参考情報
 

@@ -43,7 +43,7 @@ Claude Code のスキルのソース。各スキルは `skills/<name>/` に置�
 
 ## 由来
 
-全24スキル。`skills/` にあるものが全てで、この一覧がその索引。
+全25スキル。`skills/` にあるものが全てで、この一覧がその索引。
 
 - [mattpocock/skills](https://github.com/mattpocock/skills) を日本語化したもの（14件）:
   `code-review` `codebase-design` `diagnosing-bugs` `domain-modeling` `grilling`
@@ -58,10 +58,11 @@ Claude Code のスキルのソース。各スキルは `skills/<name>/` に置�
   から考え方を借りて日本語で書き直したもの（2件。MIT）: `benchmark-checklist`（測った数を報告する前の7問と、
   交互に5回以上・中央値と範囲で言う作法）、`blast-radius`（変更が差分の外で壊すものを探し、
   安全な理由の1つの事実をどの段まで確かめたかを言う）
-- 自作（4件）: `architecture-proposal`（様式とディレクトリ構造の提案書を書く）、
+- 自作（5件）: `architecture-proposal`（様式とディレクトリ構造の提案書を書く）、
   `dispatching-parallel-agents`（独立した問題を、問題ごとに1体のサブエージェントへ並べて起こす手順）、
   `verifying-before-completion`（完了と言う前に、主張ごとの証拠のコマンドを打って出力を読む関門）、
-  `maintenance-docs`（`docs/` と CLAUDE.md がスキルの記載とズレていないか点検して直す）
+  `maintenance-docs`（`docs/` と CLAUDE.md がスキルの記載とズレていないか点検して直す）、
+  `docs-scaffold`（`docs/` の requirements・coding-standards の雛形を、型どおりに作る）
 
 翻訳の方針:
 1. **散文とコメントは日本語にし、コード例・スキーマ・識別子・URL・引用文献は原文のまま**残す

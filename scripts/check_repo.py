@@ -30,7 +30,12 @@ SKILLS = os.path.join(ROOT, "skills")
 
 # 使う側のプロジェクトの `docs/` に成果物を書くスキル。ここに載っているスキルは
 # 「索引 `docs/README.md` に1行足す」指示を持っていなければならない。
-DOCS_WRITING_SKILLS = ("architecture-proposal", "domain-modeling", "research")
+DOCS_WRITING_SKILLS = (
+    "architecture-proposal",
+    "docs-scaffold",
+    "domain-modeling",
+    "research",
+)
 
 # tsukumo-plugins にあり、このリポジトリに無いが本文で名指してよいスキル。
 EXTERNAL_SKILLS = (
