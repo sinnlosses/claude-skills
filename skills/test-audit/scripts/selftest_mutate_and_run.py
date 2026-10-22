@@ -48,15 +48,14 @@ def make_repo(root: str) -> str:
     return cwd
 
 
-def fake_test(needle: str, extra: str = "") -> str:
+def fake_test(needle: str) -> str:
     code = (
         "import sys;s=open('src.txt',encoding='utf-8').read();"
-        f"{extra}"
         f"bad={needle!r} not in s;"
         "print(' FAIL  t > 上限を守る') if bad else None;"
         "sys.exit(1 if bad else 0)"
     )
-    return f"{sys.executable} -c \"{code}\"".replace("'", "'")
+    return f"{sys.executable} -c \"{code}\""
 
 
 def read(cwd: str) -> str:
